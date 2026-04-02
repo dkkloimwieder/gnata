@@ -2,7 +2,7 @@
 //!
 //! Port of Go `internal/evaluator/env.go`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -43,10 +43,11 @@ impl CallCounter {
 ///
 /// Forms a linked chain via `parent`. All environments in a chain share
 /// the same `CallCounter` (via Rc) and cancellation token (via Arc).
+/// Bindings use `RefCell` for interior mutability, allowing `bind()` through `Rc`.
 #[derive(Debug)]
 pub struct Environment {
     parent: Option<Rc<Environment>>,
-    bindings: HashMap<String, Value>,
+    bindings: RefCell<HashMap<String, Value>>,
     calls: Rc<CallCounter>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -56,7 +57,7 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             parent: None,
-            bindings: HashMap::new(),
+            bindings: RefCell::new(HashMap::new()),
             calls: Rc::new(CallCounter::new()),
             cancel: None,
         }
@@ -68,21 +69,23 @@ impl Environment {
         let cancel = parent.cancel.clone();
         Self {
             parent: Some(parent),
-            bindings: HashMap::new(),
+            bindings: RefCell::new(HashMap::new()),
             calls,
             cancel,
         }
     }
 
     /// Set a variable in this environment.
-    pub fn bind(&mut self, name: String, value: Value) {
-        self.bindings.insert(name, value);
+    /// Uses interior mutability so this works through `Rc<Environment>`.
+    pub fn bind(&self, name: String, value: Value) {
+        self.bindings.borrow_mut().insert(name, value);
     }
 
     /// Look up a variable, walking the parent chain.
-    pub fn lookup(&self, name: &str) -> Option<&Value> {
-        if let Some(v) = self.bindings.get(name) {
-            return Some(v);
+    /// Returns a cloned value since bindings use RefCell.
+    pub fn lookup(&self, name: &str) -> Option<Value> {
+        if let Some(v) = self.bindings.borrow().get(name) {
+            return Some(v.clone());
         }
         if let Some(ref parent) = self.parent {
             return parent.lookup(name);
@@ -90,11 +93,12 @@ impl Environment {
         None
     }
 
-    /// Look up a variable and return both the value and the environment
-    /// in which the binding was found. Used by the parent operator (%).
-    pub fn lookup_with_env(&self, name: &str) -> Option<(&Value, &Environment)> {
-        if let Some(v) = self.bindings.get(name) {
-            return Some((v, self));
+    /// Look up a variable and return the value. Used by parent operator (%).
+    /// Note: unlike Go version, we can't return the Environment reference due to
+    /// RefCell borrowing constraints. Returns just the value.
+    pub fn lookup_with_env(&self, name: &str) -> Option<Value> {
+        if let Some(v) = self.bindings.borrow().get(name) {
+            return Some(v.clone());
         }
         if let Some(ref parent) = self.parent {
             return parent.lookup_with_env(name);
@@ -103,8 +107,8 @@ impl Environment {
     }
 
     /// Check only the direct bindings (no parent chain walk).
-    pub fn lookup_direct(&self, name: &str) -> Option<&Value> {
-        self.bindings.get(name)
+    pub fn lookup_direct(&self, name: &str) -> Option<Value> {
+        self.bindings.borrow().get(name).cloned()
     }
 
     /// Get the parent environment.
@@ -160,7 +164,7 @@ impl Environment {
     pub fn shallow_clone(&self) -> Self {
         Self {
             parent: self.parent.clone(),
-            bindings: self.bindings.clone(),
+            bindings: RefCell::new(self.bindings.borrow().clone()),
             calls: Rc::clone(&self.calls),
             cancel: self.cancel.clone(),
         }
@@ -185,28 +189,28 @@ mod tests {
 
     #[test]
     fn bind_and_lookup() {
-        let mut env = Environment::new();
+        let env = Environment::new();
         env.bind("x".into(), Value::Number(42.0));
-        assert_eq!(env.lookup("x"), Some(&Value::Number(42.0)));
+        assert_eq!(env.lookup("x"), Some(Value::Number(42.0)));
     }
 
     #[test]
     fn child_inherits_parent() {
-        let mut root = Environment::new();
+        let root = Environment::new();
         root.bind("x".into(), Value::Number(1.0));
         let parent = Rc::new(root);
         let child = Environment::new_child(Rc::clone(&parent));
-        assert_eq!(child.lookup("x"), Some(&Value::Number(1.0)));
+        assert_eq!(child.lookup("x"), Some(Value::Number(1.0)));
     }
 
     #[test]
     fn child_shadows_parent() {
-        let mut root = Environment::new();
+        let root = Environment::new();
         root.bind("x".into(), Value::Number(1.0));
         let parent = Rc::new(root);
-        let mut child = Environment::new_child(Rc::clone(&parent));
+        let child = Environment::new_child(Rc::clone(&parent));
         child.bind("x".into(), Value::Number(2.0));
-        assert_eq!(child.lookup("x"), Some(&Value::Number(2.0)));
+        assert_eq!(child.lookup("x"), Some(Value::Number(2.0)));
     }
 
     #[test]
@@ -220,7 +224,7 @@ mod tests {
 
     #[test]
     fn lookup_direct_no_parent() {
-        let mut root = Environment::new();
+        let root = Environment::new();
         root.bind("x".into(), Value::Number(1.0));
         let parent = Rc::new(root);
         let child = Environment::new_child(parent);
@@ -235,5 +239,12 @@ mod tests {
         assert!(!env.is_cancelled());
         cancel.store(true, Ordering::Relaxed);
         assert!(env.is_cancelled());
+    }
+
+    #[test]
+    fn bind_through_rc() {
+        let env = Rc::new(Environment::new());
+        env.bind("x".into(), Value::Number(42.0));
+        assert_eq!(env.lookup("x"), Some(Value::Number(42.0)));
     }
 }

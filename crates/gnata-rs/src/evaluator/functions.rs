@@ -320,7 +320,7 @@ pub fn call_function(
                 counter.depth.set(depth);
 
                 let child_env = {
-                    let mut ce = Environment::new_child(Rc::clone(&lambda.closure));
+                    let ce = Environment::new_child(Rc::clone(&lambda.closure));
                     for (i, param) in lambda.params.iter().enumerate() {
                         let val = current_args.get(i).cloned().unwrap_or(Value::Undefined);
                         ce.bind(param.clone(), val);
