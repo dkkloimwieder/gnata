@@ -1,0 +1,54 @@
+[package]
+name = "gnata"
+version = "0.1.0"
+edition = "2024"
+description = "JSONata 2.x query and transformation engine"
+license = "MIT"
+
+[dependencies]
+# Concurrency
+arc-swap = "1.9"
+dashmap = "6.1"
+parking_lot = "0.12"
+
+# Parsing & Regex
+regex = "1.12"
+
+# JSON & Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
+indexmap = { version = "2", features = ["serde"] }
+
+# Error handling
+thiserror = "2.0"
+
+# Numeric formatting
+ryu-js = "1.0"
+
+# Date/Time
+jiff = "0.2"
+
+# Encoding
+base64 = "0.22"
+percent-encoding = "2.3"
+
+# Unicode
+unicode-segmentation = "1.13"
+
+# Memory
+bumpalo = "3.17"
+
+# RNG
+fastrand = "2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

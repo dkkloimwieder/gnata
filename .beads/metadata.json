@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "gnata",
+  "project_id": "0d324843-cc88-481f-a79e-308d67480d39"
+}

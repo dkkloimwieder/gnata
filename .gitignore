@@ -1,7 +1,13 @@
 *.wasm
 .secret
 .DS_Store
+target/
 
 # npm package build artifacts
 npm/dist/
 npm/node_modules/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
