@@ -1,6 +1,8 @@
 pub mod ast;
+pub mod process;
 
 pub use ast::{AstArena, Expr, GroupExpr, NodeId, Signature, Slot, SortTerm, Stage, StageKind};
+pub use process::process_ast;
 
 use crate::error::JsonataError;
 use crate::lexer::{Lexer, Token, TokenType};

@@ -5,5 +5,5 @@ pub mod value;
 
 pub use error::JsonataError;
 pub use lexer::{Lexer, Token, TokenType};
-pub use parser::{AstArena, Expr, NodeId, Parser};
+pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
 pub use value::Value;
