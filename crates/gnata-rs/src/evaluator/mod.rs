@@ -4,12 +4,14 @@
 
 pub mod environment;
 pub mod functions;
+pub mod signature;
 
 pub use environment::Environment;
 pub use functions::{
     BuiltinFn, EnvAwareBuiltinFn, FunctionValue, Lambda, TailCall, call_function, eval_function,
     eval_lambda, eval_partial,
 };
+pub use signature::{ParamSpec, parse_signature, process_call_args};
 
 use std::rc::Rc;
 

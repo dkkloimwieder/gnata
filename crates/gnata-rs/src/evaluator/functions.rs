@@ -134,8 +134,17 @@ pub fn eval_function(
         args.push(val);
     }
 
-    // TODO: Signature validation for SignedBuiltins at direct call site.
-    // Will be implemented in Phase 8 (Function Machinery).
+    // Signature validation for SignedBuiltins at direct call site.
+    // HOF callbacks bypass this (they go through apply_function instead).
+    if let FunctionValue::SignedBuiltin { signature, .. } = &func
+        && let Ok(specs) = super::parse_signature(signature)
+    {
+        let (coerced, return_undefined) = super::process_call_args(&specs, &args)?;
+        if return_undefined {
+            return Ok(Value::Undefined);
+        }
+        args = coerced;
+    }
 
     // Tail-call optimization: if this call is in tail position within a
     // lambda body, return a TailCall sentinel instead of recursing.
@@ -286,7 +295,17 @@ pub fn call_function(
                 return f(&current_args, focus, env, arena);
             }
             FunctionValue::Lambda(lambda) => {
-                // TODO: Signature validation (Phase 8).
+                // Lambda signature validation.
+                if !lambda.signature.is_empty()
+                    && let Ok(specs) = super::parse_signature(&lambda.signature)
+                {
+                    let (coerced, return_undefined) =
+                        super::process_call_args(&specs, &current_args)?;
+                    if return_undefined {
+                        return Ok(Value::Undefined);
+                    }
+                    current_args = coerced;
+                }
 
                 let depth = counter.depth.get() + 1;
                 if depth > counter.max {
