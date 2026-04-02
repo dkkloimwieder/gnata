@@ -253,22 +253,225 @@ fn eval_path(
         return Ok(Value::Undefined);
     }
 
-    let mut result = eval(arena, steps[0], input, env)?;
+    // TODO: pathHasTupleStep check → evalPathTuple (deferred until needed for conformance).
+    eval_path_simple(arena, &steps, keep_singleton_array, input, env)
+}
 
-    for &step in &steps[1..] {
-        if result.is_undefined() {
+/// Simple (non-tuple) path evaluation: thread each step's result into the next.
+fn eval_path_simple(
+    arena: &AstArena,
+    steps: &[NodeId],
+    keep_singleton_array: bool,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    let mut result = input.clone();
+    let mut prev_was_mapper = false;
+
+    for (i, &step) in steps.iter().enumerate() {
+        if i > 0 && result.is_undefined() {
             return Ok(Value::Undefined);
         }
-        result = eval(arena, step, &result, env)?;
+        // Collapse sequences between steps.
+        if let Value::Sequence(seq) = result {
+            result = seq.collapse();
+            if i > 0 && result.is_undefined() {
+                return Ok(Value::Undefined);
+            }
+        }
+
+        result = eval_path_step(
+            arena,
+            step,
+            &result,
+            env,
+            prev_was_mapper,
+            keep_singleton_array,
+        )?;
+
+        // Empty arrays produced by auto-mapping mean "nothing found" → undefined,
+        // UNLESS the previous step was NOT a mapper (the empty array is a genuine field value).
+        if let Value::Array(ref arr) = result
+            && arr.is_empty()
+            && prev_was_mapper
+            && !matches!(arena.get(step), Expr::Name { .. } | Expr::StringLit { .. })
+        {
+            return Ok(Value::Undefined);
+        }
+
+        prev_was_mapper = matches!(result, Value::Array(_) | Value::Sequence(_));
     }
 
-    // Apply sequence collapse with keep_singleton_array.
-    if keep_singleton_array && let Value::Sequence(mut seq) = result {
-        seq.keep_singleton = true;
-        return Ok(seq.collapse());
+    if keep_singleton_array {
+        match result {
+            Value::Array(_) => return Ok(result),
+            Value::Undefined => return Ok(Value::Undefined),
+            _ => return Ok(Value::Array(vec![result])),
+        }
     }
-
     Ok(result)
+}
+
+/// Evaluate a single path step, handling auto-mapping over arrays.
+fn eval_path_step(
+    arena: &AstArena,
+    step: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+    prev_was_mapper: bool,
+    keep_singleton_array: bool,
+) -> JsonataResult {
+    let expr = arena.get(step);
+
+    // Steps that natively handle array inputs (field lookup, wildcard, variable, etc.)
+    match expr {
+        Expr::NumberLit { raw, .. } => {
+            return Err(JsonataError::new(
+                "S0213",
+                format!("invalid step in path: numeric literal {raw} is not a field name"),
+            ));
+        }
+        Expr::Name { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Variable { .. }
+        | Expr::StringLit { .. }
+        | Expr::ValueLit { .. }
+        | Expr::Sort { .. } => {
+            return eval(arena, step, input, env);
+        }
+        Expr::Block { .. } if !prev_was_mapper => {
+            return eval(arena, step, input, env);
+        }
+        Expr::Descendant { .. } => {
+            // In path context, descendant includes the current node itself.
+            let mut seq = Sequence::new();
+            if !matches!(input, Value::Array(_)) {
+                seq.append(input.clone());
+            }
+            let descendants = descendant_lookup(input);
+            match descendants {
+                Value::Array(arr) => {
+                    for item in arr {
+                        seq.append(item);
+                    }
+                }
+                Value::Sequence(s) => {
+                    for item in s.values {
+                        seq.append(item);
+                    }
+                }
+                Value::Undefined => {}
+                other => seq.append(other),
+            }
+            return if seq.values.is_empty() {
+                Ok(Value::Undefined)
+            } else {
+                Ok(Value::Sequence(seq))
+            };
+        }
+        Expr::Binary { op, lhs, .. } if op == "[" && !lhs.is_empty() && !prev_was_mapper => {
+            return eval(arena, step, input, env);
+        }
+        _ => {}
+    }
+
+    // Array constructor steps not preceded by mapper are literal expressions.
+    if let Expr::Unary { op, .. } = expr
+        && op == "["
+        && !prev_was_mapper
+    {
+        return eval(arena, step, input, env);
+    }
+
+    // For all other step types, map over array input.
+    let arr = match input {
+        Value::Array(a) => a.clone(),
+        _ => {
+            // Single item — check for function step with path-element prepend.
+            if matches!(expr, Expr::Function { .. }) {
+                return eval_path_function_step(arena, step, input, env);
+            }
+            return eval(arena, step, input, env);
+        }
+    };
+
+    let is_group_step = matches!(expr, Expr::Unary { op, .. } if op == "[");
+    let mut seq = Sequence::new();
+
+    for item in &arr {
+        let val = if matches!(arena.get(step), Expr::Function { .. }) {
+            eval_path_function_step(arena, step, item, env)?
+        } else {
+            eval(arena, step, item, env)?
+        };
+        if val.is_undefined() {
+            continue;
+        }
+        if is_group_step {
+            seq.values.push(val);
+            continue;
+        }
+        match val {
+            Value::Array(inner) => seq.values.extend(inner),
+            Value::Sequence(s) => seq.values.extend(s.values),
+            other => seq.append(other),
+        }
+    }
+
+    if seq.values.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    if is_group_step && keep_singleton_array {
+        return Ok(Value::Array(seq.values));
+    }
+    Ok(seq.collapse())
+}
+
+/// Evaluate a function call step in path context.
+/// For lambdas, prepend the path element as the first argument.
+fn eval_path_function_step(
+    arena: &AstArena,
+    step: NodeId,
+    item: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    let (procedure, arguments) = match arena.get(step) {
+        Expr::Function {
+            procedure,
+            arguments,
+            ..
+        } => (*procedure, arguments.clone()),
+        _ => return eval(arena, step, item, env),
+    };
+
+    let fn_val = eval(arena, procedure, item, env)?;
+    let func = match &fn_val {
+        Value::Function(f) => f.clone(),
+        _ => {
+            return Err(JsonataError::new(
+                "T1006",
+                "attempted to invoke undefined function",
+            ));
+        }
+    };
+
+    let mut args = Vec::with_capacity(arguments.len());
+    for &arg_node in &arguments {
+        if matches!(arena.get(arg_node), Expr::Placeholder { .. }) {
+            args.push(Value::Undefined);
+            continue;
+        }
+        args.push(eval(arena, arg_node, item, env)?);
+    }
+
+    // For lambdas, prepend path element when fewer args than params.
+    if let FunctionValue::Lambda(ref lam) = func
+        && args.len() < lam.params.len()
+    {
+        args.insert(0, item.clone());
+    }
+
+    call_function(&func, &args, item, env, arena)
 }
 
 // ── Binary operators (stub for Phase 5, full impl in Phase 7) ───────
@@ -457,15 +660,37 @@ fn eval_subscript(
     _input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    let index = eval(arena, rhs, left, env)?;
+    // For non-array inputs, evaluate directly.
+    if !matches!(left, Value::Array(_) | Value::Sequence(_)) {
+        let index = eval(arena, rhs, left, env)?;
+        if let Some(n) = index.as_f64() {
+            // Numeric index on a single value — treat as array of one.
+            let idx = n.trunc() as i64;
+            if idx == 0 || idx == -1 {
+                return Ok(left.clone());
+            }
+            return Ok(Value::Undefined);
+        }
+        // Boolean predicate on single value.
+        if index.to_boolean() {
+            return Ok(left.clone());
+        }
+        return Ok(Value::Undefined);
+    }
 
-    // Numeric index access.
-    if let Some(n) = index.as_f64() {
+    let arr = match left {
+        Value::Array(a) => a.clone(),
+        Value::Sequence(s) => s.to_vec(),
+        _ => unreachable!(),
+    };
+
+    // Try evaluating RHS as a simple expression (might be a numeric literal or
+    // variable). If it resolves to a number, use it as a direct index.
+    // If it errors or is non-numeric, fall through to per-element predicate filter.
+    if let Ok(index) = eval(arena, rhs, left, env)
+        && let Some(n) = index.as_f64()
+    {
         let idx = n.trunc() as i64;
-        let arr = match left {
-            Value::Array(a) => a.clone(),
-            _ => vec![left.clone()],
-        };
         let len = arr.len() as i64;
         let actual = if idx < 0 { len + idx } else { idx };
         if actual < 0 || actual >= len {
@@ -475,16 +700,10 @@ fn eval_subscript(
     }
 
     // Predicate filter — evaluate rhs against each element.
-    let arr = match left {
-        Value::Array(a) => a.clone(),
-        Value::Sequence(s) => s.to_vec(),
-        _ => vec![left.clone()],
-    };
-
     let mut seq = Sequence::new();
     for item in arr.iter() {
         let test = eval(arena, rhs, item, env)?;
-        // Numeric result = index selection.
+        // Numeric result = index selection from entire array.
         if let Some(n) = test.as_f64() {
             let idx = n.trunc() as i64;
             let len = arr.len() as i64;
@@ -828,6 +1047,59 @@ mod tests {
         assert_eq!(
             eval_with_data("a.b.c", r#"{"a": {"b": {"c": "deep"}}}"#),
             Value::String("deep".into())
+        );
+    }
+
+    #[test]
+    fn path_auto_mapping() {
+        // Field access on array of objects maps across elements.
+        let result = eval_with_data(
+            "Account.Order.Product.Price",
+            r#"{"Account": {"Order": [{"Product": {"Price": 10}}, {"Product": {"Price": 20}}]}}"#,
+        );
+        assert_eq!(
+            result,
+            Value::Array(vec![Value::Number(10.0), Value::Number(20.0)])
+        );
+    }
+
+    #[test]
+    fn path_string_in_dot() {
+        // String literal in path is a field name lookup.
+        assert_eq!(
+            eval_with_data(r#"a."b c""#, r#"{"a": {"b c": 99}}"#),
+            Value::Number(99.0)
+        );
+    }
+
+    #[test]
+    fn path_undefined_short_circuits() {
+        // If any intermediate step is undefined, the whole path is undefined.
+        assert!(eval_with_data("a.b.c", r#"{"a": {"x": 1}}"#).is_undefined());
+    }
+
+    #[test]
+    fn path_subscript_filter() {
+        let result = eval_with_data("nums[$ > 2]", r#"{"nums": [1, 2, 3, 4]}"#);
+        assert_eq!(
+            result,
+            Value::Array(vec![Value::Number(3.0), Value::Number(4.0)])
+        );
+    }
+
+    #[test]
+    fn path_subscript_index() {
+        assert_eq!(
+            eval_with_data("items[0]", r#"{"items": ["a", "b", "c"]}"#),
+            Value::String("a".into())
+        );
+    }
+
+    #[test]
+    fn path_subscript_negative_index() {
+        assert_eq!(
+            eval_with_data("items[-1]", r#"{"items": ["a", "b", "c"]}"#),
+            Value::String("c".into())
         );
     }
 
