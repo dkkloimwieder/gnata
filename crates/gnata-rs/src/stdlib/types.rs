@@ -1,0 +1,52 @@
+//! Type, misc, and datetime functions: $type, $assert, $now, $millis.
+
+use crate::error::{JsonataError, JsonataResult};
+use crate::value::Value;
+
+pub fn fn_type_of(args: &[Value], _focus: &Value) -> JsonataResult {
+    if args.is_empty() {
+        return Err(JsonataError::new("T0410", "$type: argument is required"));
+    }
+    let type_name = match &args[0] {
+        Value::Undefined => return Ok(Value::Undefined),
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Function(_) => "function",
+        Value::Sequence(_) | Value::TailCall(_) => "undefined",
+    };
+    Ok(Value::String(type_name.into()))
+}
+
+pub fn fn_assert(args: &[Value], _focus: &Value) -> JsonataResult {
+    if args.is_empty() {
+        return Err(JsonataError::new("T0410", "$assert: argument is required"));
+    }
+    if !args[0].to_boolean() {
+        let msg = args
+            .get(1)
+            .and_then(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "$assert: assertion failed".into());
+        return Err(JsonataError::new("D3141", msg));
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn fn_now(_args: &[Value], _focus: &Value) -> JsonataResult {
+    // Return current time as ISO 8601 string.
+    let now = jiff::Zoned::now();
+    Ok(Value::String(
+        now.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+    ))
+}
+
+pub fn fn_millis(_args: &[Value], _focus: &Value) -> JsonataResult {
+    let now = jiff::Timestamp::now();
+    Ok(Value::Number(now.as_millisecond() as f64))
+}

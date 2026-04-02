@@ -956,7 +956,9 @@ mod tests {
     fn eval_expr(src: &str, input: &Value) -> JsonataResult {
         let (mut arena, root) = Parser::parse(src).expect("parse failed");
         let root = process_ast(&mut arena, root).expect("process failed");
-        let env = Rc::new(Environment::new());
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(env);
         eval(&arena, root, input, &env)
     }
 
@@ -1315,5 +1317,292 @@ mod tests {
     #[test]
     fn null_coalescing() {
         assert_eq!(eval_simple("null ?? 0"), Value::Number(0.0));
+    }
+
+    // ── Stdlib functions ────────────────────────────────────────
+
+    #[test]
+    fn stdlib_string() {
+        assert_eq!(eval_simple(r#"$string(42)"#), Value::String("42".into()));
+    }
+
+    #[test]
+    fn stdlib_length() {
+        assert_eq!(eval_simple(r#"$length("hello")"#), Value::Number(5.0));
+    }
+
+    #[test]
+    fn stdlib_uppercase() {
+        assert_eq!(
+            eval_simple(r#"$uppercase("hello")"#),
+            Value::String("HELLO".into())
+        );
+    }
+
+    #[test]
+    fn stdlib_lowercase() {
+        assert_eq!(
+            eval_simple(r#"$lowercase("HELLO")"#),
+            Value::String("hello".into())
+        );
+    }
+
+    #[test]
+    fn stdlib_trim() {
+        assert_eq!(
+            eval_simple(r#"$trim("  hello   world  ")"#),
+            Value::String("hello world".into())
+        );
+    }
+
+    #[test]
+    fn stdlib_substring() {
+        assert_eq!(
+            eval_simple(r#"$substring("hello", 1, 3)"#),
+            Value::String("ell".into())
+        );
+    }
+
+    #[test]
+    fn stdlib_contains() {
+        assert_eq!(
+            eval_simple(r#"$contains("hello world", "world")"#),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn stdlib_split() {
+        assert_eq!(
+            eval_simple(r#"$split("a,b,c", ",")"#),
+            Value::Array(vec![
+                Value::String("a".into()),
+                Value::String("b".into()),
+                Value::String("c".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_join() {
+        assert_eq!(
+            eval_simple(r#"$join(["a", "b", "c"], "-")"#),
+            Value::String("a-b-c".into())
+        );
+    }
+
+    #[test]
+    fn stdlib_number() {
+        assert_eq!(eval_simple(r#"$number("42")"#), Value::Number(42.0));
+    }
+
+    #[test]
+    fn stdlib_abs() {
+        assert_eq!(eval_simple("$abs(-5)"), Value::Number(5.0));
+    }
+
+    #[test]
+    fn stdlib_floor() {
+        assert_eq!(eval_simple("$floor(3.7)"), Value::Number(3.0));
+    }
+
+    #[test]
+    fn stdlib_ceil() {
+        assert_eq!(eval_simple("$ceil(3.2)"), Value::Number(4.0));
+    }
+
+    #[test]
+    fn stdlib_round() {
+        assert_eq!(eval_simple("$round(3.456, 2)"), Value::Number(3.46));
+    }
+
+    #[test]
+    fn stdlib_sum() {
+        assert_eq!(eval_simple("$sum([1, 2, 3])"), Value::Number(6.0));
+    }
+
+    #[test]
+    fn stdlib_max() {
+        assert_eq!(eval_simple("$max([1, 5, 3])"), Value::Number(5.0));
+    }
+
+    #[test]
+    fn stdlib_min() {
+        assert_eq!(eval_simple("$min([1, 5, 3])"), Value::Number(1.0));
+    }
+
+    #[test]
+    fn stdlib_average() {
+        assert_eq!(eval_simple("$average([2, 4, 6])"), Value::Number(4.0));
+    }
+
+    #[test]
+    fn stdlib_count() {
+        assert_eq!(eval_simple("$count([1, 2, 3])"), Value::Number(3.0));
+    }
+
+    #[test]
+    fn stdlib_append() {
+        assert_eq!(
+            eval_simple("$append([1, 2], [3, 4])"),
+            Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_reverse() {
+        assert_eq!(
+            eval_simple("$reverse([1, 2, 3])"),
+            Value::Array(vec![
+                Value::Number(3.0),
+                Value::Number(2.0),
+                Value::Number(1.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_keys() {
+        let result = eval_with_data("$keys($)", r#"{"a": 1, "b": 2}"#);
+        assert_eq!(
+            result,
+            Value::Array(vec![Value::String("a".into()), Value::String("b".into()),])
+        );
+    }
+
+    #[test]
+    fn stdlib_values() {
+        let result = eval_with_data("$values($)", r#"{"a": 1, "b": 2}"#);
+        assert_eq!(
+            result,
+            Value::Array(vec![Value::Number(1.0), Value::Number(2.0)])
+        );
+    }
+
+    #[test]
+    fn stdlib_boolean() {
+        assert_eq!(eval_simple("$boolean(1)"), Value::Bool(true));
+        assert_eq!(eval_simple("$boolean(0)"), Value::Bool(false));
+        assert_eq!(eval_simple(r#"$boolean("")"#), Value::Bool(false));
+    }
+
+    #[test]
+    fn stdlib_not() {
+        assert_eq!(eval_simple("$not(true)"), Value::Bool(false));
+        assert_eq!(eval_simple("$not(false)"), Value::Bool(true));
+    }
+
+    #[test]
+    fn stdlib_exists() {
+        assert_eq!(eval_simple("$exists(42)"), Value::Bool(true));
+        assert_eq!(eval_simple("$exists($nothing)"), Value::Bool(false));
+    }
+
+    #[test]
+    fn stdlib_type() {
+        assert_eq!(eval_simple(r#"$type(42)"#), Value::String("number".into()));
+        assert_eq!(
+            eval_simple(r#"$type("hi")"#),
+            Value::String("string".into())
+        );
+        assert_eq!(
+            eval_simple(r#"$type(true)"#),
+            Value::String("boolean".into())
+        );
+    }
+
+    #[test]
+    fn stdlib_map() {
+        assert_eq!(
+            eval_simple("$map([1, 2, 3], function($v){$v * 2})"),
+            Value::Array(vec![
+                Value::Number(2.0),
+                Value::Number(4.0),
+                Value::Number(6.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_filter() {
+        assert_eq!(
+            eval_simple("$filter([1, 2, 3, 4], function($v){$v > 2})"),
+            Value::Array(vec![Value::Number(3.0), Value::Number(4.0)])
+        );
+    }
+
+    #[test]
+    fn stdlib_reduce() {
+        assert_eq!(
+            eval_simple("$reduce([1, 2, 3], function($prev, $curr){$prev + $curr})"),
+            Value::Number(6.0)
+        );
+    }
+
+    #[test]
+    fn stdlib_sort_default() {
+        assert_eq!(
+            eval_simple("$sort([3, 1, 2])"),
+            Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_distinct() {
+        assert_eq!(
+            eval_simple("$distinct([1, 2, 2, 3, 1])"),
+            Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_merge() {
+        let result = eval_simple(r#"$merge([{"a": 1}, {"b": 2}])"#);
+        match result {
+            Value::Object(obj) => {
+                assert_eq!(obj.get("a"), Some(&Value::Number(1.0)));
+                assert_eq!(obj.get("b"), Some(&Value::Number(2.0)));
+            }
+            other => panic!("expected Object, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn stdlib_flatten() {
+        assert_eq!(
+            eval_simple("$flatten([[1, 2], [3, [4, 5]]])"),
+            Value::Array(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+                Value::Number(5.0),
+            ])
+        );
+    }
+
+    #[test]
+    fn stdlib_base64() {
+        assert_eq!(
+            eval_simple(r#"$base64encode("hello")"#),
+            Value::String("aGVsbG8=".into())
+        );
+        assert_eq!(
+            eval_simple(r#"$base64decode("aGVsbG8=")"#),
+            Value::String("hello".into())
+        );
     }
 }
