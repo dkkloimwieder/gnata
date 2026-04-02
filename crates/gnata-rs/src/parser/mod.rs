@@ -48,6 +48,7 @@ impl Parser {
 
     fn advance(&mut self) -> Result<(), JsonataError> {
         self.token = self.lex.next(self.infix)?;
+        self.infix = false;
         Ok(())
     }
 
@@ -111,6 +112,7 @@ impl Parser {
         let tok = self.token.clone();
         match tok.typ {
             TokenType::Name => {
+                self.infix = true;
                 self.advance()?;
                 // Check for lambda: "function" or "λ" followed by "("
                 if (tok.value == "function" || tok.value == "λ")
@@ -118,7 +120,6 @@ impl Parser {
                 {
                     return self.parse_lambda(tok.pos);
                 }
-                self.infix = true;
                 Ok(self.arena.alloc(Expr::Name {
                     value: tok.value,
                     pos: tok.pos,
@@ -131,8 +132,8 @@ impl Parser {
             }
             // Keywords can appear as field names in prefix position
             TokenType::And | TokenType::Or | TokenType::In => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::Name {
                     value: tok.value,
                     pos: tok.pos,
@@ -144,24 +145,24 @@ impl Parser {
                 }))
             }
             TokenType::Variable => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::Variable {
                     name: tok.value,
                     pos: tok.pos,
                 }))
             }
             TokenType::String => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::StringLit {
                     value: tok.value,
                     pos: tok.pos,
                 }))
             }
             TokenType::Number => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::NumberLit {
                     value: tok.num_val,
                     raw: tok.value,
@@ -169,16 +170,16 @@ impl Parser {
                 }))
             }
             TokenType::Value => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::ValueLit {
                     value: tok.value,
                     pos: tok.pos,
                 }))
             }
             TokenType::Regex => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::Regex {
                     pattern: tok.regex_pat,
                     flags: tok.regex_flg,
@@ -214,18 +215,18 @@ impl Parser {
                 }
             }
             TokenType::Star => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::Wildcard { pos: tok.pos }))
             }
             TokenType::StarStar => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::Descendant { pos: tok.pos }))
             }
             TokenType::Percent => {
-                self.advance()?;
                 self.infix = true;
+                self.advance()?;
                 Ok(self.arena.alloc(Expr::Parent {
                     pos: tok.pos,
                     slot: None,
@@ -249,8 +250,8 @@ impl Parser {
                         self.advance_prefix()?;
                     }
                 }
-                self.advance()?; // consume ]
                 self.infix = true;
+                self.advance()?; // consume ]
                 Ok(self.arena.alloc(Expr::Unary {
                     op: "[".into(),
                     operand: NodeId::EMPTY,
@@ -263,7 +264,6 @@ impl Parser {
                 // Object constructor {...}
                 self.advance_prefix()?;
                 let pairs = self.parse_object_pairs()?;
-                self.infix = true;
                 Ok(self.arena.alloc(Expr::Unary {
                     op: "{".into(),
                     operand: NodeId::EMPTY,
@@ -290,8 +290,8 @@ impl Parser {
                         self.advance_prefix()?;
                     }
                 }
-                self.advance()?; // consume )
                 self.infix = true;
+                self.advance()?; // consume )
                 Ok(self.arena.alloc(Expr::Block {
                     expressions: exprs,
                     pos: tok.pos,
@@ -357,8 +357,8 @@ impl Parser {
                         self.advance_prefix()?;
                     }
                 }
-                self.advance()?; // consume )
                 self.infix = true;
+                self.advance()?; // consume )
                 if has_placeholder {
                     Ok(self.arena.alloc(Expr::Partial {
                         procedure: left,
@@ -379,14 +379,14 @@ impl Parser {
                 self.advance_prefix()?;
                 if self.token.typ == TokenType::RBracket {
                     // Empty [] → set KeepArray on left
-                    self.advance()?;
                     self.infix = true;
+                    self.advance()?;
                     self.set_keep_array(left);
                     Ok(left)
                 } else {
                     let rhs = self.expression(0)?;
-                    self.consume(TokenType::RBracket)?;
                     self.infix = true;
+                    self.consume(TokenType::RBracket)?;
                     Ok(self.arena.alloc(Expr::Binary {
                         op: "[".into(),
                         lhs: left,
@@ -647,8 +647,8 @@ impl Parser {
         // Body: { expr }
         self.consume_prefix(TokenType::LBrace)?;
         let body = self.expression(0)?;
-        self.consume(TokenType::RBrace)?;
         self.infix = true;
+        self.consume(TokenType::RBrace)?;
 
         Ok(self.arena.alloc(Expr::Lambda {
             params,
@@ -699,8 +699,8 @@ impl Parser {
         } else {
             None
         };
-        self.consume(TokenType::Pipe)?;
         self.infix = true;
+        self.consume(TokenType::Pipe)?;
         Ok(self.arena.alloc(Expr::Transform {
             pattern,
             update,
@@ -742,8 +742,8 @@ impl Parser {
                 self.advance_prefix()?;
             }
         }
-        self.advance()?; // consume )
         self.infix = true;
+        self.advance()?; // consume )
         Ok(self.arena.alloc(Expr::Sort {
             expr: left,
             terms,
@@ -770,6 +770,7 @@ impl Parser {
                 self.advance_prefix()?;
             }
         }
+        self.infix = true;
         self.advance()?; // consume }
         Ok(pairs)
     }

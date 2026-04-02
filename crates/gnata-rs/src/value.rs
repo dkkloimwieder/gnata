@@ -29,6 +29,11 @@ pub enum Value {
     Object(IndexMap<String, Value>),
     /// Internal sequence used during evaluation. Never returned to users.
     Sequence(Sequence),
+    /// Function value (built-in, lambda, partial application).
+    /// Internal — collapsed before returning to users.
+    Function(crate::evaluator::FunctionValue),
+    /// Tail-call sentinel for TCO trampoline. Internal only.
+    TailCall(Box<crate::evaluator::TailCall>),
 }
 
 impl Value {
@@ -62,6 +67,10 @@ impl Value {
 
     pub fn is_sequence(&self) -> bool {
         matches!(self, Value::Sequence(_))
+    }
+
+    pub fn is_function(&self) -> bool {
+        matches!(self, Value::Function(_))
     }
 
     /// Returns true if the value is a finite number (not NaN or Inf).
@@ -142,6 +151,8 @@ impl Value {
                 _ => arr.iter().any(|v| v.to_boolean()),
             },
             Value::Sequence(seq) => seq.collapse().to_boolean(),
+            Value::Function(_) => true,
+            Value::TailCall(_) => true,
         }
     }
 
@@ -323,6 +334,8 @@ impl Value {
                 obj.iter().map(|(k, v)| (k.clone(), v.to_json())).collect(),
             ),
             Value::Sequence(seq) => seq.collapse().to_json(),
+            // Functions and tail-calls are not JSON-representable.
+            Value::Function(_) | Value::TailCall(_) => serde_json::Value::Null,
         }
     }
 
