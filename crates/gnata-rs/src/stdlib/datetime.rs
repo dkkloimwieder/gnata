@@ -356,7 +356,9 @@ fn format_token(
         return Ok(String::new());
     }
     let mut chars = token.chars();
-    let component = chars.next().expect("token is non-empty");
+    let component = chars.next().ok_or_else(|| {
+        JsonataError::new("D3130", "unexpected empty picture token")
+    })?;
     let modifier: String = chars.collect();
 
     match component {
@@ -787,7 +789,9 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
                 i = j + 1;
                 continue;
             }
-            let comp = tok.chars().next().expect("tok is non-empty");
+            let comp = tok.chars().next().ok_or_else(|| {
+                JsonataError::new("D3132", "unexpected empty picture token")
+            })?;
             if !VALID_COMPONENTS.contains(&comp) {
                 return Err(JsonataError::new(
                     "D3132",
@@ -1281,7 +1285,7 @@ fn parse_roman(runes: &[char]) -> (i64, i64) {
     let mut total: i64 = 0;
     let mut prev: i64 = 0;
     for j in (0..i).rev() {
-        let v = roman_val(runes[j]).expect("loop only covers validated roman chars");
+        let v = roman_val(runes[j]).unwrap_or(0);
         if v < prev {
             total -= v;
         } else {
@@ -1297,7 +1301,7 @@ fn parse_alphabetic(runes: &[char], modifier: &str) -> (i64, i64) {
     let mut i = 0;
     let mut result: i64 = 0;
     while i < runes.len() && runes[i].is_ascii_alphabetic() {
-        let c = runes[i].to_lowercase().next().expect("to_lowercase always yields at least one char");
+        let c = runes[i].to_lowercase().next().unwrap_or(runes[i]);
         let digit = (c as i64) - ('a' as i64) + 1;
         result = result * 26 + digit;
         i += 1;
@@ -2073,7 +2077,9 @@ fn parse_tz(s: &str) -> Result<i32, JsonataError> {
     if let Ok(tz) = jiff::tz::TimeZone::get(s) {
         // For fixed-name TZs, get the offset at epoch 0 as approximation.
         // For proper named TZs we convert a known timestamp.
-        let ts = jiff::Timestamp::new(0, 0).expect("epoch 0 is always valid");
+        let ts = jiff::Timestamp::new(0, 0).map_err(|e| {
+            JsonataError::new("D3001", format!("failed to create epoch timestamp: {e}"))
+        })?;
         let offset = tz.to_fixed_offset().map_or(0, jiff::tz::Offset::seconds);
         let _ = ts;
         return Ok(offset);

@@ -1254,7 +1254,7 @@ fn eval_tuple_group(
 
         // Phase 2: evaluate value expression per group.
         for key in &key_order {
-            let (values, envs) = groups.get(key).expect("key from key_order must exist in groups");
+            let (values, envs) = groups.get(key).ok_or_else(|| JsonataError::new("D0000", "key from key_order must exist in groups"))?;
             let (group_ctx, group_env) = if values.len() == 1 {
                 (values[0].clone(), Rc::clone(&envs[0]))
             } else {
@@ -1329,12 +1329,12 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
             }
         }
         if vals.len() == 1 {
-            merged.bind(name.clone(), vals.into_iter().next().expect("len is 1"));
+            merged.bind(name.clone(), vals.into_iter().next().unwrap_or(Value::Undefined));
         } else if !vals.is_empty() {
             // Check if all values are identical.
             let all_same = vals.windows(2).all(|w| w[0] == w[1]);
             if all_same {
-                merged.bind(name.clone(), vals.into_iter().next().expect("vals is non-empty"));
+                merged.bind(name.clone(), vals.into_iter().next().unwrap_or(Value::Undefined));
             } else {
                 merged.bind(name.clone(), Value::Array(vals));
             }
@@ -1743,8 +1743,8 @@ fn eval_arithmetic(
     if left.is_undefined() || right.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let ln = left.as_f64().expect("left verified as number above");
-    let rn = right.as_f64().expect("right verified as number above");
+    let ln = left.as_f64().ok_or_else(|| JsonataError::new("D0000", "left verified as number above"))?;
+    let rn = right.as_f64().ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
     // Modulo by zero → D3001 immediately (matches Go).
     if op == "%" && rn == 0.0 {
         return Err(JsonataError::new("D3001", "modulo by zero"));
@@ -1804,8 +1804,8 @@ fn eval_range(
         return Ok(Value::Undefined);
     }
 
-    let ln = left.as_f64().expect("left verified as number above");
-    let rn = right.as_f64().expect("right verified as number above");
+    let ln = left.as_f64().ok_or_else(|| JsonataError::new("D0000", "left verified as number above"))?;
+    let rn = right.as_f64().ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
 
     // Must be integers (no fractional part).
     if ln != ln.trunc() {
@@ -1917,7 +1917,7 @@ fn eval_subscript(
             let mut actual_indices: Vec<i64> = indices
                 .iter()
                 .map(|v| {
-                    let idx = v.as_f64().expect("all verified as f64 above") as i64;
+                    let idx = v.as_f64().unwrap_or(0.0) as i64;
                     if idx < 0 { len + idx } else { idx }
                 })
                 .collect();
@@ -2115,7 +2115,7 @@ fn apply_regex_chain(
     let re = crate::stdlib::regex::compile_regex(pattern, flags)
         .map_err(|e| JsonataError::new("D1002", format!("invalid regex: {}", e.message)))?;
     if let Some(caps) = re.captures(s) {
-        let m = caps.get(0).expect("capture group 0 always exists when captures succeed");
+        let m = caps.get(0).ok_or_else(|| JsonataError::new("D0000", "capture group 0 always exists when captures succeed"))?;
         // Build match object similar to $match.
         let mut obj = indexmap::IndexMap::new();
         obj.insert("match".into(), Value::String(m.as_str().into()));
@@ -2368,7 +2368,7 @@ fn eval_sort(
 
     if terms.is_empty() {
         if !was_array && arr.len() == 1 {
-            return Ok(arr.into_iter().next().expect("len is 1"));
+            return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
         }
         return Ok(Value::Array(arr));
     }
@@ -2392,7 +2392,7 @@ fn eval_sort(
     }
 
     if !was_array && arr.len() == 1 {
-        return Ok(arr.into_iter().next().expect("len is 1"));
+        return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
     }
     Ok(Value::Array(arr))
 }
@@ -2916,7 +2916,7 @@ fn eval_group_by(
                     format!("duplicate key: \"{key_str}\""),
                 ));
             }
-            let (group_items, first_idx) = groups.get(key_str).expect("key from group_order must exist in groups");
+            let (group_items, first_idx) = groups.get(key_str).ok_or_else(|| JsonataError::new("D0000", "key from group_order must exist in groups"))?;
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {

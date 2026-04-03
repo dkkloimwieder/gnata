@@ -89,7 +89,7 @@ pub fn fn_filter(
         return Ok(Value::Undefined);
     }
     if result.len() == 1 {
-        return Ok(result.into_iter().next().expect("checked len == 1"));
+        return Ok(result.swap_remove(0));
     }
     Ok(Value::Array(result))
 }
@@ -393,7 +393,7 @@ pub fn fn_single(
             "D3139",
             "$single: expected 1 match, found 0",
         )),
-        _ => Ok(matches.into_iter().next().expect("match count >= 1")),
+        _ => Ok(matches.swap_remove(0)),
     }
 }
 

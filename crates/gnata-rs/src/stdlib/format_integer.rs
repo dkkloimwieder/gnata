@@ -636,7 +636,7 @@ fn to_alphabetic(mut n: i64, base: char) -> String {
     let mut result: Vec<char> = Vec::new();
     while n > 0 {
         n -= 1;
-        result.push(char::from_u32(base as u32 + (n % 26) as u32).expect("valid ASCII letter offset"));
+        result.push(char::from_u32(base as u32 + (n % 26) as u32).unwrap_or(base));
         n /= 26;
     }
     result.reverse();

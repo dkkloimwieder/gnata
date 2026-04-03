@@ -19,7 +19,7 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
             }
             let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.clone())).collect();
             if keys.len() == 1 {
-                return Ok(keys.into_iter().next().expect("checked len == 1"));
+                return Ok(keys.into_iter().next().unwrap_or(Value::Undefined));
             }
             Ok(Value::Array(keys))
         }
@@ -42,7 +42,7 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
                 return Ok(Value::Undefined);
             }
             if all_keys.len() == 1 {
-                return Ok(all_keys.into_iter().next().expect("checked len == 1"));
+                return Ok(all_keys.into_iter().next().unwrap_or(Value::Undefined));
             }
             Ok(Value::Array(all_keys))
         }
@@ -157,7 +157,7 @@ pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
             }
             match result.len() {
                 0 => Ok(Value::Undefined),
-                1 => Ok(result.into_iter().next().expect("checked len == 1")),
+                1 => Ok(result.into_iter().next().unwrap_or(Value::Undefined)),
                 _ => Ok(Value::Array(result)),
             }
         }

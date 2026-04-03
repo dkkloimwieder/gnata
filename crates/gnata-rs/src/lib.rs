@@ -15,6 +15,7 @@
 #![allow(clippy::many_single_char_names)]
 // Restriction lints -- opt in
 #![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
 #![warn(clippy::panic)]
 
 pub mod error;

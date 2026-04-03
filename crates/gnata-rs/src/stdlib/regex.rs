@@ -132,7 +132,7 @@ pub fn fn_match(
         return Ok(Value::Undefined);
     }
     if result.len() == 1 {
-        return Ok(result.into_iter().next().expect("checked len == 1"));
+        return Ok(result.swap_remove(0));
     }
     Ok(Value::Array(result))
 }
@@ -185,7 +185,7 @@ fn match_with_custom_matcher(
         return Ok(Value::Undefined);
     }
     if result.len() == 1 {
-        return Ok(result.into_iter().next().expect("checked len == 1"));
+        return Ok(result.swap_remove(0));
     }
     Ok(Value::Array(result))
 }
@@ -314,7 +314,9 @@ fn replace_regex_string(
         {
             break;
         }
-        let m = caps.get(0).expect("capture group 0 always exists");
+        let m = caps.get(0).ok_or_else(|| {
+            JsonataError::new("D1004", "$replace: failed to get regex match")
+        })?;
         if m.as_str().is_empty() {
             return Err(JsonataError::new(
                 "D1004",
@@ -352,7 +354,9 @@ fn replace_with_fn(
         {
             break;
         }
-        let m = caps.get(0).expect("capture group 0 always exists");
+        let m = caps.get(0).ok_or_else(|| {
+            JsonataError::new("D1004", "$replace: failed to get regex match")
+        })?;
         if m.as_str().is_empty() {
             return Err(JsonataError::new(
                 "D1004",
