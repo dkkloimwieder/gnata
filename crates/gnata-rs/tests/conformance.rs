@@ -54,7 +54,11 @@ fn load_test_cases(path: &Path) -> Vec<TestCase> {
     };
     let json: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
-        Err(_) => return vec![],
+        Err(_) => {
+            // serde_json fails on lone UTF-16 surrogates (\uD800).
+            // Extract test case info via regex to avoid skipping.
+            return load_surrogate_test_cases(&content, path);
+        }
     };
 
     let objects: Vec<&serde_json::Map<String, serde_json::Value>> = match &json {
@@ -66,9 +70,69 @@ fn load_test_cases(path: &Path) -> Vec<TestCase> {
     let dir = path.parent().unwrap_or(Path::new("."));
 
     objects
-        .into_iter()
+        .iter()
         .filter_map(|obj| parse_test_object(obj, dir, path))
         .collect()
+}
+
+/// Fallback for test files containing lone UTF-16 surrogates that serde_json
+/// can't parse. Extracts the expression and expected error code via raw string
+/// matching. The JSON \uD800 escape is kept as literal characters so our
+/// JSONata lexer sees `\uD800` and rejects it with D3140.
+fn load_surrogate_test_cases(content: &str, path: &Path) -> Vec<TestCase> {
+    // Extract "expr": "..." — keep JSON escapes as-is (don't decode \uD800).
+    let expr = extract_json_string_raw(content, "expr");
+    let expr = match expr {
+        Some(e) => e,
+        None => return vec![],
+    };
+
+    // Extract error code from "code" or nested "error"."code".
+    let code = extract_json_string_raw(content, "code");
+    let expected = match code {
+        Some(c) => Expected::Error(c),
+        None => return vec![],
+    };
+
+    let input = if content.contains("\"dataset5\"") {
+        load_dataset("dataset5")
+    } else {
+        Value::Undefined
+    };
+
+    vec![TestCase {
+        expr,
+        input,
+        expected,
+        bindings: Vec::new(),
+        file: path.display().to_string(),
+    }]
+}
+
+/// Extract a JSON string value by key from raw text without full JSON parsing.
+/// Returns the raw content between quotes (with JSON escapes preserved as-is).
+fn extract_json_string_raw(content: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{}\"", key);
+    let i = content.find(&needle)?;
+    let rest = &content[i + needle.len()..];
+    let colon = rest.find(':')?;
+    let after = rest[colon + 1..].trim_start();
+    if !after.starts_with('"') {
+        return None;
+    }
+    let s = &after[1..];
+    let mut end = 0;
+    let bytes = s.as_bytes();
+    while end < bytes.len() {
+        if bytes[end] == b'\\' {
+            end += 2;
+        } else if bytes[end] == b'"' {
+            break;
+        } else {
+            end += 1;
+        }
+    }
+    Some(s[..end].to_string())
 }
 
 fn parse_test_object(

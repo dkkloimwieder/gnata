@@ -288,6 +288,11 @@ impl Lexer {
                     }
                     if let Some(ch) = char::from_u32(r) {
                         result.push(ch);
+                    } else {
+                        return Err(lex_error(
+                            "D3140",
+                            &format!("invalid Unicode codepoint: \\u{:04X}", r),
+                        ));
                     }
                 }
                 _ => {
