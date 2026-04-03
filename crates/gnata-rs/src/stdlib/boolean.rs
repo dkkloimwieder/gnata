@@ -31,5 +31,11 @@ pub fn fn_exists(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$exists: argument is required"));
     }
+    if args.len() > 1 {
+        return Err(JsonataError::new(
+            "T0410",
+            "$exists: takes at most 1 argument",
+        ));
+    }
     Ok(Value::Bool(!args[0].is_undefined()))
 }

@@ -157,13 +157,14 @@ pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_error(args: &[Value], _focus: &Value) -> JsonataResult {
-    let msg = if args.is_empty() || args[0].is_undefined() {
-        "$error() function evaluated".to_string()
-    } else {
-        match &args[0] {
-            Value::String(s) => s.clone(),
-            other => other.stringify().unwrap_or_default(),
-        }
-    };
-    Err(JsonataError::new("D3137", msg))
+    if args.is_empty() || args[0].is_undefined() {
+        return Err(JsonataError::new("D3137", "$error() function evaluated"));
+    }
+    match &args[0] {
+        Value::String(s) => Err(JsonataError::new("D3137", s.clone())),
+        _ => Err(JsonataError::new(
+            "T0410",
+            "$error: argument must be a string",
+        )),
+    }
 }

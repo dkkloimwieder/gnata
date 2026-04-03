@@ -136,9 +136,8 @@ pub fn eval_function(
 
     // Signature validation for SignedBuiltins at direct call site.
     // HOF callbacks bypass this (they go through apply_function instead).
-    if let FunctionValue::SignedBuiltin { signature, .. } = &func
-        && let Ok(specs) = super::parse_signature(signature)
-    {
+    if let FunctionValue::SignedBuiltin { signature, .. } = &func {
+        let specs = super::parse_signature(signature)?;
         let (coerced, return_undefined) = super::process_call_args(&specs, &args)?;
         if return_undefined {
             return Ok(Value::Undefined);
@@ -181,7 +180,16 @@ pub fn eval_lambda(
         })
         .collect();
 
-    let sig = signature.map(|s| s.raw).unwrap_or_default();
+    let sig = signature
+        .map(|s| {
+            let r = s.raw.as_str();
+            // Strip outer <> brackets if present.
+            r.strip_prefix('<')
+                .and_then(|r| r.strip_suffix('>'))
+                .unwrap_or(r)
+                .to_string()
+        })
+        .unwrap_or_default();
 
     Ok(Value::Function(FunctionValue::Lambda(Rc::new(Lambda {
         params: param_names,
@@ -213,6 +221,19 @@ pub fn eval_partial(
     let func = match fn_val {
         Value::Function(f) => f,
         Value::Undefined => {
+            // Distinguish T1007 vs T1008 based on whether the name exists in env.
+            if let Expr::Name { value, .. } = arena.get(procedure) {
+                if env.lookup(value).is_some() {
+                    return Err(JsonataError::new(
+                        "T1007",
+                        "attempted to partially apply a function referenced without $",
+                    ));
+                }
+                return Err(JsonataError::new(
+                    "T1008",
+                    "cannot partially apply a non-function: the function is not defined",
+                ));
+            }
             return Err(JsonataError::new(
                 "T1007",
                 "attempted to partially apply an undefined function",
@@ -240,29 +261,25 @@ pub fn eval_partial(
         }
     }
 
-    let partial_fn: Rc<BuiltinFn> = Rc::new(move |args: &[Value], focus: &Value| {
-        let mut full_args = bound_args.clone();
-        let mut arg_idx = 0;
-        for (i, &placeholder) in is_placeholder.iter().enumerate() {
-            if placeholder && arg_idx < args.len() {
-                full_args[i] = args[arg_idx].clone();
-                arg_idx += 1;
+    let env_clone = Rc::clone(env);
+    let partial_fn: Rc<super::EnvAwareBuiltinFn> = Rc::new(
+        move |args: &[Value],
+              focus: &Value,
+              _env: &Rc<super::Environment>,
+              arena: &crate::parser::AstArena| {
+            let mut full_args = bound_args.clone();
+            let mut arg_idx = 0;
+            for (i, &placeholder) in is_placeholder.iter().enumerate() {
+                if placeholder && arg_idx < args.len() {
+                    full_args[i] = args[arg_idx].clone();
+                    arg_idx += 1;
+                }
             }
-        }
-        // Note: partial calls need arena access for lambda body eval.
-        // For now, partials over builtins work directly.
-        // Lambda partials will need the arena passed through differently.
-        match &func {
-            FunctionValue::Builtin(f) => f(&full_args, focus),
-            FunctionValue::SignedBuiltin { func: f, .. } => f(&full_args, focus),
-            _ => Err(JsonataError::new(
-                "T1006",
-                "partial application of non-builtin requires arena context",
-            )),
-        }
-    });
+            super::call_function(&func, &full_args, focus, &env_clone, arena)
+        },
+    );
 
-    Ok(Value::Function(FunctionValue::Partial(partial_fn)))
+    Ok(Value::Function(FunctionValue::EnvAwareBuiltin(partial_fn)))
 }
 
 /// Call a function value with arguments. Contains the trampoline loop for TCO.
@@ -296,9 +313,8 @@ pub fn call_function(
             }
             FunctionValue::Lambda(lambda) => {
                 // Lambda signature validation.
-                if !lambda.signature.is_empty()
-                    && let Ok(specs) = super::parse_signature(&lambda.signature)
-                {
+                if !lambda.signature.is_empty() {
+                    let specs = super::parse_signature(&lambda.signature)?;
                     let (coerced, return_undefined) =
                         super::process_call_args(&specs, &current_args)?;
                     if return_undefined {

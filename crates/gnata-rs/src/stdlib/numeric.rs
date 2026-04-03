@@ -93,6 +93,7 @@ fn to_number_array(v: &Value) -> Option<Vec<f64>> {
             }
             Some(nums)
         }
+        Value::Sequence(seq) => to_number_array(&seq.collapse()),
         _ => None,
     }
 }

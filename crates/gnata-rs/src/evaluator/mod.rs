@@ -1145,10 +1145,15 @@ fn eval_transform(
     let _ = func; // unused — we use EnvAwareBuiltin approach
 
     // Return a function value that performs the transform when called.
+    // Go equivalent: if len(args) > 0 { doc = args[0] } else { doc = focus }
+    // When called via the pipe operator (~>), piped is args[0].
+    // If piped is undefined (e.g. `foo ~> |...|` where foo is missing), we pass
+    // undefined to apply_transform which immediately returns undefined.
+    // When called standalone (no args), we use focus (the current input context).
     let env_for_fn = Rc::clone(env);
     let transform_fn: Rc<crate::evaluator::EnvAwareBuiltinFn> = Rc::new(
         move |args: &[Value], focus: &Value, _env: &Rc<Environment>, arena: &AstArena| {
-            let doc = if !args.is_empty() && !args[0].is_undefined() {
+            let doc = if !args.is_empty() {
                 args[0].clone()
             } else {
                 focus.clone()
@@ -1191,6 +1196,13 @@ fn apply_transform(
 
     let matched = eval(arena, pattern, &cloned, env)?;
 
+    // Collect target objects from the matched result.
+    // These are VALUE copies of the objects found at matched positions.
+    // Sequences may appear if the pattern expression produces one as its final result.
+    let matched = match matched {
+        Value::Sequence(seq) => seq.collapse(),
+        other => other,
+    };
     let mut targets: Vec<Value> = Vec::new();
     match &matched {
         Value::Object(_) => targets.push(matched.clone()),
@@ -1210,15 +1222,110 @@ fn apply_transform(
         return Ok(cloned);
     }
 
-    // Apply transform to each target.
-    // Since we deep-cloned, we need to find the same objects in the clone.
-    // For simplicity, re-evaluate pattern on clone to get mutable references.
-    // This is correct because the pattern finds the same structural positions.
+    // For each matched target, compute what it looks like AFTER applying the transform.
+    // Then walk the clone and replace every occurrence of the original target value
+    // with its updated version. This mirrors Go's pointer-based mutation: since Go
+    // eval returns pointers into the clone, mutating them mutates the clone directly.
+    // In Rust we use value equality to locate the same structural positions.
+    let mut replacements: Vec<(Value, Value)> = Vec::new();
+    for target in &targets {
+        let updated = compute_updated_object(arena, update, delete, target, env)?;
+        replacements.push((target.clone(), updated));
+    }
+
     let mut result = cloned;
-    for _target in &targets {
-        apply_transform_target(arena, update, delete, &mut result, env)?;
+    for (original, updated) in &replacements {
+        replace_in_value(&mut result, original, updated);
     }
     Ok(result)
+}
+
+/// Compute the updated form of a single matched object by applying update and delete clauses.
+/// The update/delete expressions are evaluated with the original (pre-update) object as context,
+/// matching Go's behavior where Eval(node.Update, target, env) uses the unmodified target.
+fn compute_updated_object(
+    arena: &AstArena,
+    update: NodeId,
+    delete: Option<NodeId>,
+    target: &Value,
+    env: &Rc<Environment>,
+) -> Result<Value, JsonataError> {
+    let mut result = target.clone();
+
+    if !update.is_empty() {
+        // Evaluate update expression with the original target as context.
+        let update_val = eval(arena, update, target, env)?;
+        if !update_val.is_undefined() && !update_val.is_null() {
+            if let Value::Object(updates) = update_val {
+                if let Value::Object(obj) = &mut result {
+                    for (k, v) in updates {
+                        obj.insert(k, v);
+                    }
+                }
+            } else {
+                return Err(JsonataError::new(
+                    "T2011",
+                    "the insert/update clause of the transform expression must evaluate to an object",
+                ));
+            }
+        }
+    }
+
+    if let Some(del) = delete {
+        // Evaluate delete expression with the original target as context (pre-update),
+        // matching Go: Eval(node.Delete, target, env) where target is the original object.
+        let delete_val = eval(arena, del, target, env)?;
+        if !delete_val.is_undefined() && !delete_val.is_null() {
+            match delete_val {
+                Value::String(key) => {
+                    if let Value::Object(obj) = &mut result {
+                        obj.shift_remove(&key);
+                    }
+                }
+                Value::Array(keys) => {
+                    if let Value::Object(obj) = &mut result {
+                        for k in keys {
+                            if let Value::String(key) = k {
+                                obj.shift_remove(&key);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    return Err(JsonataError::new(
+                        "T2012",
+                        "the delete clause of the transform expression must evaluate to an array of strings",
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Recursively walk `value` and replace every occurrence of `original` (by value equality)
+/// with `replacement`. This is how we apply mutations from Go's pointer-based approach
+/// in Rust's owned-value model.
+fn replace_in_value(value: &mut Value, original: &Value, replacement: &Value) {
+    // Check if the current value itself matches the original (before borrowing internals).
+    if value == original {
+        *value = replacement.clone();
+        return;
+    }
+    match value {
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                replace_in_value(item, original, replacement);
+            }
+        }
+        Value::Object(obj) => {
+            for v in obj.values_mut() {
+                replace_in_value(v, original, replacement);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn validate_transform_clauses(
@@ -1242,60 +1349,6 @@ fn validate_transform_clauses(
         if !delete_val.is_undefined() && !delete_val.is_null() {
             match &delete_val {
                 Value::Array(_) | Value::String(_) => {}
-                _ => {
-                    return Err(JsonataError::new(
-                        "T2012",
-                        "the delete clause of the transform expression must evaluate to an array of strings",
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn apply_transform_target(
-    arena: &AstArena,
-    update: NodeId,
-    delete: Option<NodeId>,
-    target: &mut Value,
-    env: &Rc<Environment>,
-) -> Result<(), JsonataError> {
-    if !update.is_empty() {
-        let update_val = eval(arena, update, target, env)?;
-        if !update_val.is_undefined() && !update_val.is_null() {
-            if let Value::Object(updates) = update_val {
-                if let Value::Object(obj) = target {
-                    for (k, v) in updates {
-                        obj.insert(k, v);
-                    }
-                }
-            } else {
-                return Err(JsonataError::new(
-                    "T2011",
-                    "the insert/update clause of the transform expression must evaluate to an object",
-                ));
-            }
-        }
-    }
-    if let Some(del) = delete {
-        let delete_val = eval(arena, del, target, env)?;
-        if !delete_val.is_undefined() && !delete_val.is_null() {
-            match delete_val {
-                Value::String(key) => {
-                    if let Value::Object(obj) = target {
-                        obj.shift_remove(&key);
-                    }
-                }
-                Value::Array(keys) => {
-                    if let Value::Object(obj) = target {
-                        for k in keys {
-                            if let Value::String(key) = k {
-                                obj.shift_remove(&key);
-                            }
-                        }
-                    }
-                }
                 _ => {
                     return Err(JsonataError::new(
                         "T2012",
