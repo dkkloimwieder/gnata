@@ -28,6 +28,14 @@ use crate::value::{Sequence, Value};
 /// Returns JSONata-spec error codes for type mismatches, undefined references,
 /// stack overflows, cancellation, and other evaluation failures.
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
+    // Grow the stack on demand to prevent overflow on deep recursion.
+    // This mirrors Go's auto-growing goroutine stacks.
+    stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
+        eval_inner(arena, node, input, env)
+    })
+}
+
+fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     if node.is_empty() {
         return Ok(Value::Undefined);
     }
@@ -1991,18 +1999,36 @@ fn eval_chain(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    // Handle right-associative chaining: a ~> (f ~> g) → (a ~> f) ~> g
-    if let Expr::Binary {
+    // Flatten right-associative chain: a ~> (f ~> g) → [f, g], then iterate.
+    let mut steps = Vec::new();
+    let mut current = rhs;
+    while let Expr::Binary {
         op, lhs, rhs: rr, ..
-    } = arena.get(rhs)
+    } = arena.get(current)
         && op == "~>"
     {
-        let r1 = eval_chain(arena, *lhs, piped, input, env)?;
-        if r1.is_undefined() {
+        steps.push(*lhs);
+        current = *rr;
+    }
+    steps.push(current);
+
+    let mut result = piped.clone();
+    for step in steps {
+        result = eval_chain_step(arena, step, &result, input, env)?;
+        if result.is_undefined() {
             return Ok(Value::Undefined);
         }
-        return eval_chain(arena, *rr, &r1, input, env);
     }
+    Ok(result)
+}
+
+fn eval_chain_step(
+    arena: &AstArena,
+    rhs: NodeId,
+    piped: &Value,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
 
     // Function call node: prepend piped as first argument.
     if let Expr::Function {
