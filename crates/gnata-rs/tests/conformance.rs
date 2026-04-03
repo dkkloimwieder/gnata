@@ -44,12 +44,46 @@ enum Expected {
     Error(String), // error code
 }
 
-fn load_test_case(path: &Path) -> Option<TestCase> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let obj = json.as_object()?;
+/// Load one or more test cases from a file.
+/// Handles both single-object and array-of-objects formats,
+/// and `expr-file` references to external .jsonata files.
+fn load_test_cases(path: &Path) -> Vec<TestCase> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
 
-    let expr = obj.get("expr")?.as_str()?.to_string();
+    let objects: Vec<&serde_json::Map<String, serde_json::Value>> = match &json {
+        serde_json::Value::Object(obj) => vec![obj],
+        serde_json::Value::Array(arr) => arr.iter().filter_map(|v| v.as_object()).collect(),
+        _ => return vec![],
+    };
+
+    let dir = path.parent().unwrap_or(Path::new("."));
+
+    objects
+        .into_iter()
+        .filter_map(|obj| parse_test_object(obj, dir, path))
+        .collect()
+}
+
+fn parse_test_object(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    dir: &Path,
+    file_path: &Path,
+) -> Option<TestCase> {
+    // Expression: either inline "expr" or external "expr-file".
+    let expr = if let Some(e) = obj.get("expr").and_then(|v| v.as_str()) {
+        e.to_string()
+    } else if let Some(f) = obj.get("expr-file").and_then(|v| v.as_str()) {
+        std::fs::read_to_string(dir.join(f)).ok()?
+    } else {
+        return None;
+    };
 
     // Load input data.
     let input = if let Some(dataset) = obj.get("dataset").and_then(|v| v.as_str()) {
@@ -64,7 +98,6 @@ fn load_test_case(path: &Path) -> Option<TestCase> {
     let expected = if let Some(code) = obj.get("code").and_then(|v| v.as_str()) {
         Expected::Error(code.to_string())
     } else if let Some(err_obj) = obj.get("error").and_then(|v| v.as_object()) {
-        // Error object format: {"error": {"code": "D3137", "message": "..."}}
         let code = err_obj
             .get("code")
             .and_then(|v| v.as_str())
@@ -92,7 +125,7 @@ fn load_test_case(path: &Path) -> Option<TestCase> {
         input,
         expected,
         bindings,
-        file: path.display().to_string(),
+        file: file_path.display().to_string(),
     })
 }
 
@@ -236,24 +269,31 @@ fn conformance_suite() {
         cases.sort_by_key(|e| e.file_name());
 
         for case_entry in &cases {
-            total += 1;
-            let tc = match load_test_case(&case_entry.path()) {
-                Some(tc) => tc,
-                None => {
-                    skipped += 1;
-                    continue;
-                }
-            };
-            match run_test_case(&tc) {
-                Ok(()) => passed += 1,
-                Err(msg) => {
-                    failed += 1;
-                    let case_name = format!(
-                        "{}/{}",
-                        group_name,
-                        case_entry.file_name().to_string_lossy()
-                    );
-                    failures.push((case_name, msg));
+            let test_cases = load_test_cases(&case_entry.path());
+            if test_cases.is_empty() {
+                total += 1;
+                skipped += 1;
+                let case_name = format!(
+                    "{}/{}",
+                    group_name,
+                    case_entry.file_name().to_string_lossy()
+                );
+                eprintln!("SKIP {case_name}");
+                continue;
+            }
+            for tc in &test_cases {
+                total += 1;
+                match run_test_case(tc) {
+                    Ok(()) => passed += 1,
+                    Err(msg) => {
+                        failed += 1;
+                        let case_name = format!(
+                            "{}/{}",
+                            group_name,
+                            case_entry.file_name().to_string_lossy()
+                        );
+                        failures.push((case_name, msg));
+                    }
                 }
             }
         }
