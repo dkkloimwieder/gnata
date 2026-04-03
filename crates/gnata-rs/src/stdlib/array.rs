@@ -7,6 +7,9 @@ pub fn fn_count(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$count: argument is required"));
     }
+    if args.len() > 1 {
+        return Err(JsonataError::new("T0410", "$count: expects 1 argument"));
+    }
     if args[0].is_undefined() {
         return Ok(Value::Number(0.0));
     }

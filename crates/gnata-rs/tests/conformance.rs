@@ -63,6 +63,14 @@ fn load_test_case(path: &Path) -> Option<TestCase> {
     // Determine expected outcome.
     let expected = if let Some(code) = obj.get("code").and_then(|v| v.as_str()) {
         Expected::Error(code.to_string())
+    } else if let Some(err_obj) = obj.get("error").and_then(|v| v.as_object()) {
+        // Error object format: {"error": {"code": "D3137", "message": "..."}}
+        let code = err_obj
+            .get("code")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        Expected::Error(code)
     } else if obj.get("undefinedResult").and_then(|v| v.as_bool()) == Some(true) {
         Expected::Undefined
     } else if let Some(result) = obj.get("result") {

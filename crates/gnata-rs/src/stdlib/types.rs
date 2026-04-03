@@ -25,17 +25,32 @@ pub fn fn_assert(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$assert: argument is required"));
     }
-    if !args[0].to_boolean() {
-        let msg = args
-            .get(1)
-            .and_then(|v| match v {
-                Value::String(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "$assert: assertion failed".into());
-        return Err(JsonataError::new("D3141", msg));
+    if args.len() > 2 {
+        return Err(JsonataError::new(
+            "T0410",
+            "$assert: takes at most 2 arguments",
+        ));
     }
-    Ok(Value::Undefined)
+    // First argument must be a boolean.
+    match &args[0] {
+        Value::Bool(b) => {
+            if !b {
+                let msg = args
+                    .get(1)
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "assertion failed".into());
+                return Err(JsonataError::new("D3141", msg));
+            }
+            Ok(Value::Undefined)
+        }
+        _ => Err(JsonataError::new(
+            "T0410",
+            "$assert: first argument must be a boolean",
+        )),
+    }
 }
 
 pub fn fn_now(_args: &[Value], _focus: &Value) -> JsonataResult {
