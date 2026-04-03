@@ -156,6 +156,14 @@ pub fn fn_replace(
         ));
     }
 
+    if let Some(v) = args.get(3) {
+        if v.is_null() {
+            return Err(JsonataError::new(
+                "T0410",
+                "$replace: fourth argument must be a number",
+            ));
+        }
+    }
     let limit: Option<usize> = args.get(3).and_then(|v| {
         v.as_f64().map(|n| {
             if n < 0.0 {

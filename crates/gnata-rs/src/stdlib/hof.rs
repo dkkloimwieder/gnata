@@ -118,6 +118,15 @@ pub fn fn_reduce(
             ));
         }
     };
+    // Check that the function accepts at least 2 parameters.
+    if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &func {
+        if lambda.params.len() < 2 {
+            return Err(JsonataError::new(
+                "D3050",
+                "$reduce: function argument must accept at least 2 parameters",
+            ));
+        }
+    }
     let init = args.get(2).cloned();
     if arr.is_empty() {
         return Ok(init.unwrap_or(Value::Undefined));
@@ -291,7 +300,13 @@ pub fn fn_sort(
                         std::cmp::Ordering::Greater => std::cmp::Ordering::Greater,
                     },
                     Err(e) => {
-                        error = Some(e);
+                        // Remap T2008 to D3070 for $sort function context.
+                        let mapped = if e.code == "T2008" {
+                            JsonataError::new("D3070", e.message.clone())
+                        } else {
+                            e
+                        };
+                        error = Some(mapped);
                         std::cmp::Ordering::Equal
                     }
                 }
@@ -349,7 +364,7 @@ pub fn fn_single(
     }
     match matches.len() {
         0 => Err(JsonataError::new(
-            "D3138",
+            "D3139",
             "$single: expected 1 match, found 0",
         )),
         _ => Ok(matches.into_iter().next().unwrap()),

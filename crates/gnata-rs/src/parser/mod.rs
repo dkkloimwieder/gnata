@@ -149,6 +149,7 @@ impl Parser {
                 self.advance()?;
                 Ok(self.arena.alloc(Expr::Variable {
                     name: tok.value,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -332,6 +333,7 @@ impl Parser {
                     op: ".".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -391,6 +393,7 @@ impl Parser {
                         op: "[".into(),
                         lhs: left,
                         rhs,
+                        group: None,
                         pos: tok.pos,
                     }))
                 }
@@ -488,6 +491,7 @@ impl Parser {
                     op: "~>".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -498,6 +502,7 @@ impl Parser {
                     op: "?:".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -508,6 +513,7 @@ impl Parser {
                     op: "??".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -518,6 +524,7 @@ impl Parser {
                     op: "..".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -528,6 +535,7 @@ impl Parser {
                     op: "and".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -538,6 +546,7 @@ impl Parser {
                     op: "or".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -548,6 +557,7 @@ impl Parser {
                     op: "in".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -568,6 +578,7 @@ impl Parser {
                     op: "%".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -580,6 +591,7 @@ impl Parser {
                     op: "|".into(),
                     lhs: left,
                     rhs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -605,6 +617,7 @@ impl Parser {
             op: op.into(),
             lhs: left,
             rhs,
+            group: None,
             pos,
         }))
     }
@@ -627,6 +640,7 @@ impl Parser {
             }
             let param = self.arena.alloc(Expr::Variable {
                 name: self.token.value.clone(),
+                group: None,
                 pos: self.token.pos,
             });
             params.push(param);
@@ -784,8 +798,11 @@ impl Parser {
     }
 
     fn set_group(&mut self, id: NodeId, group: GroupExpr) {
-        if let Expr::Name { group: g, .. } = self.arena.get_mut(id) {
-            *g = Some(group);
+        match self.arena.get_mut(id) {
+            Expr::Name { group: g, .. } => *g = Some(group),
+            Expr::Binary { group: g, .. } => *g = Some(group),
+            Expr::Variable { group: g, .. } => *g = Some(group),
+            _ => {}
         }
     }
 

@@ -303,6 +303,8 @@ pub fn call_function(
 
         match &current_func {
             FunctionValue::SignedBuiltin { func: f, .. } => {
+                // No signature validation here — HOF callbacks bypass signatures.
+                // Signature is validated at the direct call site (eval_function).
                 return f(&current_args, focus);
             }
             FunctionValue::Builtin(f) | FunctionValue::Partial(f) => {

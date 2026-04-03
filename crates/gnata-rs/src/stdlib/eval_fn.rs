@@ -50,7 +50,12 @@ pub fn fn_eval(
 
         let child_env = Rc::new(Environment::new_child(Rc::clone(env)));
         crate::stdlib::register_all_on_rc(&child_env);
-        crate::evaluator::eval(&arena, root, ctx, &child_env)
+        crate::evaluator::eval(&arena, root, ctx, &child_env).map_err(|e| {
+            JsonataError::new(
+                "D3121",
+                format!("unable to evaluate expression: {}", e.message),
+            )
+        })
     })();
 
     env.decr_eval_depth();

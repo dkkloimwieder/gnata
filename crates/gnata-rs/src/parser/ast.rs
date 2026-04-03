@@ -72,6 +72,7 @@ pub enum Expr {
     /// Variable reference ($name).
     Variable {
         name: String, // "" for bare $, "$" for $$
+        group: Option<GroupExpr>,
         pos: usize,
     },
     /// Wildcard (*).
@@ -94,6 +95,7 @@ pub enum Expr {
     Path {
         steps: Vec<NodeId>,
         keep_singleton_array: bool,
+        group: Option<GroupExpr>,
         pos: usize,
     },
 
@@ -102,6 +104,7 @@ pub enum Expr {
         op: String,
         lhs: NodeId,
         rhs: NodeId,
+        group: Option<GroupExpr>,
         pos: usize,
     },
 

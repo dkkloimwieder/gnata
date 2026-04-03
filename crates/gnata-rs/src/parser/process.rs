@@ -250,11 +250,8 @@ pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsonata
 fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError> {
     let group = match arena.get(node) {
         Expr::Name { group, .. } => group.clone(),
-        Expr::Path { .. } => {
-            // Path nodes don't carry groups directly in our AST;
-            // groups are on the last step Name node.
-            return Ok(());
-        }
+        Expr::Variable { group, .. } => group.clone(),
+        Expr::Path { group, .. } => group.clone(),
         _ => None,
     };
     if let Some(mut g) = group {
@@ -262,8 +259,11 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
             pair[0] = process_ast(arena, pair[0])?;
             pair[1] = process_ast(arena, pair[1])?;
         }
-        if let Expr::Name { group: gr, .. } = arena.get_mut(node) {
-            *gr = Some(g);
+        match arena.get_mut(node) {
+            Expr::Name { group: gr, .. } => *gr = Some(g),
+            Expr::Variable { group: gr, .. } => *gr = Some(g),
+            Expr::Path { group: gr, .. } => *gr = Some(g),
+            _ => {}
         }
     }
     Ok(())
@@ -271,6 +271,12 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
 
 /// Flatten a binary(".") node into a Path node.
 fn process_dot_binary(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
+    // Extract group from the binary "." node before collecting steps.
+    let bin_group = match arena.get(node) {
+        Expr::Binary { group, .. } => group.clone(),
+        _ => None,
+    };
+
     let mut steps = Vec::new();
     collect_path_steps(arena, node, &mut steps)?;
 
@@ -303,16 +309,24 @@ fn process_dot_binary(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Json
         }
     }
 
+    // Process group-by key/value pairs so nested dot expressions within them are resolved.
+    let processed_group = if let Some(mut g) = bin_group {
+        for pair in &mut g.pairs {
+            pair[0] = process_ast(arena, pair[0])?;
+            pair[1] = process_ast(arena, pair[1])?;
+        }
+        Some(g)
+    } else {
+        None
+    };
+
     // Reuse the node slot by replacing it with a Path.
     *arena.get_mut(node) = Expr::Path {
         steps,
         keep_singleton_array: keep_singleton,
+        group: processed_group,
         pos,
     };
-
-    // Process group-by pairs on the path (inherited from the original binary node).
-    // In our arena AST, groups live on Name nodes within steps, so they were already
-    // processed during collect_path_steps -> process_ast calls.
 
     Ok(node)
 }

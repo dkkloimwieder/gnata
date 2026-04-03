@@ -22,13 +22,13 @@ use crate::value::Value;
 /// Register all built-in functions into an environment.
 pub fn register_all(env: &mut Environment) {
     // ── String ──────────────────────────────────────────────────────
-    bind_builtin(env, "string", string_funcs::fn_string);
+    bind_signed_builtin(env, "string", string_funcs::fn_string, "x?b?");
     bind_builtin(env, "length", string_funcs::fn_length);
     bind_builtin(env, "substring", string_funcs::fn_substring);
     bind_builtin(env, "substringBefore", string_funcs::fn_substring_before);
     bind_builtin(env, "substringAfter", string_funcs::fn_substring_after);
-    bind_builtin(env, "uppercase", string_funcs::fn_uppercase);
-    bind_builtin(env, "lowercase", string_funcs::fn_lowercase);
+    bind_signed_builtin(env, "uppercase", string_funcs::fn_uppercase, "s?");
+    bind_signed_builtin(env, "lowercase", string_funcs::fn_lowercase, "s?");
     bind_builtin(env, "trim", string_funcs::fn_trim);
     bind_builtin(env, "pad", string_funcs::fn_pad);
     bind_builtin(env, "contains", string_funcs::fn_contains);
@@ -58,10 +58,10 @@ pub fn register_all(env: &mut Environment) {
     bind_builtin(env, "power", numeric::fn_power);
     bind_builtin(env, "sqrt", numeric::fn_sqrt);
     bind_builtin(env, "random", numeric::fn_random);
-    bind_builtin(env, "sum", numeric::fn_sum);
-    bind_builtin(env, "max", numeric::fn_max);
-    bind_builtin(env, "min", numeric::fn_min);
-    bind_builtin(env, "average", numeric::fn_average);
+    bind_signed_builtin(env, "sum", numeric::fn_sum, "a<n>");
+    bind_signed_builtin(env, "max", numeric::fn_max, "a<n>");
+    bind_signed_builtin(env, "min", numeric::fn_min, "a<n>");
+    bind_signed_builtin(env, "average", numeric::fn_average, "a<n>");
     bind_builtin(env, "formatBase", numeric::fn_format_base);
     bind_builtin(env, "formatNumber", format_number::fn_format_number);
 
@@ -83,7 +83,7 @@ pub fn register_all(env: &mut Environment) {
     bind_builtin(env, "error", object::fn_error);
 
     // ── Boolean ─────────────────────────────────────────────────────
-    bind_builtin(env, "boolean", boolean::fn_boolean);
+    bind_signed_builtin(env, "boolean", boolean::fn_boolean, "x?");
     bind_builtin(env, "not", boolean::fn_not);
     bind_builtin(env, "exists", boolean::fn_exists);
 
@@ -115,10 +115,10 @@ pub fn register_all(env: &mut Environment) {
 /// Register stdlib on an Rc<Environment> (for $eval child envs).
 pub fn register_all_on_rc(env: &Rc<Environment>) {
     // String
-    env.bind("string".into(), _mk_b(string_funcs::fn_string));
+    env.bind("string".into(), _mk_sb(string_funcs::fn_string, "x-b?"));
     env.bind("length".into(), _mk_b(string_funcs::fn_length));
-    env.bind("uppercase".into(), _mk_b(string_funcs::fn_uppercase));
-    env.bind("lowercase".into(), _mk_b(string_funcs::fn_lowercase));
+    env.bind("uppercase".into(), _mk_sb(string_funcs::fn_uppercase, "s-"));
+    env.bind("lowercase".into(), _mk_sb(string_funcs::fn_lowercase, "s-"));
     env.bind("trim".into(), _mk_b(string_funcs::fn_trim));
     env.bind("contains".into(), _mk_b(string_funcs::fn_contains));
     env.bind("split".into(), _mk_b(string_funcs::fn_split));
@@ -129,12 +129,12 @@ pub fn register_all_on_rc(env: &Rc<Environment>) {
     env.bind("floor".into(), _mk_b(numeric::fn_floor));
     env.bind("ceil".into(), _mk_b(numeric::fn_ceil));
     env.bind("round".into(), _mk_b(numeric::fn_round));
-    env.bind("sum".into(), _mk_b(numeric::fn_sum));
+    env.bind("sum".into(), _mk_sb(numeric::fn_sum, "a<n>"));
     env.bind("count".into(), _mk_b(array::fn_count));
     env.bind("append".into(), _mk_b(array::fn_append));
     env.bind("keys".into(), _mk_b(object::fn_keys));
     env.bind("values".into(), _mk_b(object::fn_values));
-    env.bind("boolean".into(), _mk_b(boolean::fn_boolean));
+    env.bind("boolean".into(), _mk_sb(boolean::fn_boolean, "x-"));
     env.bind("not".into(), _mk_b(boolean::fn_not));
     env.bind("exists".into(), _mk_b(boolean::fn_exists));
     env.bind("type".into(), _mk_b(types::fn_type_of));
@@ -147,6 +147,13 @@ pub fn register_all_on_rc(env: &Rc<Environment>) {
 
 fn _mk_b(f: fn(&[Value], &Value) -> crate::error::JsonataResult) -> Value {
     Value::Function(FunctionValue::Builtin(Rc::new(f)))
+}
+
+fn _mk_sb(f: fn(&[Value], &Value) -> crate::error::JsonataResult, sig: &str) -> Value {
+    Value::Function(FunctionValue::SignedBuiltin {
+        func: Rc::new(f),
+        signature: sig.into(),
+    })
 }
 
 fn _mk_e(
@@ -167,6 +174,22 @@ fn bind_builtin(
 ) {
     let func: Rc<BuiltinFn> = Rc::new(f);
     env.bind(name.into(), Value::Function(FunctionValue::Builtin(func)));
+}
+
+fn bind_signed_builtin(
+    env: &mut Environment,
+    name: &str,
+    f: fn(&[Value], &Value) -> crate::error::JsonataResult,
+    signature: &str,
+) {
+    let func: Rc<BuiltinFn> = Rc::new(f);
+    env.bind(
+        name.into(),
+        Value::Function(FunctionValue::SignedBuiltin {
+            func,
+            signature: signature.into(),
+        }),
+    );
 }
 
 fn bind_env_builtin(

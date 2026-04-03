@@ -100,6 +100,9 @@ pub fn fn_distinct(args: &[Value], _focus: &Value) -> JsonataResult {
             result.push(item.clone());
         }
     }
+    if result.len() == 1 {
+        return Ok(result.into_iter().next().unwrap());
+    }
     Ok(Value::Array(result))
 }
 

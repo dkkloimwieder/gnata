@@ -18,6 +18,9 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
                 return Ok(Value::Undefined);
             }
             let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.clone())).collect();
+            if keys.len() == 1 {
+                return Ok(keys.into_iter().next().unwrap());
+            }
             Ok(Value::Array(keys))
         }
         Value::Array(arr) => {
@@ -37,6 +40,9 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
             }
             if all_keys.is_empty() {
                 return Ok(Value::Undefined);
+            }
+            if all_keys.len() == 1 {
+                return Ok(all_keys.into_iter().next().unwrap());
             }
             Ok(Value::Array(all_keys))
         }
@@ -87,7 +93,7 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
             }
             Ok(Value::Array(result))
         }
-        _ => Ok(Value::Undefined),
+        _ => Ok(args[0].clone()),
     }
 }
 

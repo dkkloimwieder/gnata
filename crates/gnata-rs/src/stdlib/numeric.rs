@@ -203,9 +203,7 @@ pub fn fn_sum(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$sum: argument 1 is required"));
     }
-    if args.len() > 1 {
-        return Err(JsonataError::new("T0410", "$sum: expects 1 argument"));
-    }
+    // Arity enforced by SignedBuiltin signature at call site.
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
@@ -217,9 +215,6 @@ pub fn fn_sum(args: &[Value], _focus: &Value) -> JsonataResult {
 pub fn fn_max(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$max: argument 1 is required"));
-    }
-    if args.len() > 1 {
-        return Err(JsonataError::new("T0410", "$max: expects 1 argument"));
     }
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
@@ -237,9 +232,6 @@ pub fn fn_max(args: &[Value], _focus: &Value) -> JsonataResult {
 pub fn fn_min(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$min: argument 1 is required"));
-    }
-    if args.len() > 1 {
-        return Err(JsonataError::new("T0410", "$min: expects 1 argument"));
     }
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
@@ -260,9 +252,6 @@ pub fn fn_average(args: &[Value], _focus: &Value) -> JsonataResult {
             "T0410",
             "$average: argument 1 is required",
         ));
-    }
-    if args.len() > 1 {
-        return Err(JsonataError::new("T0410", "$average: expects 1 argument"));
     }
     if args[0].is_undefined() {
         return Ok(Value::Undefined);

@@ -35,8 +35,13 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
 
     // If the node has a Group expression, evaluate the base node first,
     // then apply group-by reduction.
-    if let Expr::Name { group: Some(_), .. } = arena.get(node) {
-        return eval_group_by(arena, node, input, env);
+    match arena.get(node) {
+        Expr::Name { group: Some(_), .. }
+        | Expr::Path { group: Some(_), .. }
+        | Expr::Variable { group: Some(_), .. } => {
+            return eval_group_by(arena, node, input, env);
+        }
+        _ => {}
     }
 
     match arena.get(node) {
@@ -513,9 +518,9 @@ fn eval_binary(
             }
         }
         "??" => {
-            // Null-coalescing: left if not undefined and not null.
+            // Null-coalescing: left if not undefined. null IS a value.
             let left = eval(arena, lhs, input, env)?;
-            if !left.is_undefined() && !left.is_null() {
+            if !left.is_undefined() {
                 Ok(left)
             } else {
                 eval(arena, rhs, input, env)
@@ -638,6 +643,10 @@ fn eval_arithmetic(
     }
     let ln = left.as_f64().unwrap();
     let rn = right.as_f64().unwrap();
+    // Modulo by zero → D3001 immediately (matches Go).
+    if op == "%" && rn == 0.0 {
+        return Err(JsonataError::new("D3001", "modulo by zero"));
+    }
     let result = match op {
         "+" => ln + rn,
         "-" => ln - rn,
@@ -647,14 +656,16 @@ fn eval_arithmetic(
         "**" => ln.powf(rn),
         _ => unreachable!(),
     };
-    // Check for non-finite results (NaN, Inf).
+    // Division by zero → let Inf propagate (error comes from downstream use).
+    // Other non-finite results → D1001 "number out of range".
+    if op == "/" {
+        return Ok(Value::Number(result));
+    }
     if !result.is_finite() {
         return Err(JsonataError::new(
             "D1001",
             format!(
-                "number out of range: {op}({}, {}) = {}",
-                crate::value::format_float(ln),
-                crate::value::format_float(rn),
+                "Number out of range: {}",
                 crate::value::format_float(result)
             ),
         ));
@@ -672,23 +683,27 @@ fn eval_range(
     let left = eval(arena, lhs, input, env)?;
     let right = eval(arena, rhs, input, env)?;
 
+    // Type-check non-undefined operands BEFORE undefined propagation.
+    if !left.is_undefined() && left.as_f64().is_none() {
+        return Err(JsonataError::new(
+            "T2003",
+            "the left operand of the range operator (..) must be a number",
+        ));
+    }
+    if !right.is_undefined() && right.as_f64().is_none() {
+        return Err(JsonataError::new(
+            "T2004",
+            "the right operand of the range operator (..) must be a number",
+        ));
+    }
+
     // Undefined operands → undefined (not an error).
     if left.is_undefined() || right.is_undefined() {
         return Ok(Value::Undefined);
     }
 
-    let ln = left.as_f64().ok_or_else(|| {
-        JsonataError::new(
-            "T2003",
-            "the left operand of the range operator (..) must be a number",
-        )
-    })?;
-    let rn = right.as_f64().ok_or_else(|| {
-        JsonataError::new(
-            "T2004",
-            "the right operand of the range operator (..) must be a number",
-        )
-    })?;
+    let ln = left.as_f64().unwrap();
+    let rn = right.as_f64().unwrap();
 
     // Must be integers (no fractional part).
     if ln != ln.trunc() {
@@ -1450,16 +1465,20 @@ fn eval_group_by(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    // Extract group pairs and evaluate the base expression without group.
+    // Extract group pairs from the node.
     let group = match arena.get(node) {
         Expr::Name { group: Some(g), .. } => g.clone(),
+        Expr::Path { group: Some(g), .. } => g.clone(),
+        Expr::Variable { group: Some(g), .. } => g.clone(),
         _ => return eval(arena, node, input, env),
     };
 
-    // Evaluate base expression without group to get items.
-    // Temporarily clear group by evaluating as a Name without group.
+    // Evaluate the base expression without the group-by reduction.
+    // We dispatch based on node type to avoid recursion back into eval_group_by.
     let base = match arena.get(node) {
         Expr::Name { value, .. } => eval_name(value, input)?,
+        Expr::Path { .. } => eval_path(arena, node, input, env)?,
+        Expr::Variable { name, .. } => eval_variable(name, input, env)?,
         _ => eval(arena, node, input, env)?,
     };
     if base.is_undefined() {
@@ -2267,6 +2286,31 @@ mod tests {
             }
             other => panic!("expected Object, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn group_by_path() {
+        // Test group-by on a path expression: Account.Order{OrderID: ...}
+        let data = r#"{"Account": {"Order": [
+            {"OrderID": "A", "Value": 10},
+            {"OrderID": "B", "Value": 20},
+            {"OrderID": "A", "Value": 30}
+        ]}}"#;
+        let result = eval_with_data(r#"Account.Order{OrderID: Value}"#, data);
+        match &result {
+            Value::Object(obj) => {
+                assert!(obj.contains_key("A"), "expected key A, got {:?}", result);
+                assert!(obj.contains_key("B"), "expected key B, got {:?}", result);
+            }
+            other => panic!("expected Object, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn group_by_variable() {
+        // Test group-by on a $$ variable (case026)
+        let result = eval_expr(r#"$${id: value}"#, &Value::from_json_str("[]").unwrap()).unwrap();
+        assert_eq!(result, Value::Object(indexmap::IndexMap::new()));
     }
 
     // ── Variable binding in blocks ──────────────────────────────

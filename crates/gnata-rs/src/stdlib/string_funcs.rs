@@ -11,21 +11,37 @@ pub fn fn_string(args: &[Value], focus: &Value) -> JsonataResult {
     if arg.is_undefined() {
         return Ok(Value::Undefined);
     }
+    // Check for Inf/NaN numbers → D3001.
+    if let Value::Number(n) = arg {
+        if n.is_infinite() || n.is_nan() {
+            return Err(JsonataError::new("D3001", "Number out of range"));
+        }
+    }
     // TODO: second arg (boolean) for pretty-printing
     arg.stringify().map(Value::String)
 }
 
 pub fn fn_length(args: &[Value], focus: &Value) -> JsonataResult {
-    let arg = if args.is_empty() { focus } else { &args[0] };
+    if args.len() > 1 {
+        return Err(JsonataError::new("T0410", "$length: expects 1 argument"));
+    }
+    let from_focus = args.is_empty();
+    let arg = if from_focus { focus } else { &args[0] };
     if arg.is_undefined() {
+        if from_focus {
+            return Err(JsonataError::new("T0411", "$length: argument is required"));
+        }
         return Ok(Value::Undefined);
     }
     match arg {
         Value::String(s) => Ok(Value::Number(s.chars().count() as f64)),
-        _ => Err(JsonataError::new(
-            "T0411",
-            "$length: argument must be a string",
-        )),
+        _ => {
+            let code = if from_focus { "T0411" } else { "T0410" };
+            Err(JsonataError::new(
+                code,
+                "$length: argument must be a string",
+            ))
+        }
     }
 }
 
@@ -272,13 +288,13 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
         .as_f64()
         .ok_or_else(|| JsonataError::new("T0410", "$pad: width must be a number"))?
         as i64;
-    let pad_char = if args.len() >= 3 {
+    let pad_str = if args.len() >= 3 {
         match &args[2] {
-            Value::String(c) => c.chars().next().unwrap_or(' '),
-            _ => ' ',
+            Value::String(c) if !c.is_empty() => c.clone(),
+            _ => " ".to_string(),
         }
     } else {
-        ' '
+        " ".to_string()
     };
 
     let char_count = s.chars().count() as i64;
@@ -287,7 +303,7 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::String(s));
     }
     let pad_count = needed - char_count as usize;
-    let padding: String = std::iter::repeat_n(pad_char, pad_count).collect();
+    let padding: String = pad_str.chars().cycle().take(pad_count).collect();
 
     if width > 0 {
         Ok(Value::String(format!("{s}{padding}")))
@@ -341,7 +357,7 @@ pub fn fn_contains(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.len() < 2 {
+    if args.is_empty() {
         return Err(JsonataError::new(
             "T0410",
             "$split: requires at least 2 arguments",
@@ -350,15 +366,37 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
+    // Non-string first arg → undefined
     let s = match &args[0] {
         Value::String(s) => s.as_str(),
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$split: first argument must be a string",
-            ));
-        }
+        _ => return Ok(Value::Undefined),
     };
+    if args.len() < 2 {
+        return Err(JsonataError::new(
+            "T0410",
+            "$split: requires at least 2 arguments",
+        ));
+    }
+    // Check limit arg before using it
+    if let Some(limit_arg) = args.get(2) {
+        if !limit_arg.is_undefined() {
+            match limit_arg.as_f64() {
+                Some(n) if n < 0.0 => {
+                    return Err(JsonataError::new(
+                        "D3020",
+                        "$split: third argument must not be negative",
+                    ));
+                }
+                Some(_) => {} // valid number
+                None => {
+                    return Err(JsonataError::new(
+                        "T0410",
+                        "$split: third argument must be a number",
+                    ));
+                }
+            }
+        }
+    }
     let limit = args.get(2).and_then(|v| v.as_f64()).map(|n| n as usize);
 
     let parts: Vec<Value> = match &args[1] {
@@ -514,7 +552,11 @@ pub fn fn_encode_url(args: &[Value], _focus: &Value) -> JsonataResult {
                 .replace("%3F", "?")
                 .replace("%23", "#")
                 .replace("%5B", "[")
-                .replace("%5D", "]");
+                .replace("%5D", "]")
+                .replace("%2D", "-")
+                .replace("%2E", ".")
+                .replace("%5F", "_")
+                .replace("%7E", "~");
             Ok(Value::String(encoded))
         }
         _ => Err(JsonataError::new(
