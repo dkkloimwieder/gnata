@@ -4,6 +4,7 @@
 
 mod array;
 mod boolean;
+pub mod datetime;
 mod eval_fn;
 mod format_number;
 mod hof;
@@ -105,8 +106,10 @@ pub fn register_all(env: &mut Environment) {
     bind_env_builtin(env, "eval", eval_fn::fn_eval);
 
     // ── DateTime ────────────────────────────────────────────────────
-    bind_builtin(env, "now", types::fn_now);
-    bind_builtin(env, "millis", types::fn_millis);
+    bind_builtin(env, "now", datetime::fn_now);
+    bind_builtin(env, "millis", datetime::fn_millis);
+    bind_builtin(env, "fromMillis", datetime::fn_from_millis);
+    bind_builtin(env, "toMillis", datetime::fn_to_millis);
 }
 
 /// Register stdlib on an Rc<Environment> (for $eval child envs).

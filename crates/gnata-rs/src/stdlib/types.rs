@@ -1,4 +1,4 @@
-//! Type, misc, and datetime functions: $type, $assert, $now, $millis.
+//! Type and misc functions: $type, $assert.
 
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
@@ -51,17 +51,4 @@ pub fn fn_assert(args: &[Value], _focus: &Value) -> JsonataResult {
             "$assert: first argument must be a boolean",
         )),
     }
-}
-
-pub fn fn_now(_args: &[Value], _focus: &Value) -> JsonataResult {
-    // Return current time as ISO 8601 string.
-    let now = jiff::Zoned::now();
-    Ok(Value::String(
-        now.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-    ))
-}
-
-pub fn fn_millis(_args: &[Value], _focus: &Value) -> JsonataResult {
-    let now = jiff::Timestamp::now();
-    Ok(Value::Number(now.as_millisecond() as f64))
 }
