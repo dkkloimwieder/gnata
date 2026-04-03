@@ -528,7 +528,30 @@ fn eval_binary(
         }
         "[" => {
             // Subscript/filter — evaluate left, then apply right as index or predicate.
-            let left = eval(arena, lhs, input, env)?;
+            // Special case: when LHS is ** (Descendant), include the root (input) in the
+            // left side, matching Go's evalSubscriptLeft which prepends input for Descendant.
+            let left = if matches!(arena.get(lhs), Expr::Descendant { .. }) {
+                let descendants = descendant_lookup(input);
+                let mut seq = Sequence::new();
+                seq.append(input.clone());
+                match descendants {
+                    Value::Array(arr) => {
+                        for item in arr {
+                            seq.append(item);
+                        }
+                    }
+                    Value::Sequence(s) => {
+                        for item in s.values {
+                            seq.append(item);
+                        }
+                    }
+                    Value::Undefined => {}
+                    other => seq.append(other),
+                }
+                seq.collapse()
+            } else {
+                eval(arena, lhs, input, env)?
+            };
             eval_subscript(arena, rhs, &left, input, env)
         }
         // Arithmetic operators.
@@ -597,15 +620,24 @@ fn eval_arithmetic(
 ) -> JsonataResult {
     let left = eval(arena, lhs, input, env)?;
     let right = eval(arena, rhs, input, env)?;
+    // Type-check non-undefined operands BEFORE undefined propagation.
+    if !left.is_undefined() && !left.is_number() {
+        return Err(JsonataError::new(
+            "T2001",
+            "the left operand must be a number",
+        ));
+    }
+    if !right.is_undefined() && !right.is_number() {
+        return Err(JsonataError::new(
+            "T2002",
+            "the right operand must be a number",
+        ));
+    }
     if left.is_undefined() || right.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let ln = left
-        .as_f64()
-        .ok_or_else(|| JsonataError::new("T2001", "the left operand must be a number"))?;
-    let rn = right
-        .as_f64()
-        .ok_or_else(|| JsonataError::new("T2002", "the right operand must be a number"))?;
+    let ln = left.as_f64().unwrap();
+    let rn = right.as_f64().unwrap();
     let result = match op {
         "+" => ln + rn,
         "-" => ln - rn,
@@ -615,6 +647,18 @@ fn eval_arithmetic(
         "**" => ln.powf(rn),
         _ => unreachable!(),
     };
+    // Check for non-finite results (NaN, Inf).
+    if !result.is_finite() {
+        return Err(JsonataError::new(
+            "D1001",
+            format!(
+                "number out of range: {op}({}, {}) = {}",
+                crate::value::format_float(ln),
+                crate::value::format_float(rn),
+                crate::value::format_float(result)
+            ),
+        ));
+    }
     Ok(Value::Number(result))
 }
 

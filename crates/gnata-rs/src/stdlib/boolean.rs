@@ -4,13 +4,9 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
 pub fn fn_boolean(args: &[Value], focus: &Value) -> JsonataResult {
+    // Note: don't enforce arity — HOF callbacks like $filter($boolean)
+    // pass 3 args (value, index, array). Only use the first arg.
     let arg = if args.is_empty() { focus } else { &args[0] };
-    if args.len() > 1 {
-        return Err(JsonataError::new(
-            "T0410",
-            "$boolean: takes at most 1 argument",
-        ));
-    }
     if arg.is_undefined() {
         return Ok(Value::Undefined);
     }

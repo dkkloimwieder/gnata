@@ -36,6 +36,9 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
             "$substring: requires at least 2 arguments",
         ));
     }
+    if args.len() > 3 {
+        return Err(JsonataError::new("T0410", "$substring: too many arguments"));
+    }
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
@@ -44,11 +47,25 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
         _ => {
             return Err(JsonataError::new(
                 "T0410",
-                "$substring: first argument must be a string",
+                "$substring: argument 1 must be a string",
             ));
         }
     };
-    let start = args.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as i64;
+    // arg2 (start) must be a number if provided.
+    let start = if let Some(arg2) = args.get(1) {
+        match arg2.as_f64() {
+            Some(n) => n as i64,
+            None => {
+                return Err(JsonataError::new(
+                    "T0410",
+                    "$substring: argument 2 must be a number",
+                ));
+            }
+        }
+    } else {
+        0
+    };
+
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len() as i64;
 
@@ -58,9 +75,20 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
         start.min(len) as usize
     };
 
+    // arg3 (length) must be a number if provided.
     let result: String = if let Some(length_val) = args.get(2) {
-        let length = length_val.as_f64().unwrap_or(0.0) as usize;
-        chars[actual_start..].iter().take(length).collect()
+        match length_val.as_f64() {
+            Some(n) => {
+                let length = n as usize;
+                chars[actual_start..].iter().take(length).collect()
+            }
+            None => {
+                return Err(JsonataError::new(
+                    "T0410",
+                    "$substring: argument 3 must be a number",
+                ));
+            }
+        }
     } else {
         chars[actual_start..].iter().collect()
     };
@@ -68,14 +96,21 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
-    // When called with 1 arg in path context, use focus as the string.
-    let (str_arg, sep_arg) = if args.len() >= 2 {
-        (&args[0], &args[1])
-    } else if args.len() == 1 && focus.is_string() {
-        (focus, &args[0])
-    } else {
+    // Go semantics: len(args)==0 → T0411; len(args)==1 → use focus as str, arg as sep;
+    // len(args)==2 → str=args[0], sep=args[1]; len(args)>2 → T0410.
+    if args.len() > 2 {
         return Err(JsonataError::new(
             "T0410",
+            "$substringBefore: too many arguments",
+        ));
+    }
+    let (str_arg, sep_arg, from_context) = if args.len() == 2 {
+        (&args[0], &args[1], false)
+    } else if args.len() == 1 {
+        (focus, &args[0], true)
+    } else {
+        return Err(JsonataError::new(
+            "T0411",
             "$substringBefore: requires 2 arguments",
         ));
     };
@@ -85,9 +120,11 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
     let s = match str_arg {
         Value::String(s) => s.as_str(),
         _ => {
+            // When using focus as context and it's not a string → T0411
+            let code = if from_context { "T0411" } else { "T0410" };
             return Err(JsonataError::new(
-                "T0410",
-                "$substringBefore: first argument must be a string",
+                code,
+                "$substringBefore: argument 1 must be a string",
             ));
         }
     };
@@ -96,7 +133,7 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
         _ => {
             return Err(JsonataError::new(
                 "T0410",
-                "$substringBefore: second argument must be a string",
+                "$substringBefore: argument 2 must be a string",
             ));
         }
     };
@@ -107,13 +144,21 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
-    let (str_arg, sep_arg) = if args.len() >= 2 {
-        (&args[0], &args[1])
-    } else if args.len() == 1 && focus.is_string() {
-        (focus, &args[0])
-    } else {
+    // Go semantics: len(args)==0 → T0411; len(args)==1 → use focus as str, arg as sep;
+    // len(args)==2 → str=args[0], sep=args[1]; len(args)>2 → T0410.
+    if args.len() > 2 {
         return Err(JsonataError::new(
             "T0410",
+            "$substringAfter: too many arguments",
+        ));
+    }
+    let (str_arg, sep_arg, from_context) = if args.len() == 2 {
+        (&args[0], &args[1], false)
+    } else if args.len() == 1 {
+        (focus, &args[0], true)
+    } else {
+        return Err(JsonataError::new(
+            "T0411",
             "$substringAfter: requires 2 arguments",
         ));
     };
@@ -123,9 +168,10 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
     let s = match str_arg {
         Value::String(s) => s.as_str(),
         _ => {
+            let code = if from_context { "T0411" } else { "T0410" };
             return Err(JsonataError::new(
-                "T0410",
-                "$substringAfter: first argument must be a string",
+                code,
+                "$substringAfter: argument 1 must be a string",
             ));
         }
     };
@@ -134,7 +180,7 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
         _ => {
             return Err(JsonataError::new(
                 "T0410",
-                "$substringAfter: second argument must be a string",
+                "$substringAfter: argument 2 must be a string",
             ));
         }
     };
@@ -145,6 +191,13 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
+    // Signature "s-:s" — takes at most 1 arg; extra args → T0410.
+    if args.len() > 1 {
+        return Err(JsonataError::new(
+            "T0410",
+            "$uppercase: takes at most 1 argument",
+        ));
+    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
@@ -159,6 +212,13 @@ pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
+    // Signature "s-:s" — takes at most 1 arg; extra args → T0410.
+    if args.len() > 1 {
+        return Err(JsonataError::new(
+            "T0410",
+            "$lowercase: takes at most 1 argument",
+        ));
+    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
