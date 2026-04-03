@@ -750,17 +750,52 @@ fn eval_subscript(
 
     // Try evaluating RHS as a simple expression (might be a numeric literal or
     // variable). If it resolves to a number, use it as a direct index.
-    // If it errors or is non-numeric, fall through to per-element predicate filter.
-    if let Ok(index) = eval(arena, rhs, left, env)
-        && let Some(n) = index.as_f64()
-    {
-        let idx = n.trunc() as i64;
-        let len = arr.len() as i64;
-        let actual = if idx < 0 { len + idx } else { idx };
-        if actual < 0 || actual >= len {
-            return Ok(Value::Undefined);
+    // If it resolves to an array of all-numeric values, use as index list.
+    // If it errors or is non-numeric/non-index, fall through to per-element predicate filter.
+    if let Ok(index) = eval(arena, rhs, left, env) {
+        // Array of all-numeric values → select those indices (e.g. [[1..4]]).
+        // Preserve the order of indices as specified, matching Go's selectByIndices
+        // which sorts indices ascending. But JSONata actually preserves insertion order
+        // of the index list. Use the order from the index array.
+        if let Value::Array(ref indices) = index
+            && !indices.is_empty()
+            && indices.iter().all(|v| v.as_f64().is_some())
+        {
+            let len = arr.len() as i64;
+            // Go sorts indices; but standard JSONata preserves index list order.
+            // We collect indices, deduplicate by tracking seen actual indices,
+            // and preserve the order they appear in the index array.
+            let mut seen = std::collections::HashSet::new();
+            let result: Vec<Value> = indices
+                .iter()
+                .filter_map(|v| {
+                    let idx = v.as_f64().unwrap() as i64;
+                    let actual = if idx < 0 { len + idx } else { idx };
+                    if actual >= 0 && actual < len && seen.insert(actual) {
+                        Some(arr[actual as usize].clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            return if result.is_empty() {
+                Ok(Value::Undefined)
+            } else {
+                Ok(Value::Array(result))
+            };
         }
-        return Ok(arr[actual as usize].clone());
+        // Single numeric index.
+        if let Some(n) = index.as_f64() {
+            let idx = n.trunc() as i64;
+            let len = arr.len() as i64;
+            let actual = if idx < 0 { len + idx } else { idx };
+            if actual < 0 || actual >= len {
+                return Ok(Value::Undefined);
+            }
+            return Ok(arr[actual as usize].clone());
+        }
+        // Not numeric — fall through to per-element predicate filter below.
+        let _ = index;
     }
 
     // Predicate filter — evaluate rhs against each element.

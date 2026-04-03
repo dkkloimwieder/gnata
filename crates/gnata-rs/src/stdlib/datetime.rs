@@ -10,7 +10,7 @@ use crate::value::Value;
 
 pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
     let now = jiff::Zoned::now();
-    if !args.is_empty() && args[0] != Value::Undefined {
+    if !args.is_empty() && !args[0].is_undefined() {
         let picture = match &args[0] {
             Value::String(s) => s.clone(),
             _ => {
@@ -20,7 +20,7 @@ pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
                 ));
             }
         };
-        let tz_offset = if args.len() >= 2 && args[1] != Value::Undefined {
+        let tz_offset = if args.len() >= 2 && !args[1].is_undefined() {
             match &args[1] {
                 Value::String(s) => parse_tz(s)?,
                 _ => return Err(JsonataError::new("T0410", "timezone must be a string")),
@@ -49,7 +49,7 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
     let effective_args: &[Value];
     let tmp;
     if args.is_empty() {
-        if focus == &Value::Undefined {
+        if focus.is_undefined() {
             return Ok(Value::Undefined);
         }
         tmp = std::slice::from_ref(focus);
@@ -58,7 +58,7 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
         effective_args = args;
     }
 
-    if effective_args[0] == Value::Undefined {
+    if effective_args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
 
@@ -73,7 +73,7 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
     };
 
     // Resolve timezone offset (arg index 2).
-    let tz_offset = if effective_args.len() >= 3 && effective_args[2] != Value::Undefined {
+    let tz_offset = if effective_args.len() >= 3 && !effective_args[2].is_undefined() {
         match &effective_args[2] {
             Value::String(s) => parse_tz(s)?,
             _ => return Err(JsonataError::new("T0410", "timezone must be a string")),
@@ -82,7 +82,7 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
         0
     };
 
-    if effective_args.len() >= 2 && effective_args[1] != Value::Undefined {
+    if effective_args.len() >= 2 && !effective_args[1].is_undefined() {
         let picture = match &effective_args[1] {
             Value::String(s) => s.clone(),
             _ => {
@@ -101,7 +101,7 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_to_millis(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.is_empty() || args[0] == Value::Undefined {
+    if args.is_empty() || args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
 
@@ -115,7 +115,7 @@ pub fn fn_to_millis(args: &[Value], _focus: &Value) -> JsonataResult {
         }
     };
 
-    if args.len() >= 2 && args[1] != Value::Undefined {
+    if args.len() >= 2 && !args[1].is_undefined() {
         let picture = match &args[1] {
             Value::String(p) => p.clone(),
             _ => {
@@ -2093,5 +2093,464 @@ fn value_to_f64(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => Some(*n),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn millis_val(ms: i64) -> Value {
+        Value::Number(ms as f64)
+    }
+    fn str_val(s: &str) -> Value {
+        Value::String(s.into())
+    }
+
+    fn from_millis_1arg(ms: i64) -> String {
+        match fn_from_millis(&[millis_val(ms)], &Value::Undefined) {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {:?}", other),
+        }
+    }
+
+    fn from_millis_picture(ms: i64, picture: &str) -> String {
+        match fn_from_millis(&[millis_val(ms), str_val(picture)], &Value::Undefined) {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {:?}", other),
+        }
+    }
+
+    fn from_millis_picture_tz(ms: i64, picture: &str, tz: &str) -> String {
+        match fn_from_millis(
+            &[millis_val(ms), str_val(picture), str_val(tz)],
+            &Value::Undefined,
+        ) {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {:?}", other),
+        }
+    }
+
+    fn to_millis_1arg(s: &str) -> i64 {
+        match fn_to_millis(&[str_val(s)], &Value::Undefined) {
+            Ok(Value::Number(n)) => n as i64,
+            other => panic!("expected number, got {:?}", other),
+        }
+    }
+
+    fn to_millis_picture(s: &str, picture: &str) -> Option<i64> {
+        match fn_to_millis(&[str_val(s), str_val(picture)], &Value::Undefined) {
+            Ok(Value::Number(n)) => Some(n as i64),
+            Ok(Value::Undefined) => None,
+            other => panic!("expected number or undefined, got {:?}", other),
+        }
+    }
+
+    // ── $fromMillis basic ────────────────────────────────────────────
+
+    #[test]
+    fn test_from_millis_epoch_plus_1() {
+        assert_eq!(from_millis_1arg(1), "1970-01-01T00:00:00.001Z");
+    }
+
+    #[test]
+    fn test_from_millis_known_timestamp() {
+        assert_eq!(from_millis_1arg(1509380732935), "2017-10-30T16:25:32.935Z");
+    }
+
+    #[test]
+    fn test_from_millis_undefined_input() {
+        let result = fn_from_millis(&[Value::Undefined], &Value::Undefined);
+        assert!(matches!(result, Ok(Value::Undefined)));
+    }
+
+    #[test]
+    fn test_from_millis_picture_year() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "Year: [Y0001]"),
+            "Year: 2018"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_date() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[Y0001]-[M01]-[D01]"),
+            "2018-03-23"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_datetime_us() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[M01]/[D01]/[Y0001] at [H01]:[m01]:[s01]"),
+            "03/23/2018 at 10:33:36"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_iso_with_frac_and_tz() {
+        assert_eq!(
+            from_millis_picture(
+                1521801216617,
+                "[Y]-[M01]-[D01]T[H01]:[m]:[s].[f001][Z01:01t]"
+            ),
+            "2018-03-23T10:33:36.617Z"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_tz_bst() {
+        assert_eq!(
+            from_millis_picture_tz(
+                1521801216617,
+                "[Y]-[M01]-[D01]T[H01]:[m]:[s].[f001][Z0101t]",
+                "+0100"
+            ),
+            "2018-03-23T11:33:36.617+0100"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_tz_minus5() {
+        assert_eq!(
+            from_millis_picture_tz(1531310400000, "[Y]-[M01]-[D01]T[H01]:[m]:[s][Z]", "-0500"),
+            "2018-07-11T07:00:00-05:00"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_tz_z_modifier() {
+        assert_eq!(
+            from_millis_picture(1531310400000, "[Y]-[M01]-[D01]T[H01]:[m]:[s][Z01:01t]"),
+            "2018-07-11T12:00:00Z"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_roman_year() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[D1] [M01] [YI]"),
+            "23 03 MMXVIII"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_ordinal() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[D1o] [M01] [Y]"),
+            "23rd 03 2018"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_year_words() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[Yw]"),
+            "two thousand and eighteen"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_month_name() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[D1o] [MNn] [Y]"),
+            "23rd March 2018"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_weekday_name() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[FNn], [D1o] [MNn] [Y]"),
+            "Friday, 23rd March 2018"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_default_modifiers() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[F], [D]/[M]/[Y] [h]:[m]:[s] [P]"),
+            "friday, 23/3/2018 10:33:36 am"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_ampm_uppercase() {
+        assert_eq!(
+            from_millis_picture(1521801216617, "[F], [D]/[M]/[Y] [h]:[m]:[s] [PN]"),
+            "friday, 23/3/2018 10:33:36 AM"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_day_of_year() {
+        assert_eq!(
+            from_millis_picture(1514808000000, "[dwo] day of the year"),
+            "first day of the year"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_week_of_year() {
+        assert_eq!(from_millis_picture(1514808000000, "Week: [W]"), "Week: 1");
+    }
+
+    #[test]
+    fn test_from_millis_picture_week_of_month() {
+        assert_eq!(
+            from_millis_picture(1359460800000, "Week: [w] of [xNn]"),
+            "Week: 5 of January"
+        );
+    }
+
+    #[test]
+    fn test_from_millis_error_unclosed_bracket() {
+        let result = fn_from_millis(
+            &[millis_val(1419940800000), str_val("[YN]-[M")],
+            &Value::Undefined,
+        );
+        assert!(
+            matches!(result, Err(ref e) if e.code == "D3135"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_from_millis_error_named_year() {
+        let result = fn_from_millis(
+            &[millis_val(1419940800000), str_val("[YN]-[M]-[D]")],
+            &Value::Undefined,
+        );
+        assert!(
+            matches!(result, Err(ref e) if e.code == "D3133"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_from_millis_picture_tz_6digit_error() {
+        let result = fn_from_millis(
+            &[
+                millis_val(1230757500000),
+                str_val("[Y]-[M01]-[D01]T[H01]:[m]:[s].[f001][Z010101t]"),
+                str_val("+0530"),
+            ],
+            &Value::Undefined,
+        );
+        assert!(
+            matches!(result, Err(ref e) if e.code == "D3134"),
+            "got {:?}",
+            result
+        );
+    }
+
+    // ── $toMillis basic ──────────────────────────────────────────────
+
+    #[test]
+    fn test_to_millis_iso8601() {
+        assert_eq!(to_millis_1arg("1970-01-01T00:00:00.001Z"), 1);
+    }
+
+    #[test]
+    fn test_to_millis_known_timestamp() {
+        assert_eq!(to_millis_1arg("2017-10-30T16:25:32.935Z"), 1509380732935);
+    }
+
+    #[test]
+    fn test_to_millis_undefined_input() {
+        let result = fn_to_millis(&[Value::Undefined], &Value::Undefined);
+        assert!(matches!(result, Ok(Value::Undefined)));
+    }
+
+    #[test]
+    fn test_to_millis_picture_year() {
+        assert_eq!(to_millis_picture("2018", "[Y1]"), Some(1514764800000));
+    }
+
+    #[test]
+    fn test_to_millis_picture_ymd() {
+        assert_eq!(
+            to_millis_picture("2018-03-27", "[Y1]-[M01]-[D01]"),
+            Some(1522108800000)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_iso_format() {
+        assert_eq!(
+            to_millis_picture(
+                "2018-03-27T14:03:00.123Z",
+                "[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z"
+            ),
+            Some(1522159380123)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_ordinal() {
+        assert_eq!(
+            to_millis_picture("27th 3 1976", "[D1o] [M#1] [Y0001]"),
+            Some(196732800000)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_roman_year() {
+        assert_eq!(to_millis_picture("MCMLXXXIV", "[YI]"), Some(441763200000));
+    }
+
+    #[test]
+    fn test_to_millis_picture_month_name() {
+        assert_eq!(
+            to_millis_picture("27th April 2008", "[D1o] [MNn] [Y0001]"),
+            Some(1209254400000)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_words() {
+        assert_eq!(
+            to_millis_picture("one thousand, nine hundred and eighty-four", "[Yw]"),
+            Some(441763200000)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_12h_am() {
+        assert_eq!(
+            to_millis_picture("4/4/2018 12:06 am", "[D1]/[M1]/[Y0001] [h]:[m] [P]"),
+            Some(1522800360000)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_day_of_year() {
+        assert_eq!(
+            to_millis_picture("2018-094", "[Y0001]-[d001]"),
+            Some(1522800000000)
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_timezone() {
+        let result = to_millis_picture(
+            "2020-09-09 08:00:00 +02:00",
+            "[Y0001]-[M01]-[D01] [H01]:[m01]:[s01] [Z]",
+        );
+        // 2020-09-09 08:00:00 +02:00 = 2020-09-09 06:00:00 UTC
+        let ts = fn_from_millis(&[Value::Number(result.unwrap() as f64)], &Value::Undefined);
+        assert!(
+            matches!(ts, Ok(Value::String(ref s)) if s.starts_with("2020-09-09T06:00:00")),
+            "got {:?}",
+            ts
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_error_unknown_component() {
+        let result = fn_to_millis(
+            &[str_val("2018-05-22"), str_val("[Y]-[M]-[q]")],
+            &Value::Undefined,
+        );
+        assert!(
+            matches!(result, Err(ref e) if e.code == "D3132"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_error_named_year() {
+        let result = fn_to_millis(
+            &[str_val("2018-05-22"), str_val("[YN]-[M]-[D]")],
+            &Value::Undefined,
+        );
+        assert!(
+            matches!(result, Err(ref e) if e.code == "D3133"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_error_no_month() {
+        let result = fn_to_millis(&[str_val("2018-22"), str_val("[Y]-[D]")], &Value::Undefined);
+        assert!(
+            matches!(result, Err(ref e) if e.code == "D3136"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_to_millis_picture_no_match() {
+        let result = to_millis_picture("irrelevant string", "[Y]-[M]-[D]");
+        assert_eq!(result, None);
+    }
+
+    // ── Calendar helpers ─────────────────────────────────────────────
+
+    #[test]
+    fn test_secs_to_ymd_hms_epoch() {
+        assert_eq!(secs_to_ymd_hms(0), (1970, 1, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_secs_to_ymd_hms_known() {
+        // 2018-03-23T10:33:36
+        assert_eq!(secs_to_ymd_hms(1521801216), (2018, 3, 23, 10, 33, 36));
+    }
+
+    #[test]
+    fn test_secs_to_ymd_hms_negative() {
+        // 1969-12-31T23:59:59 = epoch - 1 second
+        assert_eq!(secs_to_ymd_hms(-1), (1969, 12, 31, 23, 59, 59));
+    }
+
+    #[test]
+    fn test_day_of_week_friday() {
+        // 2018-03-23 is a Friday (5 in our encoding 0=Sun,5=Fri)
+        assert_eq!(day_of_week(2018, 3, 23), 5);
+    }
+
+    #[test]
+    fn test_iso_week_known() {
+        // 2018-01-01 is Monday, week 1
+        assert_eq!(iso_week(2018, 1, 1), (2018, 1));
+        // 2018-12-31 is Monday, week 1 of 2019
+        assert_eq!(iso_week(2018, 12, 31), (2019, 1));
+    }
+
+    #[test]
+    fn test_int_to_words() {
+        assert_eq!(int_to_words(0), "zero");
+        assert_eq!(int_to_words(1), "one");
+        assert_eq!(int_to_words(18), "eighteen");
+        assert_eq!(int_to_words(42), "forty-two");
+        assert_eq!(
+            int_to_words(1984),
+            "one thousand, nine hundred and eighty-four"
+        );
+        assert_eq!(int_to_words(2018), "two thousand and eighteen");
+    }
+
+    #[test]
+    fn test_to_roman() {
+        assert_eq!(to_roman(2018, true), "MMXVIII");
+        assert_eq!(to_roman(1984, true), "MCMLXXXIV");
+        assert_eq!(to_roman(3, false), "iii");
+    }
+
+    #[test]
+    fn test_format_default_iso() {
+        assert_eq!(format_default_iso(0, 0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(format_default_iso(1, 0), "1970-01-01T00:00:00.001Z");
+        assert_eq!(
+            format_default_iso(1509380732935, 0),
+            "2017-10-30T16:25:32.935Z"
+        );
     }
 }
