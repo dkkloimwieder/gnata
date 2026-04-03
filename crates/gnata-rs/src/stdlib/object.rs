@@ -14,6 +14,9 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
     }
     match &args[0] {
         Value::Object(obj) => {
+            if obj.is_empty() {
+                return Ok(Value::Undefined);
+            }
             let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.clone())).collect();
             Ok(Value::Array(keys))
         }
@@ -31,6 +34,9 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
                         }
                     }
                 }
+            }
+            if all_keys.is_empty() {
+                return Ok(Value::Undefined);
             }
             Ok(Value::Array(all_keys))
         }

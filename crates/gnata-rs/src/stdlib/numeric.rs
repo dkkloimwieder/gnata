@@ -277,10 +277,10 @@ pub fn fn_average(args: &[Value], _focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_format_base(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.len() < 2 {
+    if args.is_empty() {
         return Err(JsonataError::new(
             "T0410",
-            "$formatBase: requires 2 arguments",
+            "$formatBase: requires at least 1 argument",
         ));
     }
     if args[0].is_undefined() {
@@ -289,12 +289,16 @@ pub fn fn_format_base(args: &[Value], _focus: &Value) -> JsonataResult {
     let n = args[0].as_f64().ok_or_else(|| {
         JsonataError::new("T0410", "$formatBase: first argument must be a number")
     })?;
-    let radix = args[1].as_f64().ok_or_else(|| {
-        JsonataError::new("T0410", "$formatBase: second argument must be a number")
-    })? as u32;
+    let radix = if args.len() >= 2 && !args[1].is_undefined() {
+        args[1].as_f64().ok_or_else(|| {
+            JsonataError::new("T0410", "$formatBase: second argument must be a number")
+        })? as u32
+    } else {
+        10 // default base 10
+    };
     if !(2..=36).contains(&radix) {
         return Err(JsonataError::new(
-            "D3010",
+            "D3100",
             "$formatBase: radix must be between 2 and 36",
         ));
     }
