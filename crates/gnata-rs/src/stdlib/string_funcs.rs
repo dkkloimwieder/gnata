@@ -67,17 +67,22 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::String(result))
 }
 
-pub fn fn_substring_before(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.len() < 2 {
+pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
+    // When called with 1 arg in path context, use focus as the string.
+    let (str_arg, sep_arg) = if args.len() >= 2 {
+        (&args[0], &args[1])
+    } else if args.len() == 1 && focus.is_string() {
+        (focus, &args[0])
+    } else {
         return Err(JsonataError::new(
             "T0410",
             "$substringBefore: requires 2 arguments",
         ));
-    }
-    if args[0].is_undefined() {
+    };
+    if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
+    let s = match str_arg {
         Value::String(s) => s.as_str(),
         _ => {
             return Err(JsonataError::new(
@@ -86,7 +91,7 @@ pub fn fn_substring_before(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    let sep = match &args[1] {
+    let sep = match sep_arg {
         Value::String(s) => s.as_str(),
         _ => {
             return Err(JsonataError::new(
@@ -101,17 +106,21 @@ pub fn fn_substring_before(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-pub fn fn_substring_after(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.len() < 2 {
+pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
+    let (str_arg, sep_arg) = if args.len() >= 2 {
+        (&args[0], &args[1])
+    } else if args.len() == 1 && focus.is_string() {
+        (focus, &args[0])
+    } else {
         return Err(JsonataError::new(
             "T0410",
             "$substringAfter: requires 2 arguments",
         ));
-    }
-    if args[0].is_undefined() {
+    };
+    if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
+    let s = match str_arg {
         Value::String(s) => s.as_str(),
         _ => {
             return Err(JsonataError::new(
@@ -120,7 +129,7 @@ pub fn fn_substring_after(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    let sep = match &args[1] {
+    let sep = match sep_arg {
         Value::String(s) => s.as_str(),
         _ => {
             return Err(JsonataError::new(

@@ -795,9 +795,25 @@ fn eval_chain(
 
     // Otherwise evaluate right side and call it.
     let fn_val = eval(arena, rhs, input, env)?;
-    match fn_val {
+    match &fn_val {
         Value::Function(func) => {
-            call_function(&func, std::slice::from_ref(piped), input, env, arena)
+            // If piped is itself a function, compose them rather than calling fn(piped).
+            if let Value::Function(piped_fn) = piped {
+                let outer = func.clone();
+                let inner = piped_fn.clone();
+                let env_clone = Rc::clone(env);
+                let composed: Rc<crate::evaluator::EnvAwareBuiltinFn> = Rc::new(
+                    move |args: &[Value],
+                          focus: &Value,
+                          _env: &Rc<Environment>,
+                          arena: &AstArena| {
+                        let intermediate = call_function(&inner, args, focus, &env_clone, arena)?;
+                        call_function(&outer, &[intermediate], focus, &env_clone, arena)
+                    },
+                );
+                return Ok(Value::Function(FunctionValue::EnvAwareBuiltin(composed)));
+            }
+            call_function(func, std::slice::from_ref(piped), input, env, arena)
         }
         _ => Err(JsonataError::new(
             "T2006",
