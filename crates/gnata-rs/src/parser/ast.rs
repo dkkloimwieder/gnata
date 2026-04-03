@@ -74,6 +74,8 @@ pub enum Expr {
         name: String, // "" for bare $, "$" for $$
         group: Option<GroupExpr>,
         keep_array: bool,
+        focus: Option<String>,
+        index: Option<String>,
         pos: usize,
     },
     /// Wildcard (*).
@@ -107,6 +109,8 @@ pub enum Expr {
         rhs: NodeId,
         group: Option<GroupExpr>,
         keep_array: bool,
+        focus: Option<String>,
+        index: Option<String>,
         pos: usize,
     },
 

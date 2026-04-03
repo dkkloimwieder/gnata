@@ -151,6 +151,8 @@ impl Parser {
                     name: tok.value,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -362,6 +364,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -446,6 +450,8 @@ impl Parser {
                         rhs,
                         group: None,
                         keep_array: false,
+                        focus: None,
+                        index: None,
                         pos: tok.pos,
                     }))
                 }
@@ -475,8 +481,32 @@ impl Parser {
                 Ok(left)
             }
             TokenType::At => {
+                // S0215: @ cannot follow a predicate (subscript) expression.
+                if matches!(self.arena.get(left), Expr::Binary { op, .. } if op == "[") {
+                    return Err(parse_error(
+                        "S0215",
+                        "the @ operator cannot follow a predicate expression",
+                        tok.pos,
+                    ));
+                }
+                // S0216: @ cannot follow a sort expression.
+                if matches!(self.arena.get(left), Expr::Sort { .. }) {
+                    return Err(parse_error(
+                        "S0216",
+                        "the @ operator cannot follow a sort expression",
+                        tok.pos,
+                    ));
+                }
                 // Focus binding @$var
                 self.advance()?;
+                // S0214: the token after @ must be a variable ($name), not a plain name.
+                if self.token.typ == TokenType::Name {
+                    return Err(parse_error(
+                        "S0214",
+                        "the @ operator must be followed by a $variable, not a plain name",
+                        tok.pos,
+                    ));
+                }
                 if self.token.typ != TokenType::Variable {
                     return Err(parse_error(
                         "S0214",
@@ -492,6 +522,14 @@ impl Parser {
             TokenType::Hash => {
                 // Index binding #$var
                 self.advance()?;
+                // S0214: the token after # must be a variable ($name), not a plain name.
+                if self.token.typ == TokenType::Name {
+                    return Err(parse_error(
+                        "S0214",
+                        "the # operator must be followed by a $variable, not a plain name",
+                        tok.pos,
+                    ));
+                }
                 if self.token.typ != TokenType::Variable {
                     return Err(parse_error(
                         "S0214",
@@ -553,6 +591,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -565,6 +605,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -577,6 +619,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -589,6 +633,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -601,6 +647,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -613,6 +661,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -625,6 +675,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -647,6 +699,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -661,6 +715,8 @@ impl Parser {
                     rhs,
                     group: None,
                     keep_array: false,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 }))
             }
@@ -688,6 +744,8 @@ impl Parser {
             rhs,
             group: None,
             keep_array: false,
+            focus: None,
+            index: None,
             pos,
         }))
     }
@@ -712,6 +770,8 @@ impl Parser {
                 name: self.token.value.clone(),
                 group: None,
                 keep_array: false,
+                focus: None,
+                index: None,
                 pos: self.token.pos,
             });
             params.push(param);
@@ -903,14 +963,20 @@ impl Parser {
     }
 
     fn set_focus(&mut self, id: NodeId, name: String) {
-        if let Expr::Name { focus, .. } = self.arena.get_mut(id) {
-            *focus = Some(name);
+        match self.arena.get_mut(id) {
+            Expr::Name { focus, .. } => *focus = Some(name),
+            Expr::Binary { focus, .. } => *focus = Some(name),
+            Expr::Variable { focus, .. } => *focus = Some(name),
+            _ => {}
         }
     }
 
     fn set_index(&mut self, id: NodeId, name: String) {
-        if let Expr::Name { index, .. } = self.arena.get_mut(id) {
-            *index = Some(name);
+        match self.arena.get_mut(id) {
+            Expr::Name { index, .. } => *index = Some(name),
+            Expr::Binary { index, .. } => *index = Some(name),
+            Expr::Variable { index, .. } => *index = Some(name),
+            _ => {}
         }
     }
 }

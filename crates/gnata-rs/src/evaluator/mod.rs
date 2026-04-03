@@ -306,9 +306,43 @@ fn eval_path(
     eval_path_simple(arena, &steps, keep_singleton_array, input, env)
 }
 
-/// Check whether any path step requires tuple-aware evaluation (#$var index bindings or % parent refs).
+/// Check whether any path step requires tuple-aware evaluation (#$var index bindings, @$var focus, or % parent refs).
 fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
     for &step in steps {
+        // Direct check: step itself has index or focus.
+        match arena.get(step) {
+            Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => return true,
+            Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => {
+                return true;
+            }
+            // A subscript step whose left child has an Index or Focus binding also requires
+            // tuple-aware path evaluation so each element gets its own env for $pos/$var.
+            Expr::Binary { op, lhs, .. } if op == "[" && !lhs.is_empty() => {
+                let lhs = *lhs;
+                match arena.get(lhs) {
+                    Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => {
+                        return true;
+                    }
+                    // Also check for nested binary (e.g., books@$b[pred][1]).
+                    Expr::Binary {
+                        op: inner_op,
+                        lhs: inner_lhs,
+                        ..
+                    } if inner_op == "[" && !inner_lhs.is_empty() => {
+                        let inner_lhs = *inner_lhs;
+                        if matches!(
+                            arena.get(inner_lhs),
+                            Expr::Name { focus: Some(_), .. } | Expr::Name { index: Some(_), .. }
+                        ) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        // Recursive check for deeply nested bindings.
         if node_has_index_binding(arena, step) {
             return true;
         }
@@ -320,11 +354,17 @@ fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
     false
 }
 
-/// Recursively check if a node or its sub-expression contains an index binding (#$var).
+/// Recursively check if a node or its sub-expression contains an index (#$var) or focus (@$var) binding.
 fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
     match arena.get(node) {
-        Expr::Name { index: Some(_), .. } => true,
-        Expr::Binary { op, lhs, .. } if op == "[" => node_has_index_binding(arena, *lhs),
+        Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => true,
+        Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => true,
+        Expr::Binary { index: Some(_), .. } | Expr::Binary { focus: Some(_), .. } => true,
+        Expr::Binary { op, lhs, rhs, .. } if op == "[" => {
+            let lhs = *lhs;
+            let rhs = *rhs;
+            node_has_index_binding(arena, lhs) || node_has_index_binding(arena, rhs)
+        }
         Expr::Sort { expr, .. } => {
             // Check the expression inside the sort.
             node_has_index_binding(arena, *expr)
@@ -735,8 +775,16 @@ fn eval_path_tuple(
 
         // Subscript step whose Left has a Focus binding (join operator @):
         // e.g., Contact@$c[$c.ssn = $e.SSN]. Bind focus var and apply predicate.
-        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
+        if let Expr::Binary {
+            op,
+            lhs,
+            rhs,
+            index: post_filter_index,
+            ..
+        } = arena.get(step)
+        {
             let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
+            let post_filter_index = post_filter_index.clone();
             if op == "["
                 && !lhs.is_empty()
                 && matches!(arena.get(lhs), Expr::Name { focus: Some(_), .. })
@@ -746,29 +794,13 @@ fn eval_path_tuple(
                     _ => (None, None),
                 };
                 if let Some(ref focus_name) = focus_var {
-                    for (val, ctx_env) in &ctxs {
-                        let val = collapse_val(val);
-                        if val.is_undefined() {
-                            continue;
-                        }
-                        let left_result = eval_path_step(arena, lhs, &val, ctx_env, false, false)?;
-                        if left_result.is_undefined() {
-                            continue;
-                        }
-                        let items = flatten_to_vec(left_result);
-                        for (j, item) in items.iter().enumerate() {
-                            let child_env = Environment::new_child(Rc::clone(ctx_env));
-                            child_env.bind("%%".into(), val.clone());
-                            child_env.bind("%%j".into(), Value::Bool(true));
-                            child_env.bind(focus_name.clone(), item.clone());
-                            if let Some(ref idx_name) = index_var {
-                                child_env.bind(idx_name.clone(), Value::Number(j as f64));
-                            }
-                            let child_rc = Rc::new(child_env);
-                            let pred_result = eval(arena, rhs, item, &child_rc)?;
-                            if pred_result.to_boolean() {
-                                next_ctxs.push((val.clone(), child_rc));
-                            }
+                    next_ctxs = eval_join_filter(
+                        arena, &ctxs, next_ctxs, lhs, rhs, focus_name, &index_var,
+                    )?;
+                    // Bind post-filter index if the Binary `[` node itself has #$var.
+                    if let Some(ref pfi_name) = post_filter_index {
+                        for (k, (_, env)) in next_ctxs.iter().enumerate() {
+                            env.bind(pfi_name.clone(), Value::Number(k as f64));
                         }
                     }
                     ctxs = next_ctxs;
@@ -776,6 +808,65 @@ fn eval_path_tuple(
                         return Ok(Value::Undefined);
                     }
                     continue;
+                }
+            }
+        }
+
+        // Compound subscript after a join-filter: binary "[" whose Left is a
+        // binary "[" with Left.Focus set. E.g., books@$b[pred][1] or
+        // books@$b[pred][]. Process the inner join-filter first to collect
+        // tuples, then apply the outer subscript to the entire tuple collection.
+        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
+            let (op, outer_lhs, outer_rhs) = (op.clone(), *lhs, *rhs);
+            if op == "[" && !outer_lhs.is_empty() {
+                if let Expr::Binary {
+                    op: inner_op,
+                    lhs: inner_lhs,
+                    rhs: inner_rhs,
+                    ..
+                } = arena.get(outer_lhs)
+                {
+                    let (inner_op, inner_lhs, inner_rhs) =
+                        (inner_op.clone(), *inner_lhs, *inner_rhs);
+                    if inner_op == "["
+                        && !inner_lhs.is_empty()
+                        && matches!(arena.get(inner_lhs), Expr::Name { focus: Some(_), .. })
+                    {
+                        let (focus_var, index_var) = match arena.get(inner_lhs) {
+                            Expr::Name { focus, index, .. } => (focus.clone(), index.clone()),
+                            _ => (None, None),
+                        };
+                        if let Some(ref focus_name) = focus_var {
+                            // Process the inner join-filter.
+                            next_ctxs = eval_join_filter(
+                                arena, &ctxs, next_ctxs, inner_lhs, inner_rhs, focus_name,
+                                &index_var,
+                            )?;
+
+                            // Apply the outer subscript to the collected tuples.
+                            if !next_ctxs.is_empty() {
+                                let outer_result =
+                                    eval(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
+                                if let Some(idx) = outer_result.as_f64() {
+                                    let mut i = idx as i64;
+                                    if i < 0 {
+                                        i += next_ctxs.len() as i64;
+                                    }
+                                    if i >= 0 && (i as usize) < next_ctxs.len() {
+                                        next_ctxs = vec![next_ctxs[i as usize].clone()];
+                                    } else {
+                                        next_ctxs = vec![];
+                                    }
+                                }
+                            }
+
+                            ctxs = next_ctxs;
+                            if ctxs.is_empty() {
+                                return Ok(Value::Undefined);
+                            }
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -904,6 +995,46 @@ fn expand_path_tuple(
     Ok(current)
 }
 
+/// Evaluate a join-filter step: walk ctxs, evaluate left_node against each context,
+/// bind focus_var (and optionally index_var) in a child env, then keep only contexts
+/// whose predicate evaluates to true. Port of Go's evalJoinFilter.
+fn eval_join_filter(
+    arena: &AstArena,
+    ctxs: &[(Value, Rc<Environment>)],
+    mut dst: Vec<(Value, Rc<Environment>)>,
+    left_node: NodeId,
+    predicate: NodeId,
+    focus_var: &str,
+    index_var: &Option<String>,
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    for (val, ctx_env) in ctxs {
+        let val = collapse_val(val);
+        if val.is_undefined() {
+            continue;
+        }
+        let left_result = eval_path_step(arena, left_node, &val, ctx_env, false, false)?;
+        if left_result.is_undefined() {
+            continue;
+        }
+        let items = flatten_to_vec(left_result);
+        for (j, item) in items.iter().enumerate() {
+            let child_env = Environment::new_child(Rc::clone(ctx_env));
+            child_env.bind("%%".into(), val.clone());
+            child_env.bind("%%j".into(), Value::Bool(true));
+            child_env.bind(focus_var.into(), item.clone());
+            if let Some(idx_name) = index_var {
+                child_env.bind(idx_name.clone(), Value::Number(j as f64));
+            }
+            let child_rc = Rc::new(child_env);
+            let pred_result = eval(arena, predicate, item, &child_rc)?;
+            if pred_result.to_boolean() {
+                dst.push((val.clone(), child_rc));
+            }
+        }
+    }
+    Ok(dst)
+}
+
 /// Collapse a value (unwrap Sequence), returning the inner value.
 fn collapse_val(val: &Value) -> Value {
     match val {
@@ -932,13 +1063,49 @@ fn flatten_to_vec(val: Value) -> Vec<Value> {
 fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<String>) {
     match arena.get(step) {
         Expr::Name { index, focus, .. } => (index.clone(), focus.clone()),
-        Expr::Binary { op, lhs, .. } if op == "[" => {
-            if let Expr::Name { index, focus, .. } = arena.get(*lhs) {
-                (index.clone(), focus.clone())
-            } else {
-                (None, None)
+        Expr::Variable { index, focus, .. } => (index.clone(), focus.clone()),
+        Expr::Binary {
+            op,
+            lhs,
+            index,
+            focus,
+            ..
+        } if op == "[" => {
+            // If the Binary node itself has index/focus (e.g. from `#$var` after `]`), use those.
+            // Otherwise look at the lhs.
+            let mut idx = index.clone();
+            let mut foc = focus.clone();
+            let lhs = *lhs;
+            match arena.get(lhs) {
+                Expr::Name {
+                    index: li,
+                    focus: lf,
+                    ..
+                } => {
+                    if idx.is_none() {
+                        idx = li.clone();
+                    }
+                    if foc.is_none() {
+                        foc = lf.clone();
+                    }
+                }
+                Expr::Binary {
+                    index: li,
+                    focus: lf,
+                    ..
+                } => {
+                    if idx.is_none() {
+                        idx = li.clone();
+                    }
+                    if foc.is_none() {
+                        foc = lf.clone();
+                    }
+                }
+                _ => {}
             }
+            (idx, foc)
         }
+        Expr::Binary { index, focus, .. } => (index.clone(), focus.clone()),
         _ => (None, None),
     }
 }
@@ -1295,9 +1462,16 @@ fn eval_binary(
             } else {
                 eval(arena, lhs, input, env)?
             };
+            // Extract index variable from the LHS (e.g. $#$pos[...] → index_var="pos").
+            let index_var = match arena.get(lhs) {
+                Expr::Name { index, .. }
+                | Expr::Variable { index, .. }
+                | Expr::Binary { index, .. } => index.clone(),
+                _ => None,
+            };
             // Check keep_array: the [] suffix on this node or anywhere in the LHS chain.
             let keep_array = has_keep_array(arena, node);
-            let result = eval_subscript(arena, rhs, &left, input, env)?;
+            let result = eval_subscript(arena, rhs, &left, input, env, &index_var)?;
             if keep_array {
                 match result {
                     Value::Array(_) => Ok(result),
@@ -1516,6 +1690,7 @@ fn eval_subscript(
     left: &Value,
     input: &Value,
     env: &Rc<Environment>,
+    index_var: &Option<String>,
 ) -> JsonataResult {
     // For non-array inputs, evaluate directly.
     if !matches!(left, Value::Array(_) | Value::Sequence(_)) {
@@ -1599,7 +1774,11 @@ fn eval_subscript(
     let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
     filter_env.bind("%%".into(), input.clone());
     let mut seq = Sequence::new();
-    for item in arr.iter() {
+    for (i, item) in arr.iter().enumerate() {
+        // Bind index variable if present (e.g. $#$pos[...]).
+        if let Some(var_name) = index_var {
+            filter_env.bind(var_name.clone(), Value::Number(i as f64));
+        }
         let test = eval(arena, rhs, item, &filter_env)?;
         // Numeric result = index selection from entire array.
         if let Some(n) = test.as_f64() {
