@@ -268,6 +268,8 @@ impl Value {
             Value::Number(n) => Ok(format_float(*n)),
             Value::Bool(true) => Ok("true".into()),
             Value::Bool(false) => Ok("false".into()),
+            Value::Function(_) => Ok(String::new()),
+            Value::TailCall(_) => Ok(String::new()),
             other => {
                 let json = serde_json::to_string(&other.to_json())
                     .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))?;

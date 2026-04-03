@@ -1407,6 +1407,9 @@ mod tests {
         let root = process_ast(&mut arena, root).expect("process failed");
         let mut env = Environment::new();
         crate::stdlib::register_all(&mut env);
+        if !input.is_undefined() {
+            env.bind("$".into(), input.clone());
+        }
         let env = Rc::new(env);
         eval(&arena, root, input, &env)
     }

@@ -308,30 +308,38 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
 
     let parts: Vec<Value> = match &args[1] {
         Value::String(sep) => {
-            let splits: Vec<&str> = if let Some(lim) = limit {
-                s.splitn(lim + 1, sep.as_str()).collect()
+            let splits: Vec<&str> = if sep.is_empty() {
+                // Empty separator: split into individual characters.
+                s.char_indices()
+                    .map(|(i, c)| &s[i..i + c.len_utf8()])
+                    .collect()
             } else {
                 s.split(sep.as_str()).collect()
             };
-            splits
+            let mut result: Vec<Value> = splits
                 .into_iter()
                 .map(|p| Value::String(p.into()))
-                .collect()
+                .collect();
+            // Apply limit: return at most N items.
+            if let Some(lim) = limit {
+                result.truncate(lim);
+            }
+            result
         }
         Value::Object(obj) if obj.contains_key("pattern") => {
             if let Some(Value::String(pat)) = obj.get("pattern") {
                 let re = regex::Regex::new(pat).map_err(|e| {
                     JsonataError::new("D3010", format!("$split: invalid regex: {e}"))
                 })?;
-                let splits: Vec<&str> = if let Some(lim) = limit {
-                    re.splitn(s, lim + 1).collect()
-                } else {
-                    re.split(s).collect()
-                };
-                splits
+                let splits: Vec<&str> = re.split(s).collect();
+                let mut result: Vec<Value> = splits
                     .into_iter()
                     .map(|p| Value::String(p.into()))
-                    .collect()
+                    .collect();
+                if let Some(lim) = limit {
+                    result.truncate(lim);
+                }
+                result
             } else {
                 vec![Value::String(s.into())]
             }
