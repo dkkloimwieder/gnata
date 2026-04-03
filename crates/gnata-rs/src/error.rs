@@ -38,11 +38,13 @@ impl JsonataError {
         }
     }
 
+    #[must_use]
     pub fn with_token(mut self, token: impl Into<String>) -> Self {
         self.token = token.into();
         self
     }
 
+    #[must_use]
     pub fn with_value(mut self, value: impl Into<String>) -> Self {
         self.value = Some(value.into());
         self

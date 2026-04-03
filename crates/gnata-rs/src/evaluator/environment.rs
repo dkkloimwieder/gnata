@@ -131,6 +131,9 @@ impl Environment {
     }
 
     /// Increment the $eval nesting counter.
+    ///
+    /// # Errors
+    /// Returns `D3121` if nesting depth exceeds `max_depth`.
     pub fn incr_eval_depth(&self, max_depth: u32) -> Result<(), JsonataError> {
         let d = self.calls.eval_depth.get() + 1;
         if d > max_depth {
@@ -177,6 +180,7 @@ impl Environment {
     }
 
     /// Clone this environment (shallow copy of bindings, shared parent/calls).
+    #[must_use]
     pub fn shallow_clone(&self) -> Self {
         Self {
             parent: self.parent.clone(),

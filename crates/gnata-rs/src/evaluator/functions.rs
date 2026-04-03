@@ -81,6 +81,9 @@ impl fmt::Debug for TailCall {
 }
 
 /// Evaluate a function call node.
+///
+/// # Errors
+/// Returns JSONata errors for undefined functions, type mismatches, or evaluation failures.
 pub fn eval_function(
     arena: &AstArena,
     node: NodeId,
@@ -173,6 +176,9 @@ pub fn eval_function(
 }
 
 /// Evaluate a lambda expression node, creating a closure.
+///
+/// # Errors
+/// Returns JSONata errors if parameter resolution fails.
 pub fn eval_lambda(
     arena: &AstArena,
     node: NodeId,
@@ -220,6 +226,9 @@ pub fn eval_lambda(
 }
 
 /// Evaluate a partial application node.
+///
+/// # Errors
+/// Returns `T1007` or `T1008` for invalid partial application targets.
 pub fn eval_partial(
     arena: &AstArena,
     node: NodeId,
@@ -301,6 +310,9 @@ pub fn eval_partial(
 }
 
 /// Call a function value with arguments. Contains the trampoline loop for TCO.
+///
+/// # Errors
+/// Returns `U1001` on stack overflow, `D3001` on cancellation, or any error from the callee.
 pub fn call_function(
     func: &FunctionValue,
     args: &[Value],
@@ -388,7 +400,6 @@ pub fn call_function(
                         }
                         current_func = tc.func;
                         current_args = tc.args;
-                        continue;
                     }
                     other => return other,
                 }

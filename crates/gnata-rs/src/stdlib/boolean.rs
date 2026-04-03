@@ -3,6 +3,7 @@
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
+#[allow(clippy::unnecessary_wraps)]
 pub fn fn_boolean(args: &[Value], focus: &Value) -> JsonataResult {
     // Note: don't enforce arity — HOF callbacks like $filter($boolean)
     // pass 3 args (value, index, array). Only use the first arg.

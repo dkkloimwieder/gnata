@@ -68,12 +68,7 @@ static UNICODE_ZEROS: &[char] = &[
 ];
 
 fn unicode_digit_zero(c: char) -> Option<char> {
-    for &z in UNICODE_ZEROS {
-        if c >= z && c <= char::from_u32(z as u32 + 9).unwrap_or(z) {
-            return Some(z);
-        }
-    }
-    None
+    UNICODE_ZEROS.iter().find(|&&z| c >= z && c <= char::from_u32(z as u32 + 9).unwrap_or(z)).copied()
 }
 
 fn parse_integer_with_picture(s: &str, picture: &str) -> Result<i64, JsonataError> {
@@ -115,9 +110,7 @@ fn parse_integer_with_picture(s: &str, picture: &str) -> Result<i64, JsonataErro
 
     let mut digits = String::new();
     for c in s.chars() {
-        if c == '-' {
-            digits.push(c);
-        } else if c.is_ascii_digit() {
+        if c == '-' || c.is_ascii_digit() {
             digits.push(c);
         } else if zero_rune != '0' {
             let z_u32 = zero_rune as u32;
@@ -135,7 +128,7 @@ fn parse_integer_with_picture(s: &str, picture: &str) -> Result<i64, JsonataErro
     cleaned.parse::<i64>().map_err(|_| {
         JsonataError::new(
             "D3137",
-            format!("$parseInteger: cannot parse {:?} as integer", s),
+            format!("$parseInteger: cannot parse {s:?} as integer"),
         )
     })
 }
@@ -250,7 +243,7 @@ fn words_to_float(s: &str) -> Result<f64, JsonataError> {
         ("trillion", 1e12),
     ];
 
-    let s = s.replace('-', " ").replace(',', " ");
+    let s = s.replace(['-', ','], " ");
     let words: Vec<&str> = s.split_whitespace().collect();
 
     let mut total: f64 = 0.0;
@@ -265,14 +258,11 @@ fn words_to_float(s: &str) -> Result<f64, JsonataError> {
             .find(|(name, _)| name == w)
             .map(|(_, v)| *v);
 
-        let val = match val {
-            Some(v) => v,
-            None => {
-                return Err(JsonataError::new(
-                    "D3137",
-                    format!("$parseInteger: unknown word {:?}", w),
-                ));
-            }
+        let Some(val) = val else {
+            return Err(JsonataError::new(
+                "D3137",
+                format!("$parseInteger: unknown word {w:?}"),
+            ));
         };
 
         if val == 100.0 {
@@ -299,10 +289,10 @@ fn words_to_float(s: &str) -> Result<f64, JsonataError> {
 }
 
 fn words_to_int(s: &str) -> Result<i64, JsonataError> {
-    let f = words_to_float(s)?;
     const MAX_SAFE: f64 = (1_i64 << 63) as f64 - 1024.0;
+    let f = words_to_float(s)?;
     if f > MAX_SAFE || f < -MAX_SAFE {
-        return Err(JsonataError::new("D3137_FLOAT", format!("{}", f)));
+        return Err(JsonataError::new("D3137_FLOAT", format!("{f}")));
     }
     Ok(f as i64)
 }
@@ -330,18 +320,16 @@ fn from_roman(s: &str) -> Result<i64, JsonataError> {
         let v = roman_val(c).ok_or_else(|| {
             JsonataError::new(
                 "D3137",
-                format!("$parseInteger: invalid Roman numeral {:?}", c),
+                format!("$parseInteger: invalid Roman numeral {c:?}"),
             )
         })?;
 
-        if i + 1 < chars.len() {
-            if let Some(next) = roman_val(chars[i + 1]) {
-                if next > v {
+        if i + 1 < chars.len()
+            && let Some(next) = roman_val(chars[i + 1])
+                && next > v {
                     total -= v;
                     continue;
                 }
-            }
-        }
         total += v;
     }
 
@@ -353,10 +341,10 @@ fn from_roman(s: &str) -> Result<i64, JsonataError> {
 fn from_alphabetic(s: &str) -> Result<i64, JsonataError> {
     let mut result: i64 = 0;
     for c in s.chars() {
-        if c < 'a' || c > 'z' {
+        if !c.is_ascii_lowercase() {
             return Err(JsonataError::new(
                 "D3137",
-                format!("$parseInteger: invalid alphabetic character {:?}", c),
+                format!("$parseInteger: invalid alphabetic character {c:?}"),
             ));
         }
         result = result * 26 + (c as i64 - 'a' as i64 + 1);

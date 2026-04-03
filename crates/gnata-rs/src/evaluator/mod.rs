@@ -23,6 +23,10 @@ use crate::value::{Sequence, Value};
 ///
 /// Returns `Value::Undefined` for missing/undefined results.
 /// This is the main entry point — all node types dispatch through here.
+///
+/// # Errors
+/// Returns JSONata-spec error codes for type mismatches, undefined references,
+/// stack overflows, cancellation, and other evaluation failures.
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     if node.is_empty() {
         return Ok(Value::Undefined);
@@ -41,11 +45,10 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
             group: Some(_),
             steps,
             ..
-        } => {
-            if !path_has_tuple_step(arena, steps) {
+        }
+            if !path_has_tuple_step(arena, steps) => {
                 return eval_group_by(arena, node, input, env);
             }
-        }
         Expr::Name { group: Some(_), .. }
         | Expr::Variable { group: Some(_), .. }
         | Expr::Function { group: Some(_), .. } => {
@@ -98,6 +101,9 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
 
 /// Public API for calling any function value with given args.
 /// Used by standard library functions to dispatch callbacks.
+///
+/// # Errors
+/// Returns any error produced by the callee function.
 pub fn apply_function(
     func: &FunctionValue,
     args: &[Value],
@@ -110,6 +116,8 @@ pub fn apply_function(
 
 // ── Literal evaluators ──────────────────────────────────────────────
 
+// Consistent return type with eval dispatch table.
+#[allow(clippy::unnecessary_wraps)]
 fn eval_value_lit(value: &str) -> JsonataResult {
     match value {
         "true" => Ok(Value::Bool(true)),
@@ -119,6 +127,8 @@ fn eval_value_lit(value: &str) -> JsonataResult {
     }
 }
 
+// Consistent return type with eval dispatch table.
+#[allow(clippy::unnecessary_wraps)]
 fn eval_variable(name: &str, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     if name.is_empty() {
         // Bare $ — refers to the current input context.
@@ -387,6 +397,8 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
 }
 
 /// Recursively check if an AST node or any of its descendants is a Parent (%) reference.
+// Large recursive match over all AST variants.
+#[allow(clippy::too_many_lines)]
 fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
     if node.is_empty() {
         return false;
@@ -439,7 +451,7 @@ fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
             let (condition, then, else_) = (*condition, *then, *else_);
             node_has_parent_ref(arena, condition)
                 || node_has_parent_ref(arena, then)
-                || else_.map_or(false, |e| node_has_parent_ref(arena, e))
+                || else_.is_some_and(|e| node_has_parent_ref(arena, e))
         }
         Expr::Function {
             procedure,
@@ -476,7 +488,7 @@ fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
             let (pattern, update, delete) = (*pattern, *update, *delete);
             node_has_parent_ref(arena, pattern)
                 || node_has_parent_ref(arena, update)
-                || delete.map_or(false, |d| node_has_parent_ref(arena, d))
+                || delete.is_some_and(|d| node_has_parent_ref(arena, d))
         }
         Expr::Partial {
             procedure,
@@ -568,6 +580,8 @@ fn eval_path_step_no_group(
 ///
 /// Maintains a list of (value, env) contexts so that position variables bound
 /// at one step remain accessible in all subsequent steps.
+// Large dispatch function handling all tuple-aware path step types.
+#[allow(clippy::too_many_lines)]
 fn eval_path_tuple(
     arena: &AstArena,
     steps: &[NodeId],
@@ -583,11 +597,10 @@ fn eval_path_tuple(
     // end via eval_tuple_group instead of during per-element evaluation.
     let mut final_group: Option<crate::parser::GroupExpr> = None;
     for &step in steps {
-        if final_group.is_none() {
-            if let Some(grp) = extract_step_group(arena, step) {
+        if final_group.is_none()
+            && let Some(grp) = extract_step_group(arena, step) {
                 final_group = Some(grp);
             }
-        }
     }
 
     for (step_idx, &step) in steps.iter().enumerate() {
@@ -652,15 +665,7 @@ fn eval_path_tuple(
                     return std::cmp::Ordering::Equal;
                 }
                 match compare_sort_terms(arena, &terms, &a.0, &b.0, &a.1, &b.1) {
-                    Ok(cmp) => {
-                        if cmp < 0 {
-                            std::cmp::Ordering::Less
-                        } else if cmp > 0 {
-                            std::cmp::Ordering::Greater
-                        } else {
-                            std::cmp::Ordering::Equal
-                        }
-                    }
+                    Ok(cmp) => cmp.cmp(&0),
                     Err(e) => {
                         sort_err = Some(e);
                         std::cmp::Ordering::Equal
@@ -784,8 +789,8 @@ fn eval_path_tuple(
                     let mut tuple_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
                     if let Expr::Block { expressions, .. } = arena.get(lhs) {
                         let expressions = expressions.clone();
-                        if expressions.len() == 1 {
-                            if let Expr::Path {
+                        if expressions.len() == 1
+                            && let Expr::Path {
                                 steps: inner_steps, ..
                             } = arena.get(expressions[0])
                             {
@@ -796,7 +801,6 @@ fn eval_path_tuple(
                                     &[(val.clone(), ctx_env.clone())],
                                 )?;
                             }
-                        }
                         if tuple_ctxs.is_empty() {
                             // Fallback: evaluate block normally.
                             let block_result = eval(arena, lhs, val, ctx_env)?;
@@ -833,8 +837,8 @@ fn eval_path_tuple(
         // for the % operator (e.g., Account.(Order.Product).{%.OrderID}).
         if let Expr::Block { expressions, .. } = arena.get(step) {
             let expressions = expressions.clone();
-            if expressions.len() == 1 {
-                if let Expr::Path {
+            if expressions.len() == 1
+                && let Expr::Path {
                     steps: inner_steps, ..
                 } = arena.get(expressions[0])
                 {
@@ -846,7 +850,6 @@ fn eval_path_tuple(
                     }
                     continue;
                 }
-            }
         }
 
         // Subscript step whose Left has a Focus binding (join operator @):
@@ -871,7 +874,7 @@ fn eval_path_tuple(
                 };
                 if let Some(ref focus_name) = focus_var {
                     next_ctxs = eval_join_filter(
-                        arena, &ctxs, next_ctxs, lhs, rhs, focus_name, &index_var,
+                        arena, &ctxs, next_ctxs, lhs, rhs, focus_name, index_var.as_ref(),
                     )?;
                     // Bind post-filter index if the Binary `[` node itself has #$var.
                     if let Some(ref pfi_name) = post_filter_index {
@@ -894,8 +897,8 @@ fn eval_path_tuple(
         // tuples, then apply the outer subscript to the entire tuple collection.
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
             let (op, outer_lhs, outer_rhs) = (op.clone(), *lhs, *rhs);
-            if op == "[" && !outer_lhs.is_empty() {
-                if let Expr::Binary {
+            if op == "[" && !outer_lhs.is_empty()
+                && let Expr::Binary {
                     op: inner_op,
                     lhs: inner_lhs,
                     rhs: inner_rhs,
@@ -916,7 +919,7 @@ fn eval_path_tuple(
                             // Process the inner join-filter.
                             next_ctxs = eval_join_filter(
                                 arena, &ctxs, next_ctxs, inner_lhs, inner_rhs, focus_name,
-                                &index_var,
+                                index_var.as_ref(),
                             )?;
 
                             // Apply the outer subscript to the collected tuples.
@@ -944,7 +947,6 @@ fn eval_path_tuple(
                         }
                     }
                 }
-            }
         }
 
         for (val, ctx_env) in &ctxs {
@@ -1083,7 +1085,7 @@ fn eval_join_filter(
     left_node: NodeId,
     predicate: NodeId,
     focus_var: &str,
-    index_var: &Option<String>,
+    index_var: Option<&String>,
 ) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
     for (val, ctx_env) in ctxs {
         let val = collapse_val(val);
@@ -1172,10 +1174,10 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
                     ..
                 } => {
                     if idx.is_none() {
-                        idx = li.clone();
+                        idx.clone_from(li);
                     }
                     if foc.is_none() {
-                        foc = lf.clone();
+                        foc.clone_from(lf);
                     }
                 }
                 Expr::Binary {
@@ -1184,10 +1186,10 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
                     ..
                 } => {
                     if idx.is_none() {
-                        idx = li.clone();
+                        idx.clone_from(li);
                     }
                     if foc.is_none() {
-                        foc = lf.clone();
+                        foc.clone_from(lf);
                     }
                 }
                 _ => {}
@@ -1252,17 +1254,17 @@ fn eval_tuple_group(
 
         // Phase 2: evaluate value expression per group.
         for key in &key_order {
-            let (values, envs) = groups.get(key).unwrap();
+            let (values, envs) = groups.get(key).expect("key from key_order must exist in groups");
             let (group_ctx, group_env) = if values.len() == 1 {
                 (values[0].clone(), Rc::clone(&envs[0]))
             } else {
                 let merged = merge_group_envs(envs);
                 (Value::Array(values.clone()), Rc::new(merged))
             };
-            let val = if !val_node.is_empty() {
-                eval(arena, val_node, &group_ctx, &group_env)?
-            } else {
+            let val = if val_node.is_empty() {
                 group_ctx
+            } else {
+                eval(arena, val_node, &group_ctx, &group_env)?
             };
             if !val.is_undefined() {
                 result_map.insert(key.clone(), val);
@@ -1327,12 +1329,12 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
             }
         }
         if vals.len() == 1 {
-            merged.bind(name.clone(), vals.into_iter().next().unwrap());
+            merged.bind(name.clone(), vals.into_iter().next().expect("len is 1"));
         } else if !vals.is_empty() {
             // Check if all values are identical.
             let all_same = vals.windows(2).all(|w| w[0] == w[1]);
             if all_same {
-                merged.bind(name.clone(), vals.into_iter().next().unwrap());
+                merged.bind(name.clone(), vals.into_iter().next().expect("vals is non-empty"));
             } else {
                 merged.bind(name.clone(), Value::Array(vals));
             }
@@ -1469,15 +1471,12 @@ fn eval_path_step(
     }
 
     // For all other step types, map over array input.
-    let arr = match input {
-        Value::Array(a) => a.clone(),
-        _ => {
-            // Single item — check for function step with path-element prepend.
-            if matches!(expr, Expr::Function { .. }) {
-                return eval_path_function_step(arena, step, input, env);
-            }
-            return eval(arena, step, input, env);
+    let arr = if let Value::Array(a) = input { a.clone() } else {
+        // Single item — check for function step with path-element prepend.
+        if matches!(expr, Expr::Function { .. }) {
+            return eval_path_function_step(arena, step, input, env);
         }
+        return eval(arena, step, input, env);
     };
 
     let is_group_step = matches!(expr, Expr::Unary { op, .. } if op == "[");
@@ -1561,6 +1560,8 @@ fn eval_path_function_step(
 
 // ── Binary operators (stub for Phase 5, full impl in Phase 7) ───────
 
+// Large dispatch function for all binary operator types.
+#[allow(clippy::too_many_lines)]
 fn eval_binary(
     arena: &AstArena,
     node: NodeId,
@@ -1602,10 +1603,10 @@ fn eval_binary(
         "??" => {
             // Null-coalescing: left if not undefined. null IS a value.
             let left = eval(arena, lhs, input, env)?;
-            if !left.is_undefined() {
-                Ok(left)
-            } else {
+            if left.is_undefined() {
                 eval(arena, rhs, input, env)
+            } else {
+                Ok(left)
             }
         }
         "~>" => {
@@ -1649,7 +1650,7 @@ fn eval_binary(
             };
             // Check keep_array: the [] suffix on this node or anywhere in the LHS chain.
             let keep_array = has_keep_array(arena, node);
-            let result = eval_subscript(arena, rhs, &left, input, env, &index_var)?;
+            let result = eval_subscript(arena, rhs, &left, input, env, index_var.as_ref())?;
             if keep_array {
                 match result {
                     Value::Array(_) => Ok(result),
@@ -1742,8 +1743,8 @@ fn eval_arithmetic(
     if left.is_undefined() || right.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let ln = left.as_f64().unwrap();
-    let rn = right.as_f64().unwrap();
+    let ln = left.as_f64().expect("left verified as number above");
+    let rn = right.as_f64().expect("right verified as number above");
     // Modulo by zero → D3001 immediately (matches Go).
     if op == "%" && rn == 0.0 {
         return Err(JsonataError::new("D3001", "modulo by zero"));
@@ -1803,8 +1804,8 @@ fn eval_range(
         return Ok(Value::Undefined);
     }
 
-    let ln = left.as_f64().unwrap();
-    let rn = right.as_f64().unwrap();
+    let ln = left.as_f64().expect("left verified as number above");
+    let rn = right.as_f64().expect("right verified as number above");
 
     // Must be integers (no fractional part).
     if ln != ln.trunc() {
@@ -1845,11 +1846,10 @@ fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
             | Expr::Variable { keep_array, .. }
             | Expr::Function { keep_array, .. }
             | Expr::Sort { keep_array, .. }
-            | Expr::Unary { keep_array, .. } => {
-                if *keep_array {
+            | Expr::Unary { keep_array, .. }
+                if *keep_array => {
                     return true;
                 }
-            }
             _ => {}
         }
         // Walk into the LHS of Binary nodes or the expr of Sort nodes.
@@ -1868,11 +1868,11 @@ fn eval_subscript(
     left: &Value,
     input: &Value,
     env: &Rc<Environment>,
-    index_var: &Option<String>,
+    index_var: Option<&String>,
 ) -> JsonataResult {
     // For non-array inputs without index variable, evaluate directly.
-    if !matches!(left, Value::Array(_) | Value::Sequence(_)) {
-        if index_var.is_none() {
+    if !matches!(left, Value::Array(_) | Value::Sequence(_))
+        && index_var.is_none() {
             // Bind %% → input so the % operator can navigate to the parent.
             let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
             filter_env.bind("%%".into(), input.clone());
@@ -1893,7 +1893,6 @@ fn eval_subscript(
         }
         // When there's an index variable, wrap in array so the predicate filter
         // path handles index binding correctly (like Go's evalSubscriptLeft).
-    }
 
     let arr = match left {
         Value::Array(a) => a.clone(),
@@ -1918,7 +1917,7 @@ fn eval_subscript(
             let mut actual_indices: Vec<i64> = indices
                 .iter()
                 .map(|v| {
-                    let idx = v.as_f64().unwrap() as i64;
+                    let idx = v.as_f64().expect("all verified as f64 above") as i64;
                     if idx < 0 { len + idx } else { idx }
                 })
                 .collect();
@@ -2017,14 +2016,11 @@ fn eval_chain(
         let arguments = arguments.clone();
         let keep_array = *keep_array;
         let fn_val = eval(arena, procedure, input, env)?;
-        let func = match fn_val {
-            Value::Function(f) => f,
-            _ => {
-                return Err(JsonataError::new(
-                    "T1006",
-                    "attempted to invoke undefined function",
-                ));
-            }
+        let Value::Function(func) = fn_val else {
+            return Err(JsonataError::new(
+                "T1006",
+                "attempted to invoke undefined function",
+            ));
         };
         let mut args = vec![piped.clone()];
         for &arg_node in &arguments {
@@ -2055,11 +2051,10 @@ fn eval_chain(
     let fn_val = eval(arena, rhs, input, env)?;
 
     // If right side is a regex object, apply regex test (like $contains).
-    if let Value::Object(ref obj) = fn_val {
-        if obj.contains_key("pattern") {
+    if let Value::Object(ref obj) = fn_val
+        && obj.contains_key("pattern") {
             return apply_regex_chain(piped, obj);
         }
-    }
 
     match &fn_val {
         Value::Function(func) => {
@@ -2120,7 +2115,7 @@ fn apply_regex_chain(
     let re = crate::stdlib::regex::compile_regex(pattern, flags)
         .map_err(|e| JsonataError::new("D1002", format!("invalid regex: {}", e.message)))?;
     if let Some(caps) = re.captures(s) {
-        let m = caps.get(0).unwrap();
+        let m = caps.get(0).expect("capture group 0 always exists when captures succeed");
         // Build match object similar to $match.
         let mut obj = indexmap::IndexMap::new();
         obj.insert("match".into(), Value::String(m.as_str().into()));
@@ -2225,8 +2220,7 @@ fn eval_unary(
                         return Err(JsonataError::new(
                             "T1003",
                             format!(
-                                "key expression must evaluate to a string, got {:?}",
-                                key_val
+                                "key expression must evaluate to a string, got {key_val:?}"
                             ),
                         ));
                     }
@@ -2374,7 +2368,7 @@ fn eval_sort(
 
     if terms.is_empty() {
         if !was_array && arr.len() == 1 {
-            return Ok(arr.into_iter().next().unwrap());
+            return Ok(arr.into_iter().next().expect("len is 1"));
         }
         return Ok(Value::Array(arr));
     }
@@ -2386,15 +2380,7 @@ fn eval_sort(
             return std::cmp::Ordering::Equal;
         }
         match compare_sort_terms(arena, &terms, a, b, env, env) {
-            Ok(cmp) => {
-                if cmp < 0 {
-                    std::cmp::Ordering::Less
-                } else if cmp > 0 {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            }
+            Ok(cmp) => cmp.cmp(&0),
             Err(e) => {
                 sort_err = Some(e);
                 std::cmp::Ordering::Equal
@@ -2406,7 +2392,7 @@ fn eval_sort(
     }
 
     if !was_array && arr.len() == 1 {
-        return Ok(arr.into_iter().next().unwrap());
+        return Ok(arr.into_iter().next().expect("len is 1"));
     }
     Ok(Value::Array(arr))
 }
@@ -2433,15 +2419,7 @@ fn eval_sort_with_parent_tracking(
             return std::cmp::Ordering::Equal;
         }
         match compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1) {
-            Ok(cmp) => {
-                if cmp < 0 {
-                    std::cmp::Ordering::Less
-                } else if cmp > 0 {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            }
+            Ok(cmp) => cmp.cmp(&0),
             Err(e) => {
                 sort_err = Some(e);
                 std::cmp::Ordering::Equal
@@ -2594,6 +2572,8 @@ fn compare_sort_terms(
 
 // ── Transform expression (|pattern|update,delete|) ──────────────────
 
+// Consistent return type with eval dispatch table.
+#[allow(clippy::unnecessary_wraps)]
 fn eval_transform(
     arena: &AstArena,
     node: NodeId,
@@ -2644,10 +2624,10 @@ fn eval_transform(
     let env_for_fn = Rc::clone(env);
     let transform_fn: Rc<crate::evaluator::EnvAwareBuiltinFn> = Rc::new(
         move |args: &[Value], focus: &Value, _env: &Rc<Environment>, arena: &AstArena| {
-            let doc = if !args.is_empty() {
-                args[0].clone()
-            } else {
+            let doc = if args.is_empty() {
                 focus.clone()
+            } else {
+                args[0].clone()
             };
             apply_transform(arena, pattern, update, delete, &doc, &env_for_fn)
         },
@@ -2854,6 +2834,8 @@ fn validate_transform_clauses(
 
 // ── Group-by expression ({key:val}) ─────────────────────────────────
 
+// Large dispatch function for group-by evaluation.
+#[allow(clippy::too_many_lines)]
 fn eval_group_by(
     arena: &AstArena,
     node: NodeId,
@@ -2934,7 +2916,7 @@ fn eval_group_by(
                     format!("duplicate key: \"{key_str}\""),
                 ));
             }
-            let (group_items, first_idx) = groups.get(key_str).unwrap();
+            let (group_items, first_idx) = groups.get(key_str).expect("key from group_order must exist in groups");
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {
@@ -2946,10 +2928,10 @@ fn eval_group_by(
             child_env.bind("key".into(), Value::String(key_str.clone()));
             let child_env = Rc::new(child_env);
 
-            let mut val_result = if !val_node.is_empty() {
-                eval(arena, val_node, &group_input, &child_env)?
-            } else {
+            let mut val_result = if val_node.is_empty() {
                 group_input
+            } else {
+                eval(arena, val_node, &group_input, &child_env)?
             };
 
             // Apply keep_array wrapping for value nodes with [] suffix.

@@ -41,7 +41,7 @@ pub fn fn_format_number(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.len() >= 3
         && let Value::Object(map) = &args[2]
     {
-        for (k, v) in map.iter() {
+        for (k, v) in map {
             if let Value::String(s) = v {
                 opts.push((k.clone(), s.clone()));
             }
@@ -93,7 +93,7 @@ impl FmtChars {
                 "grouping-separator" if chars.len() == 1 => fc.grouping_sep = chars[0],
                 "percent" if chars.len() == 1 => fc.percent = chars[0],
                 "per-mille" if !val.is_empty() => {
-                    fc.per_mille_str = val.clone();
+                    fc.per_mille_str.clone_from(val);
                     fc.per_mille = chars[0];
                 }
                 "zero-digit" if chars.len() == 1 => fc.zero_digit = chars[0],
@@ -466,7 +466,7 @@ fn apply_frac_grouping(frac_str: &str, grp_pos: &[usize], sep: char) -> String {
 
 fn format_fixed(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
     let total_frac_digits = sp.frac_mandatory + sp.frac_optional;
-    let formatted = format!("{:.prec$}", n, prec = total_frac_digits);
+    let formatted = format!("{n:.total_frac_digits$}");
     let mut parts = formatted.splitn(2, '.');
     let mut int_str = parts.next().unwrap_or("").to_string();
     let mut frac_str = parts.next().unwrap_or("").to_string();
@@ -474,11 +474,7 @@ fn format_fixed(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
     // Minimum integer digits: force at least 1 when there's no decimal and no
     // digit placeholder, or when only optional-digit placeholders appear.
     let min_int = if sp.int_mandatory < 1 {
-        if (!sp.has_decimal && !sp.has_any_int_digit) || sp.int_optional > 0 {
-            1
-        } else {
-            0
-        }
+        usize::from((!sp.has_decimal && !sp.has_any_int_digit) || sp.int_optional > 0)
     } else {
         sp.int_mandatory
     };

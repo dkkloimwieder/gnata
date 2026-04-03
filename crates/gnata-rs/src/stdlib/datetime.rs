@@ -8,6 +8,7 @@ use crate::value::Value;
 
 // ── Public entry points ─────────────────────────────────────────────────────
 
+#[allow(clippy::missing_errors_doc)]
 pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
     let now = jiff::Zoned::now();
     if !args.is_empty() && !args[0].is_undefined() {
@@ -39,11 +40,13 @@ pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::String(format_default_iso(millis, 0)))
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn fn_millis(_args: &[Value], _focus: &Value) -> JsonataResult {
     let now = jiff::Timestamp::now();
     Ok(Value::Number(now.as_millisecond() as f64))
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
     // With no args, use focus as millis argument.
     let effective_args: &[Value];
@@ -100,6 +103,7 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
     Ok(Value::String(format_default_iso(ms, tz_offset)))
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn fn_to_millis(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() || args[0].is_undefined() {
         return Ok(Value::Undefined);
@@ -162,8 +166,7 @@ fn parse_iso_to_millis(s: &str) -> JsonataResult {
     Err(JsonataError::new(
         "D3110",
         format!(
-            "$toMillis: the value '{}' does not match the standard datetime format",
-            s
+            "$toMillis: the value '{s}' does not match the standard datetime format"
         ),
     ))
 }
@@ -228,15 +231,14 @@ fn try_parse_datetime_no_tz(s: &str) -> Option<i64> {
 
 fn format_default_iso(ms: i64, tz_offset_secs: i32) -> String {
     // Apply timezone offset to get local time.
-    let local_ms = ms + (tz_offset_secs as i64) * 1000;
+    let local_ms = ms + i64::from(tz_offset_secs) * 1000;
     let secs = local_ms.div_euclid(1000);
     let millis_part = local_ms.rem_euclid(1000);
 
     let (y, mo, d, h, mi, s) = secs_to_ymd_hms(secs);
 
     let base = format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}",
-        y, mo, d, h, mi, s, millis_part
+        "{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{millis_part:03}"
     );
 
     if tz_offset_secs == 0 {
@@ -246,20 +248,21 @@ fn format_default_iso(ms: i64, tz_offset_secs: i32) -> String {
     let abs_offset = tz_offset_secs.unsigned_abs();
     let oh = abs_offset / 3600;
     let om = (abs_offset % 3600) / 60;
-    format!("{}{}{:02}:{:02}", base, sign, oh, om)
+    format!("{base}{sign}{oh:02}:{om:02}")
 }
 
 // ── Picture-format formatting ────────────────────────────────────────────────
 
 /// Format epoch milliseconds using an XPath picture string.
 /// Returns an error for invalid picture strings.
+#[allow(clippy::missing_errors_doc)]
 pub fn format_with_picture(
     ms: i64,
     picture: &str,
     tz_offset_secs: i32,
 ) -> Result<String, JsonataError> {
     // Apply TZ offset.
-    let local_ms = ms + (tz_offset_secs as i64) * 1000;
+    let local_ms = ms + i64::from(tz_offset_secs) * 1000;
     let secs = local_ms.div_euclid(1000);
     let ms_frac = local_ms.rem_euclid(1000) as u32;
     let (year, month, day, hour, minute, second) = secs_to_ymd_hms(secs);
@@ -353,25 +356,25 @@ fn format_token(
         return Ok(String::new());
     }
     let mut chars = token.chars();
-    let component = chars.next().unwrap();
+    let component = chars.next().expect("token is non-empty");
     let modifier: String = chars.collect();
 
     match component {
         'Y' => format_year_component(year, &modifier),
-        'M' => format_month_token(month as i64, &modifier),
-        'D' => format_day_component(day as i64, &modifier),
-        'H' => format_integer_token(hour as i64, &modifier),
+        'M' => format_month_token(i64::from(month), &modifier),
+        'D' => format_day_component(i64::from(day), &modifier),
+        'H' => format_integer_token(i64::from(hour), &modifier),
         'h' => {
-            let h12 = ((hour + 11) % 12 + 1) as i64;
+            let h12 = i64::from((hour + 11) % 12 + 1);
             format_integer_token(h12, &modifier)
         }
         'm' => {
             let m = if modifier.is_empty() { "01" } else { &modifier };
-            format_integer_token(minute as i64, m)
+            format_integer_token(i64::from(minute), m)
         }
         's' => {
             let m = if modifier.is_empty() { "01" } else { &modifier };
-            format_integer_token(second as i64, m)
+            format_integer_token(i64::from(second), m)
         }
         'f' => Ok(format_frac_second(ms_frac, &modifier)),
         'F' => Ok(format_weekday_token(weekday, &modifier)),
@@ -379,12 +382,12 @@ fn format_token(
         'P' => Ok(format_ampm(hour, &modifier)),
         'E' | 'C' => Ok("ISO".to_string()),
         'd' => {
-            let doy = day_of_year(year, month, day) as i64;
+            let doy = i64::from(day_of_year(year, month, day));
             format_day_of_year_token(doy, &modifier)
         }
         'W' => {
             let (_, w) = iso_week(year, month, day);
-            format_integer_token(w as i64, &modifier)
+            format_integer_token(i64::from(w), &modifier)
         }
         'X' => {
             let (iso_y, _) = iso_week(year, month, day);
@@ -394,14 +397,14 @@ fn format_token(
             // Week of month (ISO week Thursday method).
             let (thy, thm, thd) = iso_week_thursday(year, month, day);
             let wom = week_of_month(thy, thm, thd);
-            format_integer_token(wom as i64, &modifier)
+            format_integer_token(i64::from(wom), &modifier)
         }
         'x' => {
             // Month of the ISO week (Thursday-based month).
             let (_thy, thm, _thd) = iso_week_thursday(year, month, day);
             format_iso_week_month(thm, &modifier)
         }
-        _ => Ok(format!("[{}]", token)),
+        _ => Ok(format!("[{token}]")),
     }
 }
 
@@ -416,14 +419,14 @@ fn format_year_component(y: i32, modifier: &str) -> Result<String, JsonataError>
         "N" => Err(JsonataError::new(
             "D3133",
             format!(
-                "the picture string is not valid: unsupported modifier in [Y{}]",
-                modifier
+                "the picture string is not valid: unsupported modifier in [Y{modifier}]"
             ),
         )),
         _ => format_year_token(y, modifier),
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn format_year_token(y: i32, modifier: &str) -> Result<String, JsonataError> {
     if let Some(rest) = modifier.strip_prefix(',') {
         return Ok(truncate_year(y, rest));
@@ -439,7 +442,7 @@ fn format_year_token(y: i32, modifier: &str) -> Result<String, JsonataError> {
                 .parse::<usize>()
                 && max_width > 0
             {
-                let s = format_integer_mod(y as i64, prefix);
+                let s = format_integer_mod(i64::from(y), prefix);
                 return Ok(if s.len() > max_width {
                     s[s.len() - max_width..].to_string()
                 } else {
@@ -451,9 +454,9 @@ fn format_year_token(y: i32, modifier: &str) -> Result<String, JsonataError> {
         if prefix.contains('9') || suffix.contains('9') {
             return Ok(format_integer_with_grouping(y));
         }
-        return Ok(format_integer_mod(y as i64, prefix));
+        return Ok(format_integer_mod(i64::from(y), prefix));
     }
-    Ok(format_integer_mod(y as i64, modifier))
+    Ok(format_integer_mod(i64::from(y), modifier))
 }
 
 fn truncate_year(y: i32, width_spec: &str) -> String {
@@ -490,6 +493,7 @@ fn format_integer_with_grouping(v: i32) -> String {
     result
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn format_month_token(m: i64, modifier: &str) -> Result<String, JsonataError> {
     let month_names = MONTH_NAMES;
     let idx = (m - 1) as usize;
@@ -529,14 +533,15 @@ fn format_numeric_with_min_width(v: i32, modifier: &str) -> String {
     } else {
         (modifier, 0)
     };
-    let s = format_integer_mod(v as i64, primary);
+    let s = format_integer_mod(i64::from(v), primary);
     if min_width > 0 && s.len() < min_width {
-        format!("{:0>width$}", s, width = min_width)
+        format!("{s:0>min_width$}")
     } else {
         s
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn format_day_component(day: i64, modifier: &str) -> Result<String, JsonataError> {
     match modifier {
         "I" => Ok(to_roman(day, true)),
@@ -566,6 +571,7 @@ fn format_day_token(d: i64, modifier: &str) -> String {
     if is_ordinal { s + ordinal_suffix(d) } else { s }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn format_day_of_year_token(doy: i64, modifier: &str) -> Result<String, JsonataError> {
     match modifier {
         "wo" => Ok(int_to_words_ordinal(doy)),
@@ -600,8 +606,8 @@ fn format_weekday_token(wd: u8, modifier: &str) -> String {
         "N" => names[wd as usize].to_uppercase(),
         _ => {
             // Numeric: ISO weekday (Mon=1, ..., Sun=7)
-            let iso = (wd as i32 + 6) % 7 + 1;
-            format_integer_mod(iso as i64, modifier)
+            let iso = (i32::from(wd) + 6) % 7 + 1;
+            format_integer_mod(i64::from(iso), modifier)
         }
     }
 }
@@ -621,10 +627,10 @@ fn format_frac_second(ns_millis: i32, modifier: &str) -> String {
     } else {
         modifier.len()
     };
-    let _s = format!("{:09}", ns_millis as i64 * 1_000_000); // ns_millis is really ms
+    let _s = format!("{:09}", i64::from(ns_millis) * 1_000_000); // ns_millis is really ms
     // Actually ms_frac is milliseconds (0-999); pad to 9 digits as nanoseconds.
-    let ms_as_ns = ns_millis as i64 * 1_000_000;
-    let full = format!("{:09}", ms_as_ns);
+    let ms_as_ns = i64::from(ns_millis) * 1_000_000;
+    let full = format!("{ms_as_ns:09}");
     if width <= 9 {
         full[..width].to_string()
     } else {
@@ -632,6 +638,7 @@ fn format_frac_second(ns_millis: i32, modifier: &str) -> String {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn format_iso_week_month(month: u8, modifier: &str) -> Result<String, JsonataError> {
     let m = month as usize;
     match modifier {
@@ -656,7 +663,7 @@ fn format_timezone(
     let prefix = if component == 'z' { "GMT" } else { "" };
 
     if tz_offset_secs == 0 && use_z {
-        return Ok(format!("{}Z", prefix));
+        return Ok(format!("{prefix}Z"));
     }
 
     let sign = if tz_offset_secs >= 0 { '+' } else { '-' };
@@ -667,20 +674,20 @@ fn format_timezone(
     let s = match mod_ {
         "0" => {
             if mins == 0 {
-                format!("{}{}{}", prefix, sign, hours)
+                format!("{prefix}{sign}{hours}")
             } else {
-                format!("{}{}{:}:{:02}", prefix, sign, hours, mins)
+                format!("{prefix}{sign}{hours:}:{mins:02}")
             }
         }
-        "0101" => format!("{}{}{:02}{:02}", prefix, sign, hours, mins),
-        "01:01" | "" | "Z" => format!("{}{}{:02}:{:02}", prefix, sign, hours, mins),
+        "0101" => format!("{prefix}{sign}{hours:02}{mins:02}"),
+        "01:01" | "" | "Z" => format!("{prefix}{sign}{hours:02}:{mins:02}"),
         "010101" | "01:01:01" => {
             return Err(JsonataError::new(
                 "D3134",
-                format!("invalid picture component: [{}{}]", component, modifier),
+                format!("invalid picture component: [{component}{modifier}]"),
             ));
         }
-        _ => format!("{}{}{:02}:{:02}", prefix, sign, hours, mins),
+        _ => format!("{prefix}{sign}{hours:02}:{mins:02}"),
     };
     Ok(s)
 }
@@ -708,7 +715,7 @@ fn format_integer_mod(v: i64, modifier: &str) -> String {
                 }
                 result.push(c);
             }
-            return if neg { format!("-{}", result) } else { result };
+            return if neg { format!("-{result}") } else { result };
         }
         return s;
     }
@@ -720,18 +727,19 @@ fn format_integer_mod(v: i64, modifier: &str) -> String {
 
     // Count leading zeros to determine padding width.
     if modifier.starts_with('0') {
-        let digit_count = modifier.chars().take_while(|c| c.is_ascii_digit()).count();
+        let digit_count = modifier.chars().take_while(char::is_ascii_digit).count();
         if digit_count > 0 {
             if v < 0 {
                 return format!("-{:0>width$}", -v, width = digit_count);
             }
-            return format!("{:0>width$}", v, width = digit_count);
+            return format!("{v:0>digit_count$}");
         }
     }
 
     v.to_string()
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn format_integer_token(v: i64, modifier: &str) -> Result<String, JsonataError> {
     Ok(format_integer_mod(v, modifier))
 }
@@ -746,6 +754,7 @@ struct PicturePart {
     literal: String,
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, JsonataError> {
     let runes: Vec<char> = picture.chars().collect();
     let mut parts: Vec<PicturePart> = Vec::new();
@@ -778,11 +787,11 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
                 i = j + 1;
                 continue;
             }
-            let comp = tok.chars().next().unwrap();
+            let comp = tok.chars().next().expect("tok is non-empty");
             if !VALID_COMPONENTS.contains(&comp) {
                 return Err(JsonataError::new(
                     "D3132",
-                    format!("$toMillis: unknown picture component '{}'", comp),
+                    format!("$toMillis: unknown picture component '{comp}'"),
                 ));
             }
             let mod_: String = tok.chars().skip(1).collect();
@@ -1049,7 +1058,7 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
 
     if day_of_year > 0 {
         let ms = date_to_ms_with_doy(year, day_of_year, hour, minute, second, millisec)?;
-        let ms_utc = ms - (tz_offset as i64) * 1000;
+        let ms_utc = ms - i64::from(tz_offset) * 1000;
         return Ok(Some(ms_utc));
     }
 
@@ -1062,7 +1071,7 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
 
     let ms = calendar_to_ms(year, month, day, hour, minute, second, millisec)?;
     let ms_utc = if has_tz {
-        ms - (tz_offset as i64) * 1000
+        ms - i64::from(tz_offset) * 1000
     } else {
         ms
     };
@@ -1104,7 +1113,7 @@ fn calendar_to_ms(
     );
     let ts = dt
         .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| JsonataError::new("D3137", format!("invalid date: {}", e)))?
+        .map_err(|e| JsonataError::new("D3137", format!("invalid date: {e}")))?
         .timestamp();
     Ok(ts.as_millisecond())
 }
@@ -1130,11 +1139,11 @@ fn date_to_ms_with_doy(
     );
     let ts = dt
         .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| JsonataError::new("D3137", format!("invalid date: {}", e)))?;
+        .map_err(|e| JsonataError::new("D3137", format!("invalid date: {e}")))?;
     // Add (doy - 1) days.
     let final_ts = ts
-        .checked_add(jiff::Span::new().days((doy - 1) as i64))
-        .map_err(|e| JsonataError::new("D3137", format!("date overflow: {}", e)))?;
+        .checked_add(jiff::Span::new().days(i64::from(doy - 1)))
+        .map_err(|e| JsonataError::new("D3137", format!("date overflow: {e}")))?;
     Ok(final_ts.timestamp().as_millisecond())
 }
 
@@ -1272,7 +1281,7 @@ fn parse_roman(runes: &[char]) -> (i64, i64) {
     let mut total: i64 = 0;
     let mut prev: i64 = 0;
     for j in (0..i).rev() {
-        let v = roman_val(runes[j]).unwrap();
+        let v = roman_val(runes[j]).expect("loop only covers validated roman chars");
         if v < prev {
             total -= v;
         } else {
@@ -1288,7 +1297,7 @@ fn parse_alphabetic(runes: &[char], modifier: &str) -> (i64, i64) {
     let mut i = 0;
     let mut result: i64 = 0;
     while i < runes.len() && runes[i].is_ascii_alphabetic() {
-        let c = runes[i].to_lowercase().next().unwrap();
+        let c = runes[i].to_lowercase().next().expect("to_lowercase always yields at least one char");
         let digit = (c as i64) - ('a' as i64) + 1;
         result = result * 26 + digit;
         i += 1;
@@ -1406,19 +1415,12 @@ fn parse_tz_from_input(runes: &[char], component: char) -> (i32, usize) {
         return (0, 1);
     }
 
-    let sign: i32;
-    let mut i = 0;
-    match runes[0] {
-        '+' => {
-            sign = 1;
-            i = 1;
-        }
-        '-' => {
-            sign = -1;
-            i = 1;
-        }
+    let sign: i32 = match runes[0] {
+        '+' => 1,
+        '-' => -1,
         _ => return (0, 0),
-    }
+    };
+    let mut i = 1;
 
     let h_start = i;
     while i < runes.len() && runes[i].is_ascii_digit() && i - h_start < 2 {
@@ -1495,7 +1497,7 @@ struct WordParser<'a> {
     tens: &'a [&'a str; 10],
 }
 
-impl<'a> WordParser<'a> {
+impl WordParser<'_> {
     fn skip_sep(&mut self) {
         while self.pos < self.s.len() {
             let c = self.s[self.pos..].chars().next();
@@ -1525,8 +1527,7 @@ impl<'a> WordParser<'a> {
                 || !after
                     .chars()
                     .next()
-                    .map(|c| c.is_alphabetic())
-                    .unwrap_or(false)
+                    .is_some_and(char::is_alphabetic)
             {
                 self.pos += candidate.len();
                 return true;
@@ -1753,6 +1754,66 @@ fn to_alphabetic(n: i64, base: char) -> String {
 }
 
 fn int_to_words(n: i64) -> String {
+    fn below_thousand(n: i64, ones: &[&str], tens: &[&str]) -> String {
+        if n == 0 {
+            return String::new();
+        }
+        if n < 20 {
+            return ones[n as usize].to_string();
+        }
+        if n < 100 {
+            return if n % 10 == 0 {
+                tens[(n / 10) as usize].to_string()
+            } else {
+                format!("{}-{}", tens[(n / 10) as usize], ones[(n % 10) as usize])
+            };
+        }
+        let rem = n % 100;
+        if rem == 0 {
+            format!("{} hundred", ones[(n / 100) as usize])
+        } else {
+            format!(
+                "{} hundred and {}",
+                ones[(n / 100) as usize],
+                below_thousand(rem, ones, tens)
+            )
+        }
+    }
+
+    fn to_words(n: i64, ones: &[&str], tens: &[&str]) -> String {
+        use std::fmt::Write;
+        if n == 0 {
+            return String::new();
+        }
+        if n < 1000 {
+            return below_thousand(n, ones, tens);
+        }
+        let scales: &[(i64, &str)] = &[
+            (1_000_000_000_000, "trillion"),
+            (1_000_000_000, "billion"),
+            (1_000_000, "million"),
+            (1_000, "thousand"),
+        ];
+        for &(scale, name) in scales {
+            if n >= scale {
+                let q = n / scale;
+                let rem = n % scale;
+                let q_word = to_words(q, ones, tens);
+                let mut result = format!("{q_word} {name}");
+                if rem > 0 {
+                    let rem_word = to_words(rem, ones, tens);
+                    if rem < 100 {
+                        let _ = write!(result, " and {rem_word}");
+                    } else {
+                        let _ = write!(result, ", {rem_word}");
+                    }
+                }
+                return result;
+            }
+        }
+        below_thousand(n, ones, tens)
+    }
+
     if n == 0 {
         return "zero".to_string();
     }
@@ -1784,65 +1845,6 @@ fn int_to_words(n: i64) -> String {
     let tens = [
         "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
     ];
-
-    fn below_thousand(n: i64, ones: &[&str], tens: &[&str]) -> String {
-        if n == 0 {
-            return String::new();
-        }
-        if n < 20 {
-            return ones[n as usize].to_string();
-        }
-        if n < 100 {
-            return if n % 10 == 0 {
-                tens[(n / 10) as usize].to_string()
-            } else {
-                format!("{}-{}", tens[(n / 10) as usize], ones[(n % 10) as usize])
-            };
-        }
-        let rem = n % 100;
-        if rem == 0 {
-            format!("{} hundred", ones[(n / 100) as usize])
-        } else {
-            format!(
-                "{} hundred and {}",
-                ones[(n / 100) as usize],
-                below_thousand(rem, ones, tens)
-            )
-        }
-    }
-
-    fn to_words(n: i64, ones: &[&str], tens: &[&str]) -> String {
-        if n == 0 {
-            return String::new();
-        }
-        if n < 1000 {
-            return below_thousand(n, ones, tens);
-        }
-        let scales: &[(i64, &str)] = &[
-            (1_000_000_000_000, "trillion"),
-            (1_000_000_000, "billion"),
-            (1_000_000, "million"),
-            (1_000, "thousand"),
-        ];
-        for &(scale, name) in scales {
-            if n >= scale {
-                let q = n / scale;
-                let rem = n % scale;
-                let q_word = to_words(q, ones, tens);
-                let mut result = format!("{} {}", q_word, name);
-                if rem > 0 {
-                    let rem_word = to_words(rem, ones, tens);
-                    if rem < 100 {
-                        result += &format!(" and {}", rem_word);
-                    } else {
-                        result += &format!(", {}", rem_word);
-                    }
-                }
-                return result;
-            }
-        }
-        below_thousand(n, ones, tens)
-    }
 
     to_words(n, &ones, &tens)
 }
@@ -1888,20 +1890,20 @@ fn apply_ordinal_word(word: &str) -> String {
     ];
     // Find last word.
     let (prefix, sep, last) = if let Some(pos) = word.rfind([' ', '-']) {
-        let sep = &word[pos..pos + 1];
+        let sep = &word[pos..=pos];
         (&word[..pos], sep, &word[pos + 1..])
     } else {
         ("", "", word)
     };
     for &(from, to) in ordinals {
         if last == from {
-            return format!("{}{}{}", prefix, sep, to);
+            return format!("{prefix}{sep}{to}");
         }
     }
-    if last.ends_with('y') {
-        return format!("{}{}{}ieth", prefix, sep, &last[..last.len() - 1]);
+    if let Some(stem) = last.strip_suffix('y') {
+        return format!("{prefix}{sep}{stem}ieth");
     }
-    format!("{}{}{}th", prefix, sep, last)
+    format!("{prefix}{sep}{last}th")
 }
 
 fn ordinal_suffix(n: i64) -> &'static str {
@@ -1943,11 +1945,11 @@ fn secs_to_ymd_hms(secs: i64) -> (i32, u8, u8, u8, u8, u8) {
 fn days_to_ymd(days: i64) -> (i32, u8, u8) {
     // Algorithm: civil date from epoch days.
     // Based on Howard Hinnant's algorithm.
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = i64::from(yoe) + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
@@ -1960,6 +1962,7 @@ fn is_leap_year(y: i32) -> bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
 }
 
+#[allow(dead_code)]
 fn days_in_month(y: i32, m: u8) -> u8 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -1977,9 +1980,9 @@ fn days_in_month(y: i32, m: u8) -> u8 {
 
 fn day_of_year(y: i32, mo: u8, d: u8) -> u32 {
     let months: &[u8] = &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut doy = d as u32;
-    for m in 0..(mo as usize - 1) {
-        doy += months[m] as u32;
+    let mut doy = u32::from(d);
+    for (m, &days) in months[..mo as usize - 1].iter().enumerate() {
+        doy += u32::from(days);
         if m == 1 && is_leap_year(y) {
             doy += 1;
         }
@@ -1992,7 +1995,7 @@ fn day_of_week(y: i32, m: u8, d: u8) -> u8 {
     // Tomohiko Sakamoto's algorithm.
     let t: &[i32] = &[0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let y = if m < 3 { y - 1 } else { y };
-    ((y + y / 4 - y / 100 + y / 400 + t[m as usize - 1] + d as i32).rem_euclid(7)) as u8
+    ((y + y / 4 - y / 100 + y / 400 + t[m as usize - 1] + i32::from(d)).rem_euclid(7)) as u8
 }
 
 /// ISO week number: returns (iso_year, iso_week).
@@ -2001,7 +2004,7 @@ fn iso_week(y: i32, m: u8, d: u8) -> (i32, u32) {
     // Formula: week = (ordinalDay - isoDow + 10) / 7
     //   where isoDow: Mon=1..Sun=7
     let doy = day_of_year(y, m, d) as i32;
-    let dow = day_of_week(y, m, d) as i32; // 0=Sun..6=Sat
+    let dow = i32::from(day_of_week(y, m, d)); // 0=Sun..6=Sat
     let dow_iso1 = (dow + 6) % 7 + 1; // Mon=1..Sun=7
     let week = (doy - dow_iso1 + 10) / 7;
     if week < 1 {
@@ -2034,31 +2037,31 @@ fn iso_weeks_in_year(y: i32) -> u32 {
 /// Returns the Thursday of the ISO week for a given date.
 fn iso_week_thursday(y: i32, m: u8, d: u8) -> (i32, u8, u8) {
     // Thursday is dow_iso = 3 (Mon=0..Sun=6).
-    let dow_iso = (day_of_week(y, m, d) as i32 + 6) % 7;
+    let dow_iso = (i32::from(day_of_week(y, m, d)) + 6) % 7;
     let offset = 3 - dow_iso; // days to add to reach Thursday
     add_days(y, m, d, offset)
 }
 
 fn add_days(y: i32, m: u8, d: u8, delta: i32) -> (i32, u8, u8) {
-    let total_days = ymd_to_epoch_days(y, m, d) + delta as i64;
+    let total_days = ymd_to_epoch_days(y, m, d) + i64::from(delta);
     let (ny, nm, nd) = days_to_ymd(total_days);
     (ny, nm, nd)
 }
 
 fn ymd_to_epoch_days(y: i32, m: u8, d: u8) -> i64 {
     // Inverse of days_to_ymd (Howard Hinnant).
-    let m = m as i32;
-    let d = d as i32;
-    let y = if m <= 2 { y as i64 - 1 } else { y as i64 };
+    let m = i32::from(m);
+    let d = i32::from(d);
+    let y = if m <= 2 { i64::from(y) - 1 } else { i64::from(y) };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u64;
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as u64 + 2) / 5 + d as u64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe as i64 - 719468
+    era * 146_097 + doe as i64 - 719_468
 }
 
 fn week_of_month(_thy: i32, _thm: u8, thd: u8) -> u32 {
-    (thd as u32).div_ceil(7)
+    u32::from(thd).div_ceil(7)
 }
 
 // ── Timezone parsing ─────────────────────────────────────────────────────────
@@ -2070,13 +2073,13 @@ fn parse_tz(s: &str) -> Result<i32, JsonataError> {
     if let Ok(tz) = jiff::tz::TimeZone::get(s) {
         // For fixed-name TZs, get the offset at epoch 0 as approximation.
         // For proper named TZs we convert a known timestamp.
-        let ts = jiff::Timestamp::new(0, 0).unwrap();
-        let offset = tz.to_fixed_offset().map(|o| o.seconds()).unwrap_or(0);
+        let ts = jiff::Timestamp::new(0, 0).expect("epoch 0 is always valid");
+        let offset = tz.to_fixed_offset().map_or(0, jiff::tz::Offset::seconds);
         let _ = ts;
         return Ok(offset);
     }
     // Try numeric offset.
-    parse_numeric_tz(s).map_err(|_| JsonataError::new("D3137", format!("unknown timezone {:?}", s)))
+    parse_numeric_tz(s).map_err(|_| JsonataError::new("D3137", format!("unknown timezone {s:?}")))
 }
 
 fn parse_numeric_tz(s: &str) -> Result<i32, String> {
@@ -2091,13 +2094,13 @@ fn parse_numeric_tz(s: &str) -> Result<i32, String> {
             if s.chars().all(|c| c.is_ascii_digit() || c == ':') {
                 (1i32, s)
             } else {
-                return Err(format!("bad tz: {}", s));
+                return Err(format!("bad tz: {s}"));
             }
         }
     };
     let rest = rest.replace(':', "");
     if rest.len() != 4 {
-        return Err(format!("bad tz len: {}", rest));
+        return Err(format!("bad tz len: {rest}"));
     }
     let h: i32 = rest[..2].parse().map_err(|_| "bad h".to_string())?;
     let m: i32 = rest[2..].parse().map_err(|_| "bad m".to_string())?;

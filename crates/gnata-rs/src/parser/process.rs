@@ -51,6 +51,10 @@ fn step_has_keep_array(arena: &AstArena, step: NodeId) -> bool {
 
 /// Run the post-processing pass over a parsed AST.
 /// Call this after `Parser::parse()` and before evaluation.
+///
+/// # Errors
+/// Returns a `JsonataError` if the AST contains structural issues.
+#[allow(clippy::too_many_lines)]
 pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
     if node.is_empty() {
         return Ok(node);

@@ -21,6 +21,9 @@ pub struct Parser {
 impl Parser {
     /// Parse a JSONata expression string into an AST arena.
     /// Returns the arena and the root node ID.
+    ///
+    /// # Errors
+    /// Returns a `JsonataError` with an S0xxx code for syntax errors.
     pub fn parse(src: &str) -> Result<(AstArena, NodeId), JsonataError> {
         let mut parser = Self {
             lex: Lexer::new(src),
@@ -108,6 +111,7 @@ impl Parser {
 
     // ── NUD (prefix) handlers ────────────────────────────────────────
 
+    #[allow(clippy::too_many_lines)]
     fn nud(&mut self) -> Result<NodeId, JsonataError> {
         let tok = self.token.clone();
         match tok.typ {
@@ -352,6 +356,7 @@ impl Parser {
 
     // ── LED (infix) handlers ─────────────────────────────────────────
 
+    #[allow(clippy::too_many_lines)]
     fn led(&mut self, left: NodeId) -> Result<NodeId, JsonataError> {
         let tok = self.token.clone();
         match tok.typ {

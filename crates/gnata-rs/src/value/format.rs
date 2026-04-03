@@ -24,7 +24,7 @@ pub fn format_float(n: f64) -> String {
     let s = format_g15(n);
 
     // Step 2: very small or very large → scientific with shortest repr
-    if abs != 0.0 && (abs < 5e-7 || abs >= 1e21) {
+    if abs != 0.0 && !(5e-7..1e21).contains(&abs) {
         // Use ryu-js for shortest representation (like Go's 'e', -1)
         let mut buf = ryu_js::Buffer::new();
         let ryu = buf.format(n).to_owned();
@@ -32,7 +32,7 @@ pub fn format_float(n: f64) -> String {
             return clean_exponent(&ryu);
         }
         // Fallback: Rust scientific notation
-        let sci = format!("{:e}", n);
+        let sci = format!("{n:e}");
         return clean_exponent(&sci);
     }
 
@@ -68,7 +68,7 @@ fn format_g15(n: f64) -> String {
     }
 
     // Format in scientific notation with 14 decimal places = 15 significant digits
-    let sci = format!("{:.14e}", n);
+    let sci = format!("{n:.14e}");
     let (mantissa_str, exp_str) = sci.split_once('e').unwrap_or((&sci, "0"));
     let exp: i32 = exp_str.parse().unwrap_or(0);
 
@@ -88,7 +88,7 @@ fn format_g15(n: f64) -> String {
 
     // Decide format: 'g' uses scientific if exp < -1 or exp >= precision
     // For precision 15: scientific if exp < -1 or exp >= 15
-    let use_scientific = exp < -1 || exp >= 15;
+    let use_scientific = !(-1..15).contains(&exp);
 
     let result = if use_scientific {
         // Scientific notation: d.dddde±dd
@@ -97,7 +97,7 @@ fn format_g15(n: f64) -> String {
         } else {
             format!("{}.{}e{:+03}", &digits[..1], &digits[1..], exp)
         }
-    } else if exp + 1 <= 0 {
+    } else if exp < 0 {
         // Needs leading zeros: 0.000...digits
         let zeros = (-(exp + 1)) as usize + 1;
         let mut r = String::from("0.");
@@ -133,7 +133,7 @@ fn format_g15(n: f64) -> String {
 fn scientific_to_decimal(n: f64) -> String {
     // Use format! with enough precision to get exact representation
     // Then trim trailing zeros after decimal point
-    let s = format!("{:.20}", n);
+    let s = format!("{n:.20}");
     let s = s.trim_end_matches('0');
     let s = s.trim_end_matches('.');
     s.to_owned()

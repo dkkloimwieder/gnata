@@ -89,7 +89,7 @@ pub fn fn_filter(
         return Ok(Value::Undefined);
     }
     if result.len() == 1 {
-        return Ok(result.into_iter().next().unwrap());
+        return Ok(result.into_iter().next().expect("checked len == 1"));
     }
     Ok(Value::Array(result))
 }
@@ -120,14 +120,13 @@ pub fn fn_reduce(
         }
     };
     // Check that the function accepts at least 2 parameters.
-    if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &func {
-        if lambda.params.len() < 2 {
+    if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &func
+        && lambda.params.len() < 2 {
             return Err(JsonataError::new(
                 "D3050",
                 "$reduce: function argument must accept at least 2 parameters",
             ));
         }
-    }
     let init = args.get(2).cloned();
     if arr.is_empty() {
         return Ok(init.unwrap_or(Value::Undefined));
@@ -179,14 +178,11 @@ pub fn fn_each(
     if obj_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let obj = match obj_arg {
-        Value::Object(o) => o,
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$each: first argument must be an object",
-            ));
-        }
+    let Value::Object(obj) = obj_arg else {
+        return Err(JsonataError::new(
+            "T0410",
+            "$each: first argument must be an object",
+        ));
     };
     let func = match func_arg {
         Value::Function(f) => f.clone(),
@@ -250,14 +246,11 @@ pub fn fn_sift(
         }
         return Ok(Value::Array(results));
     }
-    let obj = match obj_arg {
-        Value::Object(o) => o,
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$sift: first argument must be an object",
-            ));
-        }
+    let Value::Object(obj) = obj_arg else {
+        return Err(JsonataError::new(
+            "T0410",
+            "$sift: first argument must be an object",
+        ));
     };
     sift_object(obj, &func, obj_arg, env, arena)
 }
@@ -400,7 +393,7 @@ pub fn fn_single(
             "D3139",
             "$single: expected 1 match, found 0",
         )),
-        _ => Ok(matches.into_iter().next().unwrap()),
+        _ => Ok(matches.into_iter().next().expect("match count >= 1")),
     }
 }
 
@@ -415,7 +408,7 @@ fn sift_object(
     let mut result = indexmap::IndexMap::new();
     for (key, val) in obj {
         let call_args = vec![val.clone(), Value::String(key.clone()), obj_val.clone()];
-        let keep = call_function(&func, &call_args, val, env, arena)?;
+        let keep = call_function(func, &call_args, val, env, arena)?;
         if keep.to_boolean() {
             result.insert(key.clone(), val.clone());
         }

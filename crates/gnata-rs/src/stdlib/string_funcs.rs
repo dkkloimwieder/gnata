@@ -12,11 +12,10 @@ pub fn fn_string(args: &[Value], focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     // Check for Inf/NaN numbers → D3001.
-    if let Value::Number(n) = arg {
-        if n.is_infinite() || n.is_nan() {
+    if let Value::Number(n) = arg
+        && (n.is_infinite() || n.is_nan()) {
             return Err(JsonataError::new("D3001", "Number out of range"));
         }
-    }
     // Arity enforced by SignedBuiltin signature at call site.
     // When called via HOF, extra args are present — only check arg[1] if it's a bool.
     let prettify = match args.get(1) {
@@ -38,15 +37,12 @@ pub fn fn_length(args: &[Value], focus: &Value) -> JsonataResult {
         }
         return Ok(Value::Undefined);
     }
-    match arg {
-        Value::String(s) => Ok(Value::Number(s.chars().count() as f64)),
-        _ => {
-            let code = if from_focus { "T0411" } else { "T0410" };
-            Err(JsonataError::new(
-                code,
-                "$length: argument must be a string",
-            ))
-        }
+    if let Value::String(s) = arg { Ok(Value::Number(s.chars().count() as f64)) } else {
+        let code = if from_focus { "T0411" } else { "T0410" };
+        Err(JsonataError::new(
+            code,
+            "$length: argument must be a string",
+        ))
     }
 }
 
@@ -138,16 +134,13 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
     if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match str_arg {
-        Value::String(s) => s.as_str(),
-        _ => {
-            // When using focus as context and it's not a string → T0411
-            let code = if from_context { "T0411" } else { "T0410" };
-            return Err(JsonataError::new(
-                code,
-                "$substringBefore: argument 1 must be a string",
-            ));
-        }
+    let s = if let Value::String(s) = str_arg { s.as_str() } else {
+        // When using focus as context and it's not a string → T0411
+        let code = if from_context { "T0411" } else { "T0410" };
+        return Err(JsonataError::new(
+            code,
+            "$substringBefore: argument 1 must be a string",
+        ));
     };
     let sep = match sep_arg {
         Value::String(s) => s.as_str(),
@@ -186,15 +179,12 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
     if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match str_arg {
-        Value::String(s) => s.as_str(),
-        _ => {
-            let code = if from_context { "T0411" } else { "T0410" };
-            return Err(JsonataError::new(
-                code,
-                "$substringAfter: argument 1 must be a string",
-            ));
-        }
+    let s = if let Value::String(s) = str_arg { s.as_str() } else {
+        let code = if from_context { "T0411" } else { "T0410" };
+        return Err(JsonataError::new(
+            code,
+            "$substringAfter: argument 1 must be a string",
+        ));
     };
     let sep = match sep_arg {
         Value::String(s) => s.as_str(),
@@ -387,8 +377,8 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
         ));
     }
     // Check limit arg before using it
-    if let Some(limit_arg) = args.get(2) {
-        if !limit_arg.is_undefined() {
+    if let Some(limit_arg) = args.get(2)
+        && !limit_arg.is_undefined() {
             match limit_arg.as_f64() {
                 Some(n) if n < 0.0 => {
                     return Err(JsonataError::new(
@@ -405,8 +395,7 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
                 }
             }
         }
-    }
-    let limit = args.get(2).and_then(|v| v.as_f64()).map(|n| n as usize);
+    let limit = args.get(2).and_then(super::super::value::Value::as_f64).map(|n| n as usize);
 
     let parts: Vec<Value> = match &args[1] {
         Value::String(sep) => {

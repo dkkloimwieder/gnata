@@ -195,6 +195,7 @@ pub fn fn_sqrt(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 pub fn fn_random(_args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::Number(fastrand::f64()))
 }
@@ -307,9 +308,9 @@ fn format_radix(mut n: u64, radix: u32) -> String {
     }
     let mut digits = Vec::new();
     while n > 0 {
-        let d = (n % radix as u64) as u32;
+        let d = (n % u64::from(radix)) as u32;
         digits.push(char::from_digit(d, radix).unwrap_or('?'));
-        n /= radix as u64;
+        n /= u64::from(radix);
     }
     digits.reverse();
     digits.into_iter().collect()

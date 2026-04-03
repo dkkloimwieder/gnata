@@ -24,6 +24,9 @@ impl Lexer {
     ///
     /// `infix` = true means we are after a value (closing bracket, identifier, etc.).
     /// `infix` = false means we are in prefix position; a `/` starts a regex literal.
+    ///
+    /// # Errors
+    /// Returns a `JsonataError` with an S0xxx code for malformed tokens.
     pub fn next(&mut self, infix: bool) -> Result<Token, JsonataError> {
         // Skip whitespace
         while self.pos < self.src.len() {
@@ -291,7 +294,7 @@ impl Lexer {
                     } else {
                         return Err(lex_error(
                             "D3140",
-                            &format!("invalid Unicode codepoint: \\u{:04X}", r),
+                            &format!("invalid Unicode codepoint: \\u{r:04X}"),
                         ));
                     }
                 }

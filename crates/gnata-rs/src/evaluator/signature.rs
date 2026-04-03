@@ -15,6 +15,9 @@ pub struct ParamSpec {
 }
 
 /// Parse a raw function signature string (content between outer < > brackets).
+///
+/// # Errors
+/// Returns `S0401` or `S0402` for invalid signature syntax.
 pub fn parse_signature(raw: &str) -> Result<Vec<ParamSpec>, JsonataError> {
     let s = strip_return_type(raw);
     let bytes = s.as_bytes();
@@ -67,6 +70,9 @@ pub fn parse_signature(raw: &str) -> Result<Vec<ParamSpec>, JsonataError> {
 
 /// Process call arguments: nil propagation, singleton coercion, type validation.
 /// Returns (coerced_args, return_undefined).
+///
+/// # Errors
+/// Returns `T0410` or `T0412` for argument type mismatches.
 pub fn process_call_args(
     specs: &[ParamSpec],
     args: &[Value],
@@ -74,7 +80,7 @@ pub fn process_call_args(
     let mut coerced: Vec<Value> = args.to_vec();
 
     // Collapse any Sequence values before processing.
-    for v in coerced.iter_mut() {
+    for v in &mut coerced {
         if let Value::Sequence(seq) = v {
             *v = seq.collapse();
         }

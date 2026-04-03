@@ -6,6 +6,12 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
 pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
+    // i64::MAX is 9223372036854775807. When cast to f64 it rounds up to 9.223372036854776e18
+    // (which is 2^63), so any f64 >= that value would overflow i64 on cast.
+    // i64::MIN is -9223372036854775808 = -2^63, which is exactly representable as f64,
+    // so truncated == i64::MIN as f64 is still valid.
+    const MAX_I64_F64: f64 = 9.223_372_036_854_776e18; // == i64::MAX as f64 (rounds up to 2^63)
+
     if args.len() < 2 {
         return Err(JsonataError::new(
             "D3006",
@@ -29,13 +35,8 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
     };
 
     let truncated = n.trunc();
-    // i64::MAX is 9223372036854775807. When cast to f64 it rounds up to 9.223372036854776e18
-    // (which is 2^63), so any f64 >= that value would overflow i64 on cast.
-    // i64::MIN is -9223372036854775808 = -2^63, which is exactly representable as f64,
-    // so truncated == i64::MIN as f64 is still valid.
-    const MAX_I64_F64: f64 = 9.223372036854776e18; // == i64::MAX as f64 (rounds up to 2^63)
 
-    if truncated >= MAX_I64_F64 || truncated < -MAX_I64_F64 {
+    if !(-MAX_I64_F64..MAX_I64_F64).contains(&truncated) {
         let (format_token, modifier) = split_picture_modifier(picture);
         if format_token == "w" || format_token == "W" || format_token == "Ww" {
             return Ok(Value::String(format_big_float_words(
@@ -111,14 +112,13 @@ fn format_integer_with_picture(n: i64, picture: &str) -> Result<String, JsonataE
                 return Err(JsonataError::new(
                     "D3130",
                     format!(
-                        "$formatInteger: unsupported picture string {:?}",
-                        format_token
+                        "$formatInteger: unsupported picture string {format_token:?}"
                     ),
                 ));
             }
             let mut r = format_integer_decimal(abs_n, format_token)?;
             if modifier == "o" {
-                r.push_str(&ordinal_suffix(abs_n));
+                r.push_str(ordinal_suffix(abs_n));
             }
             if negative {
                 r.insert(0, '-');
@@ -210,7 +210,7 @@ fn format_integer_decimal(n: i64, picture: &str) -> Result<String, JsonataError>
     }
 
     // Build digit string with zero-padding
-    let mut digits = format!("{}", n);
+    let mut digits = format!("{n}");
     while digits.len() < mandatory_count {
         digits.insert(0, '0');
     }
@@ -264,11 +264,10 @@ fn apply_integer_grouping(digits: &str, grps: &[(char, usize)]) -> String {
     let mut result = Vec::new();
     for (i, &ch) in runes.iter().enumerate() {
         let pos_from_right = runes.len() - i;
-        if i > 0 {
-            if let Some(&sep) = pos_set.get(&pos_from_right) {
+        if i > 0
+            && let Some(&sep) = pos_set.get(&pos_from_right) {
                 result.push(sep);
             }
-        }
         result.push(ch);
     }
     result.into_iter().collect()
@@ -390,17 +389,17 @@ fn apply_ordinal_word(word: &str) -> String {
     // Check ordinal map
     for &(cardinal, ordinal) in ordinals {
         if last == cardinal {
-            return format!("{}{}{}", prefix, sep, ordinal);
+            return format!("{prefix}{sep}{ordinal}");
         }
     }
 
     // Ends in "y" -> "ieth"
-    if last.ends_with('y') {
-        return format!("{}{}{}ieth", prefix, sep, &last[..last.len() - 1]);
+    if let Some(stem) = last.strip_suffix('y') {
+        return format!("{prefix}{sep}{stem}ieth");
     }
 
     // Default: append "th"
-    format!("{}{}{}th", prefix, sep, last)
+    format!("{prefix}{sep}{last}th")
 }
 
 // ── Number to words ──────────────────────────────────────────────────────────
@@ -487,7 +486,7 @@ fn to_words(n: i64) -> String {
         let q = n / val;
         let rem = n % val;
         let q_word = to_words(q);
-        let mut result = format!("{} {}", q_word, name);
+        let mut result = format!("{q_word} {name}");
         if rem > 0 {
             let rem_word = to_words(rem);
             if rem < 100 {
@@ -574,7 +573,7 @@ fn to_title_case(s: &str) -> String {
                 let mut chars = lower.chars();
                 if let Some(first) = chars.next() {
                     result.extend(first.to_uppercase());
-                    result.push_str(&chars.as_str());
+                    result.push_str(chars.as_str());
                 }
             }
         } else {
@@ -637,7 +636,7 @@ fn to_alphabetic(mut n: i64, base: char) -> String {
     let mut result: Vec<char> = Vec::new();
     while n > 0 {
         n -= 1;
-        result.push(char::from_u32(base as u32 + (n % 26) as u32).unwrap());
+        result.push(char::from_u32(base as u32 + (n % 26) as u32).expect("valid ASCII letter offset"));
         n /= 26;
     }
     result.reverse();

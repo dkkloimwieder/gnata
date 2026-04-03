@@ -117,7 +117,10 @@ impl Value {
         }
     }
 
-    /// Validates that this is a finite number. Returns D1001 for Inf/NaN.
+    /// Validates that this is a finite number.
+    ///
+    /// # Errors
+    /// Returns `D1001` if the value is `Inf` or `NaN`.
     pub fn check_numeric(&self) -> Result<(), JsonataError> {
         if let Value::Number(n) = self
             && (n.is_infinite() || n.is_nan())
@@ -148,7 +151,7 @@ impl Value {
             Value::Array(arr) => match arr.len() {
                 0 => false,
                 1 => arr[0].to_boolean(),
-                _ => arr.iter().any(|v| v.to_boolean()),
+                _ => arr.iter().any(Value::to_boolean),
             },
             Value::Sequence(seq) => seq.collapse().to_boolean(),
             Value::Function(_) | Value::TailCall(_) => false,
@@ -190,6 +193,9 @@ impl Value {
 
     /// Compares two values for ordering. Returns -1, 0, or 1.
     /// Undefined sorts after non-undefined.
+    ///
+    /// # Errors
+    /// Returns a `JsonataError` if the values are of incompatible types.
     pub fn compare_order(&self, other: &Value) -> JsonataResult<i8> {
         match (self, other) {
             (Value::Undefined, Value::Undefined) => Ok(0),
@@ -209,6 +215,9 @@ impl Value {
 
     /// Relational comparison (<, <=, >, >=).
     /// Returns Undefined if either operand is undefined.
+    ///
+    /// # Errors
+    /// Returns a `JsonataError` if the operands are not numbers or strings.
     pub fn compare(&self, other: &Value, op: &str) -> JsonataResult {
         // Validate left operand type
         if !self.is_undefined() && !self.is_number() && !self.is_string() {
@@ -263,15 +272,18 @@ impl Value {
     pub fn contains_non_finite(&self) -> bool {
         match self {
             Value::Number(n) => n.is_infinite() || n.is_nan(),
-            Value::Array(arr) => arr.iter().any(|v| v.contains_non_finite()),
-            Value::Object(obj) => obj.values().any(|v| v.contains_non_finite()),
-            Value::Sequence(seq) => seq.values.iter().any(|v| v.contains_non_finite()),
+            Value::Array(arr) => arr.iter().any(Value::contains_non_finite),
+            Value::Object(obj) => obj.values().any(Value::contains_non_finite),
+            Value::Sequence(seq) => seq.values.iter().any(Value::contains_non_finite),
             _ => false,
         }
     }
 
     /// Convert a value to its string representation.
     /// If `prettify` is true, objects and arrays are pretty-printed with 2-space indent.
+    ///
+    /// # Errors
+    /// Returns `D1001` if the value contains non-finite numbers.
     pub fn stringify(&self, prettify: bool) -> JsonataResult<String> {
         match self {
             Value::Undefined => Ok(String::new()),
@@ -350,7 +362,7 @@ impl Value {
             }
             Value::String(s) => serde_json::Value::String(s.clone()),
             Value::Array(arr) => {
-                serde_json::Value::Array(arr.iter().map(|v| v.to_json()).collect())
+                serde_json::Value::Array(arr.iter().map(Value::to_json).collect())
             }
             Value::Object(obj) => serde_json::Value::Object(
                 obj.iter().map(|(k, v)| (k.clone(), v.to_json())).collect(),
@@ -362,12 +374,18 @@ impl Value {
     }
 
     /// Decode a JSON byte slice into a Value, preserving object key order.
+    ///
+    /// # Errors
+    /// Returns a `serde_json::Error` if the input is not valid JSON.
     pub fn from_json_bytes(b: &[u8]) -> Result<Self, serde_json::Error> {
         let v: serde_json::Value = serde_json::from_slice(b)?;
         Ok(Value::from_json(v))
     }
 
     /// Decode a JSON string into a Value, preserving object key order.
+    ///
+    /// # Errors
+    /// Returns a `serde_json::Error` if the input is not valid JSON.
     pub fn from_json_str(s: &str) -> Result<Self, serde_json::Error> {
         let v: serde_json::Value = serde_json::from_str(s)?;
         Ok(Value::from_json(v))

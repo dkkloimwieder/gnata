@@ -12,6 +12,7 @@ use crate::parser::AstArena;
 use crate::value::Value;
 
 /// Compile a regex from a pattern string and flags.
+#[allow(clippy::missing_errors_doc)]
 pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, JsonataError> {
     let mut inline = String::new();
     if flags.contains('i') {
@@ -80,6 +81,7 @@ fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Valu
 }
 
 /// $match(str, pattern, limit?)
+#[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 pub fn fn_match(
     args: &[Value],
     _focus: &Value,
@@ -105,7 +107,7 @@ pub fn fn_match(
         }
     };
 
-    let limit: Option<usize> = args.get(2).and_then(|v| v.as_f64()).map(|n| n as usize);
+    let limit: Option<usize> = args.get(2).and_then(super::super::value::Value::as_f64).map(|n| n as usize);
 
     // If the second argument is a function, use custom matcher protocol.
     if let Value::Function(func) = &args[1] {
@@ -130,7 +132,7 @@ pub fn fn_match(
         return Ok(Value::Undefined);
     }
     if result.len() == 1 {
-        return Ok(result.into_iter().next().unwrap());
+        return Ok(result.into_iter().next().expect("checked len == 1"));
     }
     Ok(Value::Array(result))
 }
@@ -154,12 +156,7 @@ fn match_with_custom_matcher(
         arena,
     )?;
 
-    loop {
-        // If result is undefined/null or not an object, stop.
-        let obj = match &res {
-            Value::Object(o) => o,
-            _ => break,
-        };
+    while let Value::Object(obj) = &res {
 
         let match_val = obj.get("match").cloned().unwrap_or(Value::Undefined);
         let start_val = obj.get("start").cloned().unwrap_or(Value::Undefined);
@@ -171,11 +168,10 @@ fn match_with_custom_matcher(
         match_obj.insert("groups".into(), groups_val);
         result.push(Value::Object(match_obj));
 
-        if let Some(lim) = limit {
-            if result.len() >= lim {
+        if let Some(lim) = limit
+            && result.len() >= lim {
                 break;
             }
-        }
 
         // Get the next function and call it.
         let next_fn = match obj.get("next") {
@@ -189,12 +185,13 @@ fn match_with_custom_matcher(
         return Ok(Value::Undefined);
     }
     if result.len() == 1 {
-        return Ok(result.into_iter().next().unwrap());
+        return Ok(result.into_iter().next().expect("checked len == 1"));
     }
     Ok(Value::Array(result))
 }
 
 /// $replace(str, pattern, replacement, limit?)
+#[allow(clippy::missing_errors_doc)]
 pub fn fn_replace(
     args: &[Value],
     _focus: &Value,
@@ -220,14 +217,13 @@ pub fn fn_replace(
         ));
     }
 
-    if let Some(v) = args.get(3) {
-        if v.is_null() {
+    if let Some(v) = args.get(3)
+        && v.is_null() {
             return Err(JsonataError::new(
                 "T0410",
                 "$replace: fourth argument must be a number",
             ));
         }
-    }
     let limit: Option<usize> = args.get(3).and_then(|v| {
         v.as_f64().map(|n| {
             if n < 0.0 {
@@ -318,7 +314,7 @@ fn replace_regex_string(
         {
             break;
         }
-        let m = caps.get(0).unwrap();
+        let m = caps.get(0).expect("capture group 0 always exists");
         if m.as_str().is_empty() {
             return Err(JsonataError::new(
                 "D1004",
@@ -356,7 +352,7 @@ fn replace_with_fn(
         {
             break;
         }
-        let m = caps.get(0).unwrap();
+        let m = caps.get(0).expect("capture group 0 always exists");
         if m.as_str().is_empty() {
             return Err(JsonataError::new(
                 "D1004",

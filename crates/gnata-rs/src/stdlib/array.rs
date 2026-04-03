@@ -116,9 +116,8 @@ pub fn fn_flatten(args: &[Value], _focus: &Value) -> JsonataResult {
     };
     let depth = args
         .get(1)
-        .and_then(|v| v.as_f64())
-        .map(|n| n as usize)
-        .unwrap_or(usize::MAX);
+        .and_then(super::super::value::Value::as_f64)
+        .map_or(usize::MAX, |n| n as usize);
     let result = flatten_recursive(&arr, depth);
     Ok(Value::Array(result))
 }
@@ -145,7 +144,7 @@ pub fn fn_zip(args: &[Value], _focus: &Value) -> JsonataResult {
         ));
     }
     // If any argument is undefined, return empty array.
-    if args.iter().any(|a| a.is_undefined()) {
+    if args.iter().any(super::super::value::Value::is_undefined) {
         return Ok(Value::Array(vec![]));
     }
     // Wrap non-array args as singleton arrays.
@@ -160,7 +159,7 @@ pub fn fn_zip(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::Array(vec![]));
     }
     // Use minimum length across all arrays.
-    let min_len = arrays.iter().map(|a| a.len()).min().unwrap_or(0);
+    let min_len = arrays.iter().map(std::vec::Vec::len).min().unwrap_or(0);
     let mut result = Vec::with_capacity(min_len);
     for i in 0..min_len {
         let tuple: Vec<Value> = arrays.iter().map(|a| a[i].clone()).collect();
