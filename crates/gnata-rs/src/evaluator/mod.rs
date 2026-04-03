@@ -498,14 +498,15 @@ fn eval_binary(
         "or" => {
             let left = eval(arena, lhs, input, env)?;
             if left.to_boolean() {
-                return Ok(left);
+                return Ok(Value::Bool(true));
             }
-            eval(arena, rhs, input, env)
+            let right = eval(arena, rhs, input, env)?;
+            Ok(Value::Bool(right.to_boolean()))
         }
         "?:" => {
-            // Elvis: left if defined, else right.
+            // Elvis / default: return left if ToBoolean(left) is true, else right.
             let left = eval(arena, lhs, input, env)?;
-            if !left.is_undefined() {
+            if left.to_boolean() {
                 Ok(left)
             } else {
                 eval(arena, rhs, input, env)
@@ -626,6 +627,12 @@ fn eval_range(
 ) -> JsonataResult {
     let left = eval(arena, lhs, input, env)?;
     let right = eval(arena, rhs, input, env)?;
+
+    // Undefined operands → undefined (not an error).
+    if left.is_undefined() || right.is_undefined() {
+        return Ok(Value::Undefined);
+    }
+
     let ln = left.as_f64().ok_or_else(|| {
         JsonataError::new(
             "T2003",
@@ -638,8 +645,23 @@ fn eval_range(
             "the right operand of the range operator (..) must be a number",
         )
     })?;
-    let start = ln.trunc() as i64;
-    let end = rn.trunc() as i64;
+
+    // Must be integers (no fractional part).
+    if ln != ln.trunc() {
+        return Err(JsonataError::new(
+            "T2003",
+            "the left operand of the range operator (..) must be an integer",
+        ));
+    }
+    if rn != rn.trunc() {
+        return Err(JsonataError::new(
+            "T2004",
+            "the right operand of the range operator (..) must be an integer",
+        ));
+    }
+
+    let start = ln as i64;
+    let end = rn as i64;
     if start > end {
         return Ok(Value::Undefined);
     }
@@ -819,15 +841,28 @@ fn eval_unary(
             let mut result = Vec::new();
             for &expr in &expressions {
                 let val = eval(arena, expr, input, env)?;
+                if val.is_undefined() {
+                    continue;
+                }
+                // Explicit inner array constructors [expr] are preserved as nested elements.
+                // All other arrays/sequences are spread (flattened).
+                let is_explicit_array = matches!(
+                    arena.get(expr),
+                    Expr::Unary { op, .. } if op == "["
+                );
                 match val {
-                    Value::Undefined => {}
-                    Value::Array(arr) => result.push(Value::Array(arr)),
-                    Value::Sequence(seq) if seq.cons_array => {
-                        result.push(Value::Array(seq.values));
-                    }
                     Value::Sequence(seq) => {
-                        for v in seq.values {
-                            result.push(v);
+                        if seq.cons_array || is_explicit_array {
+                            result.push(seq.collapse());
+                        } else {
+                            result.extend(seq.values);
+                        }
+                    }
+                    Value::Array(arr) => {
+                        if is_explicit_array {
+                            result.push(Value::Array(arr));
+                        } else {
+                            result.extend(arr);
                         }
                     }
                     other => result.push(other),
@@ -842,11 +877,40 @@ fn eval_unary(
             let mut i = 0;
             while i + 1 < lhs_nodes.len() {
                 let key_val = eval(arena, lhs_nodes[i], input, env)?;
-                let val_val = eval(arena, lhs_nodes[i + 1], input, env)?;
-                let key = match key_val {
-                    Value::String(s) => s,
-                    _ => key_val.stringify()?,
+                // Skip if key is undefined.
+                if key_val.is_undefined() {
+                    i += 2;
+                    continue;
+                }
+                let key = match &key_val {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(JsonataError::new(
+                            "T1003",
+                            format!(
+                                "key expression must evaluate to a string, got {:?}",
+                                key_val
+                            ),
+                        ));
+                    }
                 };
+                if obj.contains_key(&key) {
+                    return Err(JsonataError::new(
+                        "D1009",
+                        format!("duplicate key: \"{key}\""),
+                    ));
+                }
+                let val_val = eval(arena, lhs_nodes[i + 1], input, env)?;
+                // Collapse sequences.
+                let val_val = match val_val {
+                    Value::Sequence(seq) => seq.collapse(),
+                    other => other,
+                };
+                // Skip if value is undefined.
+                if val_val.is_undefined() {
+                    i += 2;
+                    continue;
+                }
                 obj.insert(key, val_val);
                 i += 2;
             }
