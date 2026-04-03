@@ -1858,13 +1858,13 @@ mod tests {
     fn range_operator() {
         assert_eq!(
             eval_simple("[1..5]"),
-            Value::Array(vec![Value::Array(vec![
+            Value::Array(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0),
                 Value::Number(5.0),
-            ])])
+            ])
         );
     }
 

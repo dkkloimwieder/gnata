@@ -23,7 +23,7 @@ pub fn fn_length(args: &[Value], focus: &Value) -> JsonataResult {
     match arg {
         Value::String(s) => Ok(Value::Number(s.chars().count() as f64)),
         _ => Err(JsonataError::new(
-            "T0410",
+            "T0411",
             "$length: argument must be a string",
         )),
     }
@@ -191,7 +191,15 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
-    // Don't enforce max arity — HOF callbacks pass extra args.
+    // Per Go reference: $uppercase signature "s-:s" takes at most 1 arg.
+    // Calling with extra args (e.g. $uppercase("a","b")) must raise T0410.
+    let extra_args = args.len() > 1;
+    if extra_args {
+        return Err(JsonataError::new(
+            "T0410",
+            "$uppercase: takes at most 1 argument",
+        ));
+    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
@@ -206,6 +214,15 @@ pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
+    // Per Go reference: $lowercase signature "s-:s" takes at most 1 arg.
+    // Calling with extra args (e.g. $lowercase("a","b")) must raise T0410.
+    let extra_args = args.len() > 1;
+    if extra_args {
+        return Err(JsonataError::new(
+            "T0410",
+            "$lowercase: takes at most 1 argument",
+        ));
+    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
@@ -422,7 +439,7 @@ pub fn fn_join(args: &[Value], _focus: &Value) -> JsonataResult {
         Value::String(s) => return Ok(Value::String(s.clone())),
         _ => {
             return Err(JsonataError::new(
-                "T0410",
+                "T0412",
                 "$join: argument must be an array of strings",
             ));
         }
