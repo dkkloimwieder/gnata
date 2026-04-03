@@ -191,15 +191,6 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
-    // Per Go reference: $uppercase signature "s-:s" takes at most 1 arg.
-    // Calling with extra args (e.g. $uppercase("a","b")) must raise T0410.
-    let extra_args = args.len() > 1;
-    if extra_args {
-        return Err(JsonataError::new(
-            "T0410",
-            "$uppercase: takes at most 1 argument",
-        ));
-    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
@@ -214,15 +205,6 @@ pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
-    // Per Go reference: $lowercase signature "s-:s" takes at most 1 arg.
-    // Calling with extra args (e.g. $lowercase("a","b")) must raise T0410.
-    let extra_args = args.len() > 1;
-    if extra_args {
-        return Err(JsonataError::new(
-            "T0410",
-            "$lowercase: takes at most 1 argument",
-        ));
-    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
