@@ -163,6 +163,19 @@ impl Environment {
             .is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
+    /// Iterate over direct bindings (no parent chain walk).
+    /// Calls the provided closure with each (name, value) pair.
+    pub fn for_each_direct<F: FnMut(&str, &Value)>(&self, mut f: F) {
+        for (k, v) in self.bindings.borrow().iter() {
+            f(k, v);
+        }
+    }
+
+    /// Check if this environment has a direct binding for the given name.
+    pub fn has_direct(&self, name: &str) -> bool {
+        self.bindings.borrow().contains_key(name)
+    }
+
     /// Clone this environment (shallow copy of bindings, shared parent/calls).
     pub fn shallow_clone(&self) -> Self {
         Self {

@@ -185,6 +185,8 @@ pub enum Expr {
         expr: NodeId,
         terms: Vec<SortTerm>,
         keep_array: bool,
+        index: Option<String>,
+        focus: Option<String>,
         pos: usize,
     },
 }

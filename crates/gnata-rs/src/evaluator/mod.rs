@@ -315,12 +315,20 @@ fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
             Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => {
                 return true;
             }
+            Expr::Sort { index: Some(_), .. } | Expr::Sort { focus: Some(_), .. } => {
+                return true;
+            }
             // A subscript step whose left child has an Index or Focus binding also requires
             // tuple-aware path evaluation so each element gets its own env for $pos/$var.
             Expr::Binary { op, lhs, .. } if op == "[" && !lhs.is_empty() => {
                 let lhs = *lhs;
                 match arena.get(lhs) {
-                    Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => {
+                    Expr::Name { index: Some(_), .. }
+                    | Expr::Name { focus: Some(_), .. }
+                    | Expr::Variable { index: Some(_), .. }
+                    | Expr::Variable { focus: Some(_), .. }
+                    | Expr::Sort { index: Some(_), .. }
+                    | Expr::Sort { focus: Some(_), .. } => {
                         return true;
                     }
                     // Also check for nested binary (e.g., books@$b[pred][1]).
@@ -332,7 +340,10 @@ fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
                         let inner_lhs = *inner_lhs;
                         if matches!(
                             arena.get(inner_lhs),
-                            Expr::Name { focus: Some(_), .. } | Expr::Name { index: Some(_), .. }
+                            Expr::Name { focus: Some(_), .. }
+                                | Expr::Name { index: Some(_), .. }
+                                | Expr::Variable { focus: Some(_), .. }
+                                | Expr::Variable { index: Some(_), .. }
                         ) {
                             return true;
                         }
@@ -360,6 +371,7 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
         Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => true,
         Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => true,
         Expr::Binary { index: Some(_), .. } | Expr::Binary { focus: Some(_), .. } => true,
+        Expr::Sort { index: Some(_), .. } | Expr::Sort { focus: Some(_), .. } => true,
         Expr::Binary { op, lhs, rhs, .. } if op == "[" => {
             let lhs = *lhs;
             let rhs = *rhs;
@@ -499,6 +511,59 @@ fn group_has_parent_ref(arena: &AstArena, group: Option<&crate::parser::GroupExp
     }
 }
 
+/// Extract a step-level group from a node, if it has one.
+fn extract_step_group(arena: &AstArena, step: NodeId) -> Option<crate::parser::GroupExpr> {
+    match arena.get(step) {
+        Expr::Name { group, .. } => group.clone(),
+        Expr::Variable { group, .. } => group.clone(),
+        Expr::Function { group, .. } => group.clone(),
+        _ => None,
+    }
+}
+
+/// Evaluate a path step, bypassing any group expression attached to it.
+/// This is used in tuple-aware evaluation where groups are applied at the end.
+fn eval_path_step_no_group(
+    arena: &AstArena,
+    step: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+    prev_was_mapper: bool,
+    keep_singleton_array: bool,
+) -> JsonataResult {
+    // Check if step has a group; if so, evaluate the step WITHOUT the group.
+    let has_group = matches!(
+        arena.get(step),
+        Expr::Name { group: Some(_), .. }
+            | Expr::Variable { group: Some(_), .. }
+            | Expr::Function { group: Some(_), .. }
+    );
+    if !has_group {
+        return eval_path_step(
+            arena,
+            step,
+            input,
+            env,
+            prev_was_mapper,
+            keep_singleton_array,
+        );
+    }
+
+    // For Name nodes with groups, evaluate as a plain name lookup.
+    match arena.get(step) {
+        Expr::Name { value, .. } => eval_name(value, input),
+        Expr::Variable { name, .. } => eval_variable(name, input, env),
+        _ => eval_path_step(
+            arena,
+            step,
+            input,
+            env,
+            prev_was_mapper,
+            keep_singleton_array,
+        ),
+    }
+}
+
 /// Tuple-aware path evaluation for paths containing #$var index bindings or % parent refs.
 ///
 /// Maintains a list of (value, env) contexts so that position variables bound
@@ -513,6 +578,17 @@ fn eval_path_tuple(
 ) -> JsonataResult {
     // Each context pairs a value with the env it was produced under.
     let mut ctxs: Vec<(Value, Rc<Environment>)> = vec![(input.clone(), env.clone())];
+
+    // Detect the first step-level group expression; it will be applied at the
+    // end via eval_tuple_group instead of during per-element evaluation.
+    let mut final_group: Option<crate::parser::GroupExpr> = None;
+    for &step in steps {
+        if final_group.is_none() {
+            if let Some(grp) = extract_step_group(arena, step) {
+                final_group = Some(grp);
+            }
+        }
+    }
 
     for (step_idx, &step) in steps.iter().enumerate() {
         let mut next_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
@@ -878,7 +954,8 @@ fn eval_path_tuple(
                 continue;
             }
 
-            let result = eval_path_step(arena, step, &val, ctx_env, false, keep_singleton_array)?;
+            let result =
+                eval_path_step_no_group(arena, step, &val, ctx_env, false, keep_singleton_array)?;
             if result.is_undefined() {
                 continue;
             }
@@ -927,8 +1004,9 @@ fn eval_path_tuple(
         }
     }
 
-    // If there's a group expression, apply it with per-tuple envs.
-    if let Some(grp) = group {
+    // Determine which group expression to apply (step-level or path-level).
+    let effective_group = final_group.as_ref().or(group);
+    if let Some(grp) = effective_group {
         return eval_tuple_group(arena, grp, &ctxs);
     }
 
@@ -1064,6 +1142,7 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
     match arena.get(step) {
         Expr::Name { index, focus, .. } => (index.clone(), focus.clone()),
         Expr::Variable { index, focus, .. } => (index.clone(), focus.clone()),
+        Expr::Sort { index, focus, .. } => (index.clone(), focus.clone()),
         Expr::Binary {
             op,
             lhs,
@@ -1078,6 +1157,16 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
             let lhs = *lhs;
             match arena.get(lhs) {
                 Expr::Name {
+                    index: li,
+                    focus: lf,
+                    ..
+                }
+                | Expr::Variable {
+                    index: li,
+                    focus: lf,
+                    ..
+                }
+                | Expr::Sort {
                     index: li,
                     focus: lf,
                     ..
@@ -1119,23 +1208,30 @@ fn value_ptr_eq(a: &Value, b: &Value) -> bool {
 }
 
 /// Apply a group-by expression to tuple contexts, using per-element environments.
+///
+/// JSONata group-by semantics: records are grouped by key, then the value
+/// expression is evaluated once per group with the context set to the array
+/// of all group members (or a single value when the group has one member).
+/// This allows aggregate functions like $join or $sum to operate on the
+/// full group rather than individual records.
 fn eval_tuple_group(
     arena: &AstArena,
     group: &crate::parser::GroupExpr,
     ctxs: &[(Value, Rc<Environment>)],
 ) -> JsonataResult {
-    // In tuple context, create one object per context item (per-item mapping).
-    // Each tuple produces its own object with the group's key-value pairs.
-    let mut results = Vec::new();
-    for (item, item_env) in ctxs {
-        let mut obj = indexmap::IndexMap::new();
-        for pair in &group.pairs {
-            let key_node = pair[0];
-            let val_node = pair[1];
+    let mut result_map = indexmap::IndexMap::<String, Value>::new();
+
+    for pair in &group.pairs {
+        let key_node = pair[0];
+        let val_node = pair[1];
+
+        // Phase 1: group ctxs by key.
+        let mut key_order: Vec<String> = Vec::new();
+        let mut groups: indexmap::IndexMap<String, (Vec<Value>, Vec<Rc<Environment>>)> =
+            indexmap::IndexMap::new();
+
+        for (item, item_env) in ctxs {
             let key_val = eval(arena, key_node, item, item_env)?;
-            if key_val.is_undefined() || key_val.is_null() {
-                continue;
-            }
             let key_str = match &key_val {
                 Value::String(s) => s.clone(),
                 _ => {
@@ -1145,24 +1241,105 @@ fn eval_tuple_group(
                     ));
                 }
             };
-            let val_result = if !val_node.is_empty() {
-                eval(arena, val_node, item, item_env)?
+            if let Some(g) = groups.get_mut(&key_str) {
+                g.0.push(item.clone());
+                g.1.push(Rc::clone(item_env));
             } else {
-                item.clone()
-            };
-            if !val_result.is_undefined() {
-                obj.insert(key_str, val_result);
+                key_order.push(key_str.clone());
+                groups.insert(key_str, (vec![item.clone()], vec![Rc::clone(item_env)]));
             }
         }
-        if !obj.is_empty() {
-            results.push(Value::Object(obj));
+
+        // Phase 2: evaluate value expression per group.
+        for key in &key_order {
+            let (values, envs) = groups.get(key).unwrap();
+            let (group_ctx, group_env) = if values.len() == 1 {
+                (values[0].clone(), Rc::clone(&envs[0]))
+            } else {
+                let merged = merge_group_envs(envs);
+                (Value::Array(values.clone()), Rc::new(merged))
+            };
+            let val = if !val_node.is_empty() {
+                eval(arena, val_node, &group_ctx, &group_env)?
+            } else {
+                group_ctx
+            };
+            if !val.is_undefined() {
+                result_map.insert(key.clone(), val);
+            }
         }
     }
-    match results.len() {
-        0 => Ok(Value::Undefined),
-        1 => Ok(results.into_iter().next().unwrap()),
-        _ => Ok(Value::Array(results)),
+
+    if result_map.is_empty() {
+        Ok(Value::Undefined)
+    } else {
+        Ok(Value::Object(result_map))
     }
+}
+
+/// Merge environments from a group of records.
+/// Variables that differ across records are collected into arrays.
+fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
+    if envs.is_empty() {
+        return Environment::new();
+    }
+    if envs.len() == 1 {
+        return envs[0].shallow_clone();
+    }
+
+    let merged = Environment::new_child(
+        envs[0]
+            .parent()
+            .cloned()
+            .unwrap_or_else(|| Rc::new(Environment::new())),
+    );
+
+    // Collect variable names from tuple-specific envs (those with %%).
+    let mut var_names: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for env in envs {
+        let mut current: Option<&Rc<Environment>> = Some(env);
+        while let Some(e) = current {
+            if e.lookup_direct("%%").is_none() {
+                break;
+            }
+            e.for_each_direct(|name, _| {
+                if seen.insert(name.to_string()) {
+                    var_names.push(name.to_string());
+                }
+            });
+            current = e.parent();
+        }
+    }
+
+    // For each variable, collect values from each env via full lookup.
+    for name in &var_names {
+        if name == "%%" || name == "%%j" {
+            if let Some(v) = envs[0].lookup(name) {
+                merged.bind(name.clone(), v);
+            }
+            continue;
+        }
+        let mut vals: Vec<Value> = Vec::new();
+        for env in envs {
+            if let Some(v) = env.lookup(name) {
+                vals.push(v);
+            }
+        }
+        if vals.len() == 1 {
+            merged.bind(name.clone(), vals.into_iter().next().unwrap());
+        } else if !vals.is_empty() {
+            // Check if all values are identical.
+            let all_same = vals.windows(2).all(|w| w[0] == w[1]);
+            if all_same {
+                merged.bind(name.clone(), vals.into_iter().next().unwrap());
+            } else {
+                merged.bind(name.clone(), Value::Array(vals));
+            }
+        }
+    }
+
+    merged
 }
 
 /// Simple (non-tuple) path evaluation: thread each step's result into the next.
@@ -1466,7 +1643,8 @@ fn eval_binary(
             let index_var = match arena.get(lhs) {
                 Expr::Name { index, .. }
                 | Expr::Variable { index, .. }
-                | Expr::Binary { index, .. } => index.clone(),
+                | Expr::Binary { index, .. }
+                | Expr::Sort { index, .. } => index.clone(),
                 _ => None,
             };
             // Check keep_array: the [] suffix on this node or anywhere in the LHS chain.
@@ -1674,11 +1852,11 @@ fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
             }
             _ => {}
         }
-        // Walk into the LHS of Binary nodes.
-        if let Expr::Binary { lhs, .. } = arena.get(current) {
-            current = *lhs;
-        } else {
-            break;
+        // Walk into the LHS of Binary nodes or the expr of Sort nodes.
+        match arena.get(current) {
+            Expr::Binary { lhs, .. } => current = *lhs,
+            Expr::Sort { expr, .. } => current = *expr,
+            _ => break,
         }
     }
     false
@@ -1692,28 +1870,35 @@ fn eval_subscript(
     env: &Rc<Environment>,
     index_var: &Option<String>,
 ) -> JsonataResult {
-    // For non-array inputs, evaluate directly.
+    // For non-array inputs without index variable, evaluate directly.
     if !matches!(left, Value::Array(_) | Value::Sequence(_)) {
-        let index = eval(arena, rhs, left, env)?;
-        if let Some(n) = index.as_f64() {
-            // Numeric index on a single value — treat as array of one.
-            let idx = n.trunc() as i64;
-            if idx == 0 || idx == -1 {
+        if index_var.is_none() {
+            // Bind %% → input so the % operator can navigate to the parent.
+            let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
+            filter_env.bind("%%".into(), input.clone());
+            let index = eval(arena, rhs, left, &filter_env)?;
+            if let Some(n) = index.as_f64() {
+                // Numeric index on a single value — treat as array of one.
+                let idx = n.trunc() as i64;
+                if idx == 0 || idx == -1 {
+                    return Ok(left.clone());
+                }
+                return Ok(Value::Undefined);
+            }
+            // Boolean predicate on single value.
+            if index.to_boolean() {
                 return Ok(left.clone());
             }
             return Ok(Value::Undefined);
         }
-        // Boolean predicate on single value.
-        if index.to_boolean() {
-            return Ok(left.clone());
-        }
-        return Ok(Value::Undefined);
+        // When there's an index variable, wrap in array so the predicate filter
+        // path handles index binding correctly (like Go's evalSubscriptLeft).
     }
 
     let arr = match left {
         Value::Array(a) => a.clone(),
         Value::Sequence(s) => s.to_vec(),
-        _ => unreachable!(),
+        _ => vec![left.clone()],
     };
 
     // Try evaluating RHS as a simple expression (might be a numeric literal or
@@ -2161,6 +2346,14 @@ fn eval_sort(
         _ => unreachable!(),
     };
 
+    // If any sort term references % (parent), use parent-tracking sort.
+    let needs_parent = terms
+        .iter()
+        .any(|t| node_has_parent_ref(arena, t.expression));
+    if needs_parent {
+        return eval_sort_with_parent_tracking(arena, sort_expr, &terms, input, env);
+    }
+
     let items = eval(arena, sort_expr, input, env)?;
     if items.is_undefined() {
         return Ok(Value::Undefined);
@@ -2216,6 +2409,168 @@ fn eval_sort(
         return Ok(arr.into_iter().next().unwrap());
     }
     Ok(Value::Array(arr))
+}
+
+/// Sort with parent-tracking: when sort terms reference %, we need to build
+/// tuple contexts so each item has its parent environment for % evaluation.
+fn eval_sort_with_parent_tracking(
+    arena: &AstArena,
+    sort_expr: NodeId,
+    terms: &[crate::parser::SortTerm],
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    // Build tuple contexts from the sort expression's inner path.
+    let ctxs = build_sort_ctxs(arena, sort_expr, input, env)?;
+    if ctxs.is_empty() {
+        return Ok(Value::Undefined);
+    }
+
+    let mut sorted = ctxs;
+    let mut sort_err: Option<JsonataError> = None;
+    sorted.sort_by(|a, b| {
+        if sort_err.is_some() {
+            return std::cmp::Ordering::Equal;
+        }
+        match compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1) {
+            Ok(cmp) => {
+                if cmp < 0 {
+                    std::cmp::Ordering::Less
+                } else if cmp > 0 {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            }
+            Err(e) => {
+                sort_err = Some(e);
+                std::cmp::Ordering::Equal
+            }
+        }
+    });
+    if let Some(e) = sort_err {
+        return Err(e);
+    }
+
+    let mut seq = Sequence::new();
+    for (val, _) in &sorted {
+        seq.append(val.clone());
+    }
+    Ok(seq.collapse())
+}
+
+/// Build pathCtx tuples for a sort expression, splitting paths into prefix + lastStep
+/// so that parent bindings are preserved.
+fn build_sort_ctxs(
+    arena: &AstArena,
+    sort_expr: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    if let Expr::Path { steps, .. } = arena.get(sort_expr) {
+        let steps = steps.clone();
+        if steps.is_empty() {
+            return Ok(vec![]);
+        }
+        // Walk prefix steps in tuple mode to build parent contexts.
+        let prefix_ctxs = walk_prefix_steps(arena, &steps[..steps.len() - 1], input, env)?;
+        // Expand the last step with parent tracking.
+        return expand_last_step(arena, steps[steps.len() - 1], &prefix_ctxs);
+    }
+
+    // Non-path expression: evaluate normally and wrap results.
+    let result = eval(arena, sort_expr, input, env)?;
+    if result.is_undefined() {
+        return Ok(vec![]);
+    }
+    match result {
+        Value::Array(arr) => Ok(arr.into_iter().map(|v| (v, env.clone())).collect()),
+        other => Ok(vec![(other, env.clone())]),
+    }
+}
+
+/// Walk prefix path steps in tuple mode, binding parent context at each step.
+fn walk_prefix_steps(
+    arena: &AstArena,
+    steps: &[NodeId],
+    input: &Value,
+    env: &Rc<Environment>,
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    let mut ctxs: Vec<(Value, Rc<Environment>)> = vec![(input.clone(), env.clone())];
+    for &step in steps {
+        let mut next: Vec<(Value, Rc<Environment>)> = Vec::new();
+        for (val, ctx_env) in &ctxs {
+            let val = collapse_val(val);
+            if val.is_undefined() {
+                continue;
+            }
+            let result = eval_path_step(arena, step, &val, ctx_env, false, false)?;
+            if result.is_undefined() {
+                continue;
+            }
+            let (index_var, focus_var) = get_step_bindings(arena, step);
+            let is_join = focus_var.is_some();
+            let items = flatten_to_vec(result);
+            for (j, elem) in items.iter().enumerate() {
+                let child_env = Environment::new_child(Rc::clone(ctx_env));
+                child_env.bind("%%".into(), val.clone());
+                if is_join {
+                    child_env.bind("%%j".into(), Value::Bool(true));
+                }
+                if let Some(ref var_name) = index_var {
+                    child_env.bind(var_name.clone(), Value::Number(j as f64));
+                }
+                if let Some(ref var_name) = focus_var {
+                    child_env.bind(var_name.clone(), elem.clone());
+                }
+                let ctx_value = if is_join { val.clone() } else { elem.clone() };
+                next.push((ctx_value, Rc::new(child_env)));
+            }
+        }
+        ctxs = next;
+        if ctxs.is_empty() {
+            return Ok(vec![]);
+        }
+    }
+    Ok(ctxs)
+}
+
+/// Expand prefix contexts via the final step with parent tracking.
+fn expand_last_step(
+    arena: &AstArena,
+    last_step: NodeId,
+    prefix_ctxs: &[(Value, Rc<Environment>)],
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    let mut ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
+    for (val, ctx_env) in prefix_ctxs {
+        let val = collapse_val(val);
+        if val.is_undefined() {
+            continue;
+        }
+        let result = eval_path_step(arena, last_step, &val, ctx_env, false, false)?;
+        if result.is_undefined() {
+            continue;
+        }
+        let (index_var, focus_var) = get_step_bindings(arena, last_step);
+        let is_join = focus_var.is_some();
+        let items = flatten_to_vec(result);
+        for (j, elem) in items.iter().enumerate() {
+            let child_env = Environment::new_child(Rc::clone(ctx_env));
+            child_env.bind("%%".into(), val.clone());
+            if is_join {
+                child_env.bind("%%j".into(), Value::Bool(true));
+            }
+            if let Some(ref var_name) = index_var {
+                child_env.bind(var_name.clone(), Value::Number(j as f64));
+            }
+            if let Some(ref var_name) = focus_var {
+                child_env.bind(var_name.clone(), elem.clone());
+            }
+            let ctx_value = if is_join { val.clone() } else { elem.clone() };
+            ctxs.push((ctx_value, Rc::new(child_env)));
+        }
+    }
+    Ok(ctxs)
 }
 
 fn compare_sort_terms(

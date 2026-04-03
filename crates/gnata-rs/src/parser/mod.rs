@@ -896,6 +896,8 @@ impl Parser {
             expr: left,
             terms,
             keep_array: false,
+            index: None,
+            focus: None,
             pos,
         }))
     }
@@ -967,6 +969,7 @@ impl Parser {
             Expr::Name { focus, .. } => *focus = Some(name),
             Expr::Binary { focus, .. } => *focus = Some(name),
             Expr::Variable { focus, .. } => *focus = Some(name),
+            Expr::Sort { focus, .. } => *focus = Some(name),
             _ => {}
         }
     }
@@ -976,6 +979,7 @@ impl Parser {
             Expr::Name { index, .. } => *index = Some(name),
             Expr::Binary { index, .. } => *index = Some(name),
             Expr::Variable { index, .. } => *index = Some(name),
+            Expr::Sort { index, .. } => *index = Some(name),
             _ => {}
         }
     }
