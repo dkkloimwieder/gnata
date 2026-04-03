@@ -307,18 +307,25 @@ fn eval_path(
 /// Check whether any path step requires tuple-aware evaluation (#$var index bindings).
 fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
     for &step in steps {
-        match arena.get(step) {
-            Expr::Name { index: Some(_), .. } => return true,
-            // A subscript step whose left child has an index binding.
-            Expr::Binary { op, lhs, .. } if op == "[" => {
-                if let Expr::Name { index: Some(_), .. } = arena.get(*lhs) {
-                    return true;
-                }
-            }
-            _ => {}
+        if node_has_index_binding(arena, step) {
+            return true;
         }
     }
     false
+}
+
+/// Recursively check if a node or its sub-expression contains an index binding (#$var).
+fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
+    match arena.get(node) {
+        Expr::Name { index: Some(_), .. } => true,
+        Expr::Binary { op, lhs, .. } if op == "[" => node_has_index_binding(arena, *lhs),
+        Expr::Sort { expr, .. } => {
+            // Check the expression inside the sort.
+            node_has_index_binding(arena, *expr)
+        }
+        Expr::Path { steps, .. } => steps.iter().any(|&s| node_has_index_binding(arena, s)),
+        _ => false,
+    }
 }
 
 /// Tuple-aware path evaluation for paths containing #$var index bindings.
@@ -340,13 +347,68 @@ fn eval_path_tuple(
         let mut next_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
 
         // Sort steps must be applied globally to all tuples simultaneously.
-        if matches!(arena.get(step), Expr::Sort { .. }) {
-            // Evaluate sort on the collected values.
+        if let Expr::Sort { expr, terms, .. } = arena.get(step) {
+            let expr = *expr;
+            let terms = terms.clone();
+            // If the sort's inner expression contains tuple bindings,
+            // evaluate it as a tuple path first to populate ctxs with the
+            // bound environments.
+            if node_has_index_binding(arena, expr) {
+                // Evaluate the inner expression as a tuple path.
+                let mut inner_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
+                for (val, ctx_env) in &ctxs {
+                    // Extract inner path steps or evaluate the expression.
+                    if let Expr::Path {
+                        steps: inner_steps, ..
+                    } = arena.get(expr)
+                    {
+                        let inner_steps = inner_steps.clone();
+                        let mut sub_ctxs = vec![(val.clone(), ctx_env.clone())];
+                        for &inner_step in &inner_steps {
+                            let mut sub_next: Vec<(Value, Rc<Environment>)> = Vec::new();
+                            for (sv, se) in &sub_ctxs {
+                                let result =
+                                    eval_path_step(arena, inner_step, sv, se, false, false)?;
+                                if result.is_undefined() {
+                                    continue;
+                                }
+                                let index_var = match arena.get(inner_step) {
+                                    Expr::Name { index, .. } => index.clone(),
+                                    _ => None,
+                                };
+                                let items: Vec<Value> = match result {
+                                    Value::Array(a) => a,
+                                    Value::Sequence(s) => match s.collapse() {
+                                        Value::Array(a) => a,
+                                        Value::Undefined => continue,
+                                        other => vec![other],
+                                    },
+                                    other => vec![other],
+                                };
+                                for (j, elem) in items.iter().enumerate() {
+                                    let child_env = Environment::new_child(Rc::clone(se));
+                                    child_env.bind("%%".into(), sv.clone());
+                                    if let Some(ref var_name) = index_var {
+                                        child_env.bind(var_name.clone(), Value::Number(j as f64));
+                                    }
+                                    sub_next.push((elem.clone(), Rc::new(child_env)));
+                                }
+                            }
+                            sub_ctxs = sub_next;
+                        }
+                        inner_ctxs.extend(sub_ctxs);
+                    } else {
+                        // Non-path inner expression — evaluate directly.
+                        let result = eval(arena, expr, val, ctx_env)?;
+                        if !result.is_undefined() {
+                            inner_ctxs.push((result, ctx_env.clone()));
+                        }
+                    }
+                }
+                ctxs = inner_ctxs;
+            }
+            // Now sort the tuples.
             let mut arr: Vec<(Value, Rc<Environment>)> = ctxs;
-            let terms = match arena.get(step) {
-                Expr::Sort { terms, .. } => terms.clone(),
-                _ => unreachable!(),
-            };
             let mut sort_err: Option<JsonataError> = None;
             arr.sort_by(|a, b| {
                 if sort_err.is_some() {
@@ -471,17 +533,14 @@ fn eval_tuple_group(
     group: &crate::parser::GroupExpr,
     ctxs: &[(Value, Rc<Environment>)],
 ) -> JsonataResult {
-    let mut out_obj = indexmap::IndexMap::new();
-    let mut key_set = std::collections::HashSet::new();
-
-    for pair in &group.pairs {
-        let key_node = pair[0];
-        let val_node = pair[1];
-        let mut group_order: Vec<String> = Vec::new();
-        let mut groups: std::collections::HashMap<String, (Vec<(Value, Rc<Environment>)>, usize)> =
-            std::collections::HashMap::new();
-
-        for (i, (item, item_env)) in ctxs.iter().enumerate() {
+    // In tuple context, create one object per context item (per-item mapping).
+    // Each tuple produces its own object with the group's key-value pairs.
+    let mut results = Vec::new();
+    for (item, item_env) in ctxs {
+        let mut obj = indexmap::IndexMap::new();
+        for pair in &group.pairs {
+            let key_node = pair[0];
+            let val_node = pair[1];
             let key_val = eval(arena, key_node, item, item_env)?;
             if key_val.is_undefined() || key_val.is_null() {
                 continue;
@@ -495,43 +554,24 @@ fn eval_tuple_group(
                     ));
                 }
             };
-            if let Some(entry) = groups.get_mut(&key_str) {
-                entry.0.push((item.clone(), item_env.clone()));
-            } else {
-                group_order.push(key_str.clone());
-                groups.insert(key_str, (vec![(item.clone(), item_env.clone())], i));
-            }
-        }
-
-        for key_str in &group_order {
-            if key_set.contains(key_str) {
-                return Err(JsonataError::new(
-                    "D1009",
-                    format!("duplicate key: \"{key_str}\""),
-                ));
-            }
-            let (group_items, _first_idx) = groups.get(key_str).unwrap();
-            // Use the first item's env for evaluating the value expression.
-            let (first_val, first_env) = &group_items[0];
-            let group_input = if group_items.len() == 1 {
-                first_val.clone()
-            } else {
-                Value::Array(group_items.iter().map(|(v, _)| v.clone()).collect())
-            };
             let val_result = if !val_node.is_empty() {
-                eval(arena, val_node, &group_input, first_env)?
+                eval(arena, val_node, item, item_env)?
             } else {
-                group_input
+                item.clone()
             };
-            out_obj.insert(key_str.clone(), val_result);
-            key_set.insert(key_str.clone());
+            if !val_result.is_undefined() {
+                obj.insert(key_str, val_result);
+            }
+        }
+        if !obj.is_empty() {
+            results.push(Value::Object(obj));
         }
     }
-
-    if out_obj.is_empty() {
-        return Ok(Value::Undefined);
+    match results.len() {
+        0 => Ok(Value::Undefined),
+        1 => Ok(results.into_iter().next().unwrap()),
+        _ => Ok(Value::Array(results)),
     }
-    Ok(Value::Object(out_obj))
 }
 
 /// Simple (non-tuple) path evaluation: thread each step's result into the next.
@@ -2350,7 +2390,8 @@ mod tests {
 
     #[test]
     fn null_coalescing() {
-        assert_eq!(eval_simple("null ?? 0"), Value::Number(0.0));
+        // null is a value, not undefined — ?? returns null.
+        assert_eq!(eval_simple("null ?? 0"), Value::Null);
     }
 
     // ── Stdlib functions ────────────────────────────────────────
@@ -2552,8 +2593,14 @@ mod tests {
 
     #[test]
     fn stdlib_map() {
+        // $map returns a Sequence that collapses to Array for 3+ elements.
+        let result = eval_simple("$map([1, 2, 3], function($v){$v * 2})");
+        let collapsed = match result {
+            Value::Sequence(seq) => seq.collapse(),
+            other => other,
+        };
         assert_eq!(
-            eval_simple("$map([1, 2, 3], function($v){$v * 2})"),
+            collapsed,
             Value::Array(vec![
                 Value::Number(2.0),
                 Value::Number(4.0),

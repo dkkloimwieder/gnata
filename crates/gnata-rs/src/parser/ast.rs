@@ -116,6 +116,7 @@ pub enum Expr {
         operand: NodeId,          // for negation
         expressions: Vec<NodeId>, // for array constructor [...]
         lhs: Vec<NodeId>,         // for object constructor {...} — flat [k0,v0,k1,v1,...]
+        group: Option<GroupExpr>, // group-by expression attached in infix position
         pos: usize,
     },
 

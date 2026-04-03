@@ -212,6 +212,7 @@ impl Parser {
                         operand: rhs,
                         expressions: Vec::new(),
                         lhs: Vec::new(),
+                        group: None,
                         pos: tok.pos,
                     }))
                 }
@@ -240,16 +241,36 @@ impl Parser {
                 let mut exprs = Vec::new();
                 while self.token.typ != TokenType::RBracket {
                     if self.token.typ == TokenType::EOF {
-                        return Err(parse_error(
-                            "S0204",
-                            "expected , or ] in array constructor",
-                            self.token.pos,
-                        ));
+                        return Err(parse_error("S0202", "expected ]", self.token.pos));
                     }
                     let expr = self.expression(0)?;
                     exprs.push(expr);
                     if self.token.typ == TokenType::Comma {
                         self.advance_prefix()?;
+                    } else if self.token.typ != TokenType::RBracket {
+                        // Structural close tokens (wrong delimiter) → S0202; operator-level tokens → S0204.
+                        match self.token.typ {
+                            TokenType::RParen | TokenType::RBrace | TokenType::Colon => {
+                                return Err(parse_error(
+                                    "S0202",
+                                    &format!(
+                                        "unexpected token in array constructor: {}",
+                                        self.token.value
+                                    ),
+                                    self.token.pos,
+                                ));
+                            }
+                            _ => {
+                                return Err(parse_error(
+                                    "S0204",
+                                    &format!(
+                                        "expected , or ] in array constructor: {}",
+                                        self.token.value
+                                    ),
+                                    self.token.pos,
+                                ));
+                            }
+                        }
                     }
                 }
                 self.infix = true;
@@ -259,6 +280,7 @@ impl Parser {
                     operand: NodeId::EMPTY,
                     expressions: exprs,
                     lhs: Vec::new(),
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -271,6 +293,7 @@ impl Parser {
                     operand: NodeId::EMPTY,
                     expressions: Vec::new(),
                     lhs: pairs,
+                    group: None,
                     pos: tok.pos,
                 }))
             }
@@ -359,6 +382,19 @@ impl Parser {
                     args.push(arg);
                     if self.token.typ == TokenType::Comma {
                         self.advance_prefix()?;
+                    } else if self.token.typ != TokenType::RParen {
+                        if self.token.typ == TokenType::EOF {
+                            return Err(parse_error(
+                                "S0203",
+                                "expected ) before end of expression",
+                                self.token.pos,
+                            ));
+                        }
+                        return Err(parse_error(
+                            "S0202",
+                            &format!("expected , or ) in argument list: {}", self.token.value),
+                            self.token.pos,
+                        ));
                     }
                 }
                 self.infix = true;
@@ -381,6 +417,14 @@ impl Parser {
             }
             TokenType::LBracket => {
                 // Subscript/predicate or empty [] (keep array)
+                // S0209: A predicate/subscript cannot follow a group-by expression.
+                if self.has_group(left) {
+                    return Err(parse_error(
+                        "S0209",
+                        "a predicate cannot follow a grouping expression in a step",
+                        tok.pos,
+                    ));
+                }
                 self.advance_prefix()?;
                 if self.token.typ == TokenType::RBracket {
                     // Empty [] → set KeepArray on left
@@ -404,6 +448,14 @@ impl Parser {
             }
             TokenType::LBrace => {
                 // Group-by expression
+                // S0210: A step can only have one group-by expression.
+                if self.has_group(left) {
+                    return Err(parse_error(
+                        "S0210",
+                        "each step can only have one grouping expression",
+                        tok.pos,
+                    ));
+                }
                 self.advance_prefix()?;
                 let pairs_flat = self.parse_object_pairs()?;
                 let pairs = pairs_to_group_pairs(&pairs_flat);
@@ -668,7 +720,10 @@ impl Parser {
 
         // Optional type signature <...>
         let signature = if self.token.typ == TokenType::LT {
-            Some(self.parse_signature()?)
+            let sig = self.parse_signature()?;
+            // Validate the signature content; malformed signatures → S0402.
+            validate_signature_raw(&sig.raw, self.token.pos)?;
+            Some(sig)
         } else {
             None
         };
@@ -820,11 +875,22 @@ impl Parser {
         }
     }
 
+    fn has_group(&self, id: NodeId) -> bool {
+        match self.arena.get(id) {
+            Expr::Name { group, .. } => group.is_some(),
+            Expr::Binary { group, .. } => group.is_some(),
+            Expr::Variable { group, .. } => group.is_some(),
+            Expr::Unary { group, .. } => group.is_some(),
+            _ => false,
+        }
+    }
+
     fn set_group(&mut self, id: NodeId, group: GroupExpr) {
         match self.arena.get_mut(id) {
             Expr::Name { group: g, .. } => *g = Some(group),
             Expr::Binary { group: g, .. } => *g = Some(group),
             Expr::Variable { group: g, .. } => *g = Some(group),
+            Expr::Unary { group: g, .. } => *g = Some(group),
             _ => {}
         }
     }
@@ -878,6 +944,112 @@ fn binding_power(tt: TokenType) -> i32 {
 
 fn parse_error(code: &str, msg: &str, _pos: usize) -> JsonataError {
     JsonataError::new(code, msg)
+}
+
+/// Validate a raw signature string (including surrounding `<` and `>`) at parse time.
+/// Returns S0402 if the signature content is malformed.
+/// This mirrors the logic in `evaluator::signature::parse_signature`.
+fn validate_signature_raw(raw: &str, pos: usize) -> Result<(), JsonataError> {
+    // raw includes the outer < > delimiters; strip them.
+    let inner = if raw.starts_with('<') && raw.ends_with('>') {
+        &raw[1..raw.len() - 1]
+    } else {
+        raw
+    };
+    // Strip return type suffix (last `:` not inside () or <>).
+    let s = sig_strip_return_type(inner);
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'(' {
+            i += 1;
+            // Parse union group
+            while i < bytes.len() && bytes[i] != b')' {
+                if bytes[i] == b'<' {
+                    return Err(parse_error(
+                        "S0402",
+                        "content-type specifier '<' is not allowed inside a union type group",
+                        pos,
+                    ));
+                }
+                if !is_valid_sig_type(bytes[i]) {
+                    return Err(parse_error(
+                        "S0402",
+                        &format!("unknown type specifier {:?} in signature", bytes[i] as char),
+                        pos,
+                    ));
+                }
+                i += 1;
+            }
+            if i >= bytes.len() {
+                return Err(parse_error(
+                    "S0402",
+                    "unclosed union type group in signature",
+                    pos,
+                ));
+            }
+            i += 1; // consume ')'
+        } else {
+            if !is_valid_sig_type(bytes[i]) {
+                return Err(parse_error(
+                    "S0402",
+                    &format!("unknown type specifier {:?} in signature", bytes[i] as char),
+                    pos,
+                ));
+            }
+            i += 1;
+        }
+        // Handle optional content-type specifier <X>
+        if i < bytes.len() && bytes[i] == b'<' {
+            i += 1; // consume '<'
+            let mut depth = 1;
+            while i < bytes.len() && depth > 0 {
+                match bytes[i] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            if depth != 0 {
+                return Err(parse_error("S0402", "unclosed content-type specifier", pos));
+            }
+        }
+        // Consume optional/variadic modifiers
+        while i < bytes.len() && matches!(bytes[i], b'?' | b'+' | b'-') {
+            i += 1;
+        }
+    }
+    Ok(())
+}
+
+fn sig_strip_return_type(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut paren_depth = 0i32;
+    let mut angle_depth = 0i32;
+    let mut last_colon = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'<' => angle_depth += 1,
+            b'>' => angle_depth -= 1,
+            b':' if paren_depth == 0 && angle_depth == 0 => last_colon = Some(i),
+            _ => {}
+        }
+    }
+    if let Some(idx) = last_colon {
+        &s[..idx]
+    } else {
+        s
+    }
+}
+
+fn is_valid_sig_type(c: u8) -> bool {
+    matches!(
+        c,
+        b'b' | b'n' | b's' | b'l' | b'a' | b'o' | b'f' | b'j' | b'x'
+    )
 }
 
 #[cfg(test)]
