@@ -93,15 +93,18 @@ impl Environment {
         None
     }
 
-    /// Look up a variable and return the value. Used by parent operator (%).
-    /// Note: unlike Go version, we can't return the Environment reference due to
-    /// RefCell borrowing constraints. Returns just the value.
-    pub fn lookup_with_env(&self, name: &str) -> Option<Value> {
-        if let Some(v) = self.bindings.borrow().get(name) {
-            return Some(v.clone());
+    /// Look up a variable and return both the value and the environment that holds it.
+    /// Used by the parent operator (%) to walk the env chain for chained %.% navigation.
+    /// The `self_rc` parameter must be the `Rc` wrapping this environment.
+    pub fn lookup_with_env(
+        self_rc: &Rc<Environment>,
+        name: &str,
+    ) -> Option<(Value, Rc<Environment>)> {
+        if let Some(v) = self_rc.bindings.borrow().get(name) {
+            return Some((v.clone(), Rc::clone(self_rc)));
         }
-        if let Some(ref parent) = self.parent {
-            return parent.lookup_with_env(name);
+        if let Some(ref parent) = self_rc.parent {
+            return Environment::lookup_with_env(parent, name);
         }
         None
     }

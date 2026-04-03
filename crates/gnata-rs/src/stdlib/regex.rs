@@ -83,8 +83,8 @@ fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Valu
 pub fn fn_match(
     args: &[Value],
     _focus: &Value,
-    _env: &Rc<Environment>,
-    _arena: &AstArena,
+    env: &Rc<Environment>,
+    arena: &AstArena,
 ) -> JsonataResult {
     if args.len() < 2 {
         return Err(JsonataError::new(
@@ -105,7 +105,12 @@ pub fn fn_match(
         }
     };
 
-    let limit = args.get(2).and_then(|v| v.as_f64()).map(|n| n as usize);
+    let limit: Option<usize> = args.get(2).and_then(|v| v.as_f64()).map(|n| n as usize);
+
+    // If the second argument is a function, use custom matcher protocol.
+    if let Value::Function(func) = &args[1] {
+        return match_with_custom_matcher(s, func, limit, env, arena);
+    }
 
     let re = compile_regex_arg(&args[1])?;
 
@@ -119,6 +124,65 @@ pub fn fn_match(
         if let Some(m) = caps.get(0) {
             result.push(build_match_object(s, &caps, &m));
         }
+    }
+
+    if result.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    if result.len() == 1 {
+        return Ok(result.into_iter().next().unwrap());
+    }
+    Ok(Value::Array(result))
+}
+
+/// Custom matcher: call a function that returns {match, start, groups, next} objects.
+fn match_with_custom_matcher(
+    s: &str,
+    matcher_fn: &FunctionValue,
+    limit: Option<usize>,
+    env: &Rc<Environment>,
+    arena: &AstArena,
+) -> JsonataResult {
+    let mut result = Vec::new();
+
+    // Initial call: matcher_fn(str, 0)
+    let mut res = call_function(
+        matcher_fn,
+        &[Value::String(s.to_string()), Value::Number(0.0)],
+        &Value::Undefined,
+        env,
+        arena,
+    )?;
+
+    loop {
+        // If result is undefined/null or not an object, stop.
+        let obj = match &res {
+            Value::Object(o) => o,
+            _ => break,
+        };
+
+        let match_val = obj.get("match").cloned().unwrap_or(Value::Undefined);
+        let start_val = obj.get("start").cloned().unwrap_or(Value::Undefined);
+        let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(vec![]));
+
+        let mut match_obj = indexmap::IndexMap::new();
+        match_obj.insert("match".into(), match_val);
+        match_obj.insert("index".into(), start_val);
+        match_obj.insert("groups".into(), groups_val);
+        result.push(Value::Object(match_obj));
+
+        if let Some(lim) = limit {
+            if result.len() >= lim {
+                break;
+            }
+        }
+
+        // Get the next function and call it.
+        let next_fn = match obj.get("next") {
+            Some(Value::Function(f)) => f.clone(),
+            _ => break,
+        };
+        res = call_function(&next_fn, &[], &Value::Undefined, env, arena)?;
     }
 
     if result.is_empty() {

@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
-use crate::evaluator::{Environment, call_function};
+use crate::evaluator::{Environment, FunctionValue, call_function};
 use crate::parser::AstArena;
 use crate::value::{Sequence, Value};
 
@@ -136,8 +136,26 @@ pub fn fn_reduce(
         Some(v) => (v, 0),
         None => (arr[0].clone(), 1),
     };
-    for item in &arr[start..] {
-        acc = call_function(&func, &[acc, item.clone()], item, env, arena)?;
+    // Determine arity for passing index/array like Go does.
+    let param_count = if let FunctionValue::Lambda(ref lam) = func {
+        lam.params.len()
+    } else {
+        2 // default: (acc, item)
+    };
+    let arr_val = Value::Array(arr.clone());
+    for (idx, item) in arr[start..].iter().enumerate() {
+        let call_args = match param_count {
+            0 | 1 => vec![acc],
+            2 => vec![acc, item.clone()],
+            3 => vec![acc, item.clone(), Value::Number((start + idx) as f64)],
+            _ => vec![
+                acc,
+                item.clone(),
+                Value::Number((start + idx) as f64),
+                arr_val.clone(),
+            ],
+        };
+        acc = call_function(&func, &call_args, item, env, arena)?;
     }
     Ok(acc)
 }

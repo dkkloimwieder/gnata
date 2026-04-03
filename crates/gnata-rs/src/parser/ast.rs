@@ -117,6 +117,7 @@ pub enum Expr {
         expressions: Vec<NodeId>, // for array constructor [...]
         lhs: Vec<NodeId>,         // for object constructor {...} — flat [k0,v0,k1,v1,...]
         group: Option<GroupExpr>, // group-by expression attached in infix position
+        keep_array: bool,
         pos: usize,
     },
 
@@ -148,6 +149,7 @@ pub enum Expr {
         pos: usize,
         thunk: bool, // TCO flag set by post-processing
         keep_array: bool,
+        group: Option<GroupExpr>,
     },
 
     /// Partial application: procedure(args... with ? placeholders).

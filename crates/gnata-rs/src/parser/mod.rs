@@ -213,6 +213,7 @@ impl Parser {
                         expressions: Vec::new(),
                         lhs: Vec::new(),
                         group: None,
+                        keep_array: false,
                         pos: tok.pos,
                     }))
                 }
@@ -281,6 +282,7 @@ impl Parser {
                     expressions: exprs,
                     lhs: Vec::new(),
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -294,6 +296,7 @@ impl Parser {
                     expressions: Vec::new(),
                     lhs: pairs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -412,6 +415,7 @@ impl Parser {
                         pos: tok.pos,
                         thunk: false,
                         keep_array: false,
+                        group: None,
                     }))
                 }
             }
@@ -868,7 +872,8 @@ impl Parser {
             | Expr::Binary { keep_array, .. }
             | Expr::Variable { keep_array, .. }
             | Expr::Function { keep_array, .. }
-            | Expr::Sort { keep_array, .. } => {
+            | Expr::Sort { keep_array, .. }
+            | Expr::Unary { keep_array, .. } => {
                 *keep_array = true;
             }
             _ => {}
@@ -881,6 +886,7 @@ impl Parser {
             Expr::Binary { group, .. } => group.is_some(),
             Expr::Variable { group, .. } => group.is_some(),
             Expr::Unary { group, .. } => group.is_some(),
+            Expr::Function { group, .. } => group.is_some(),
             _ => false,
         }
     }
@@ -891,6 +897,7 @@ impl Parser {
             Expr::Binary { group: g, .. } => *g = Some(group),
             Expr::Variable { group: g, .. } => *g = Some(group),
             Expr::Unary { group: g, .. } => *g = Some(group),
+            Expr::Function { group: g, .. } => *g = Some(group),
             _ => {}
         }
     }

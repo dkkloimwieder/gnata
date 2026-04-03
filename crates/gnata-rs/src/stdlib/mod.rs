@@ -6,10 +6,12 @@ mod array;
 mod boolean;
 pub mod datetime;
 mod eval_fn;
+mod format_integer;
 mod format_number;
 mod hof;
 mod numeric;
 mod object;
+mod parse_integer;
 pub mod regex;
 mod string_funcs;
 mod types;
@@ -64,6 +66,8 @@ pub fn register_all(env: &mut Environment) {
     bind_signed_builtin(env, "average", numeric::fn_average, "a<n>");
     bind_builtin(env, "formatBase", numeric::fn_format_base);
     bind_builtin(env, "formatNumber", format_number::fn_format_number);
+    bind_builtin(env, "formatInteger", format_integer::fn_format_integer);
+    bind_builtin(env, "parseInteger", parse_integer::fn_parse_integer);
 
     // ── Array ───────────────────────────────────────────────────────
     bind_builtin(env, "count", array::fn_count);
@@ -130,6 +134,14 @@ pub fn register_all_on_rc(env: &Rc<Environment>) {
     env.bind("ceil".into(), _mk_b(numeric::fn_ceil));
     env.bind("round".into(), _mk_b(numeric::fn_round));
     env.bind("sum".into(), _mk_sb(numeric::fn_sum, "a<n>"));
+    env.bind(
+        "formatInteger".into(),
+        _mk_b(format_integer::fn_format_integer),
+    );
+    env.bind(
+        "parseInteger".into(),
+        _mk_b(parse_integer::fn_parse_integer),
+    );
     env.bind("count".into(), _mk_b(array::fn_count));
     env.bind("append".into(), _mk_b(array::fn_append));
     env.bind("keys".into(), _mk_b(object::fn_keys));

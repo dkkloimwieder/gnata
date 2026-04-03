@@ -31,6 +31,9 @@ fn step_has_keep_array(arena: &AstArena, step: NodeId) -> bool {
             }
             | Expr::Sort {
                 keep_array: true, ..
+            }
+            | Expr::Unary {
+                keep_array: true, ..
             } => {
                 return true;
             }
@@ -280,6 +283,7 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
         Expr::Name { group, .. } => group.clone(),
         Expr::Variable { group, .. } => group.clone(),
         Expr::Path { group, .. } => group.clone(),
+        Expr::Function { group, .. } => group.clone(),
         _ => None,
     };
     if let Some(mut g) = group {
@@ -291,6 +295,7 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
             Expr::Name { group: gr, .. } => *gr = Some(g),
             Expr::Variable { group: gr, .. } => *gr = Some(g),
             Expr::Path { group: gr, .. } => *gr = Some(g),
+            Expr::Function { group: gr, .. } => *gr = Some(g),
             _ => {}
         }
     }

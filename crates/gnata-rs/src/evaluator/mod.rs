@@ -46,7 +46,9 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
                 return eval_group_by(arena, node, input, env);
             }
         }
-        Expr::Name { group: Some(_), .. } | Expr::Variable { group: Some(_), .. } => {
+        Expr::Name { group: Some(_), .. }
+        | Expr::Variable { group: Some(_), .. }
+        | Expr::Function { group: Some(_), .. } => {
             return eval_group_by(arena, node, input, env);
         }
         _ => {}
@@ -304,10 +306,14 @@ fn eval_path(
     eval_path_simple(arena, &steps, keep_singleton_array, input, env)
 }
 
-/// Check whether any path step requires tuple-aware evaluation (#$var index bindings).
+/// Check whether any path step requires tuple-aware evaluation (#$var index bindings or % parent refs).
 fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
     for &step in steps {
         if node_has_index_binding(arena, step) {
+            return true;
+        }
+        // Any step that references % (Parent) requires parent-chain tracking.
+        if node_has_parent_ref(arena, step) {
             return true;
         }
     }
@@ -325,6 +331,131 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
         }
         Expr::Path { steps, .. } => steps.iter().any(|&s| node_has_index_binding(arena, s)),
         _ => false,
+    }
+}
+
+/// Recursively check if an AST node or any of its descendants is a Parent (%) reference.
+fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
+    if node.is_empty() {
+        return false;
+    }
+    match arena.get(node) {
+        Expr::Parent { .. } => true,
+        Expr::Name { stages, group, .. } => {
+            stages.iter().any(|s| match &s.kind {
+                crate::parser::StageKind::Filter { expression } => {
+                    node_has_parent_ref(arena, *expression)
+                }
+                crate::parser::StageKind::Index { .. } => false,
+            }) || group_has_parent_ref(arena, group.as_ref())
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            node_has_parent_ref(arena, *lhs) || node_has_parent_ref(arena, *rhs)
+        }
+        Expr::Unary {
+            operand,
+            expressions,
+            lhs,
+            group,
+            ..
+        } => {
+            let operand = *operand;
+            let expressions = expressions.clone();
+            let lhs = lhs.clone();
+            let group = group.clone();
+            node_has_parent_ref(arena, operand)
+                || expressions.iter().any(|&e| node_has_parent_ref(arena, e))
+                || lhs.iter().any(|&e| node_has_parent_ref(arena, e))
+                || group_has_parent_ref(arena, group.as_ref())
+        }
+        Expr::Path { steps, group, .. } => {
+            let steps = steps.clone();
+            let group = group.clone();
+            steps.iter().any(|&s| node_has_parent_ref(arena, s))
+                || group_has_parent_ref(arena, group.as_ref())
+        }
+        Expr::Block { expressions, .. } => {
+            let expressions = expressions.clone();
+            expressions.iter().any(|&e| node_has_parent_ref(arena, e))
+        }
+        Expr::Condition {
+            condition,
+            then,
+            else_,
+            ..
+        } => {
+            let (condition, then, else_) = (*condition, *then, *else_);
+            node_has_parent_ref(arena, condition)
+                || node_has_parent_ref(arena, then)
+                || else_.map_or(false, |e| node_has_parent_ref(arena, e))
+        }
+        Expr::Function {
+            procedure,
+            arguments,
+            ..
+        } => {
+            let procedure = *procedure;
+            let arguments = arguments.clone();
+            node_has_parent_ref(arena, procedure)
+                || arguments.iter().any(|&a| node_has_parent_ref(arena, a))
+        }
+        Expr::Lambda { body, .. } => {
+            let body = *body;
+            node_has_parent_ref(arena, body)
+        }
+        Expr::Sort { expr, terms, .. } => {
+            let expr = *expr;
+            let terms = terms.clone();
+            node_has_parent_ref(arena, expr)
+                || terms
+                    .iter()
+                    .any(|t| node_has_parent_ref(arena, t.expression))
+        }
+        Expr::Bind { lhs, rhs, .. } => {
+            let (lhs, rhs) = (*lhs, *rhs);
+            node_has_parent_ref(arena, lhs) || node_has_parent_ref(arena, rhs)
+        }
+        Expr::Transform {
+            pattern,
+            update,
+            delete,
+            ..
+        } => {
+            let (pattern, update, delete) = (*pattern, *update, *delete);
+            node_has_parent_ref(arena, pattern)
+                || node_has_parent_ref(arena, update)
+                || delete.map_or(false, |d| node_has_parent_ref(arena, d))
+        }
+        Expr::Partial {
+            procedure,
+            arguments,
+            ..
+        } => {
+            let procedure = *procedure;
+            let arguments = arguments.clone();
+            node_has_parent_ref(arena, procedure)
+                || arguments.iter().any(|&a| node_has_parent_ref(arena, a))
+        }
+        // Leaf nodes that can't contain % references.
+        Expr::StringLit { .. }
+        | Expr::NumberLit { .. }
+        | Expr::ValueLit { .. }
+        | Expr::Variable { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Descendant { .. }
+        | Expr::Regex { .. }
+        | Expr::Placeholder { .. } => false,
+    }
+}
+
+/// Check if a GroupExpr contains any % (Parent) references in its key/value expressions.
+fn group_has_parent_ref(arena: &AstArena, group: Option<&crate::parser::GroupExpr>) -> bool {
+    match group {
+        Some(grp) => grp
+            .pairs
+            .iter()
+            .any(|pair| node_has_parent_ref(arena, pair[0]) || node_has_parent_ref(arena, pair[1])),
+        None => false,
     }
 }
 
@@ -434,6 +565,33 @@ fn eval_path_tuple(
                 return Err(e);
             }
             ctxs = arr;
+            continue;
+        }
+
+        // Parent (%) steps navigate up the parent chain using the %% env bindings
+        // set by appendTupleResults. The parent value is retrieved via %%, and the
+        // new env is the parent of the binding env so chained %.% walks upward.
+        if matches!(arena.get(step), Expr::Parent { .. }) {
+            for (_, ctx_env) in &ctxs {
+                if let Some((parent_val, binding_env)) = Environment::lookup_with_env(ctx_env, "%%")
+                {
+                    // Use the binding env's parent so chained %.% walks up correctly.
+                    let parent_env = binding_env
+                        .parent()
+                        .cloned()
+                        .unwrap_or_else(|| binding_env.clone());
+                    next_ctxs.push((parent_val, parent_env));
+                } else {
+                    return Err(JsonataError::new(
+                        "S0217",
+                        "% operator used outside of a valid path context",
+                    ));
+                }
+            }
+            ctxs = next_ctxs;
+            if ctxs.is_empty() {
+                return Ok(Value::Undefined);
+            }
             continue;
         }
 
@@ -1068,7 +1226,8 @@ fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
             | Expr::Binary { keep_array, .. }
             | Expr::Variable { keep_array, .. }
             | Expr::Function { keep_array, .. }
-            | Expr::Sort { keep_array, .. } => {
+            | Expr::Sort { keep_array, .. }
+            | Expr::Unary { keep_array, .. } => {
                 if *keep_array {
                     return true;
                 }
@@ -1902,6 +2061,7 @@ fn eval_group_by(
         Expr::Name { group: Some(g), .. } => g.clone(),
         Expr::Path { group: Some(g), .. } => g.clone(),
         Expr::Variable { group: Some(g), .. } => g.clone(),
+        Expr::Function { group: Some(g), .. } => g.clone(),
         _ => return eval(arena, node, input, env),
     };
 
@@ -1911,6 +2071,7 @@ fn eval_group_by(
         Expr::Name { value, .. } => eval_name(value, input)?,
         Expr::Path { .. } => eval_path(arena, node, input, env)?,
         Expr::Variable { name, .. } => eval_variable(name, input, env)?,
+        Expr::Function { .. } => eval_function(arena, node, input, env)?,
         _ => eval(arena, node, input, env)?,
     };
     if base.is_undefined() {
@@ -1993,7 +2154,8 @@ fn eval_group_by(
                 | Expr::Binary { keep_array, .. }
                 | Expr::Variable { keep_array, .. }
                 | Expr::Function { keep_array, .. }
-                | Expr::Sort { keep_array, .. } => *keep_array,
+                | Expr::Sort { keep_array, .. }
+                | Expr::Unary { keep_array, .. } => *keep_array,
                 Expr::Path {
                     keep_singleton_array,
                     ..

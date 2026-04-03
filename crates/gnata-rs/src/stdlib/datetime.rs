@@ -852,6 +852,12 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
     }
     let _ = has_sec; // used implicitly
 
+    // If the picture has no datetime components at all, return undefined.
+    let has_any_token = parts.iter().any(|p| p.is_token);
+    if !has_any_token {
+        return Ok(None);
+    }
+
     // Validation.
     if has_d && !has_m && !has_doy {
         return Err(JsonataError::new(
