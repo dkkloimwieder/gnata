@@ -6,24 +6,21 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 use base64::Engine;
 
-pub fn fn_string(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.is_empty() {
-        return Err(JsonataError::new("T0410", "$string: argument is required"));
-    }
-    if args[0].is_undefined() {
+pub fn fn_string(args: &[Value], focus: &Value) -> JsonataResult {
+    let arg = if args.is_empty() { focus } else { &args[0] };
+    if arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    args[0].stringify().map(Value::String)
+    // TODO: second arg (boolean) for pretty-printing
+    arg.stringify().map(Value::String)
 }
 
-pub fn fn_length(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.is_empty() {
-        return Err(JsonataError::new("T0410", "$length: argument is required"));
-    }
-    if args[0].is_undefined() {
+pub fn fn_length(args: &[Value], focus: &Value) -> JsonataResult {
+    let arg = if args.is_empty() { focus } else { &args[0] };
+    if arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    match &args[0] {
+    match arg {
         Value::String(s) => Ok(Value::Number(s.chars().count() as f64)),
         _ => Err(JsonataError::new(
             "T0410",
@@ -138,17 +135,12 @@ pub fn fn_substring_after(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-pub fn fn_uppercase(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.is_empty() {
-        return Err(JsonataError::new(
-            "T0410",
-            "$uppercase: argument is required",
-        ));
-    }
-    if args[0].is_undefined() {
+pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
+    let arg = if args.is_empty() { focus } else { &args[0] };
+    if arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    match &args[0] {
+    match arg {
         Value::String(s) => Ok(Value::String(s.to_uppercase())),
         _ => Err(JsonataError::new(
             "T0410",
@@ -157,17 +149,12 @@ pub fn fn_uppercase(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-pub fn fn_lowercase(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.is_empty() {
-        return Err(JsonataError::new(
-            "T0410",
-            "$lowercase: argument is required",
-        ));
-    }
-    if args[0].is_undefined() {
+pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
+    let arg = if args.is_empty() { focus } else { &args[0] };
+    if arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    match &args[0] {
+    match arg {
         Value::String(s) => Ok(Value::String(s.to_lowercase())),
         _ => Err(JsonataError::new(
             "T0410",
@@ -176,14 +163,12 @@ pub fn fn_lowercase(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-pub fn fn_trim(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.is_empty() {
-        return Err(JsonataError::new("T0410", "$trim: argument is required"));
-    }
-    if args[0].is_undefined() {
+pub fn fn_trim(args: &[Value], focus: &Value) -> JsonataResult {
+    let arg = if args.is_empty() { focus } else { &args[0] };
+    if arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    match &args[0] {
+    match arg {
         Value::String(s) => {
             // JSONata $trim: strip leading/trailing whitespace AND collapse internal whitespace.
             let trimmed = s.trim();
@@ -256,17 +241,22 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-pub fn fn_contains(args: &[Value], _focus: &Value) -> JsonataResult {
-    if args.len() < 2 {
+pub fn fn_contains(args: &[Value], focus: &Value) -> JsonataResult {
+    // When called with 1 arg in path context, use focus as the string.
+    let (str_arg, pattern_arg) = if args.len() >= 2 {
+        (&args[0], &args[1])
+    } else if args.len() == 1 {
+        (focus, &args[0])
+    } else {
         return Err(JsonataError::new(
             "T0410",
             "$contains: requires 2 arguments",
         ));
-    }
-    if args[0].is_undefined() {
+    };
+    if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
+    let s = match str_arg {
         Value::String(s) => s.as_str(),
         _ => {
             return Err(JsonataError::new(
@@ -275,7 +265,7 @@ pub fn fn_contains(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    match &args[1] {
+    match pattern_arg {
         Value::String(sub) => Ok(Value::Bool(s.contains(sub.as_str()))),
         Value::Object(obj) if obj.contains_key("pattern") => {
             // Regex object.
@@ -428,6 +418,111 @@ pub fn fn_base64_decode(args: &[Value], _focus: &Value) -> JsonataResult {
         _ => Err(JsonataError::new(
             "T0410",
             "$base64decode: argument must be a string",
+        )),
+    }
+}
+
+pub fn fn_encode_url(args: &[Value], _focus: &Value) -> JsonataResult {
+    if args.is_empty() || args[0].is_undefined() {
+        return Ok(Value::Undefined);
+    }
+    match &args[0] {
+        Value::String(s) => {
+            // encodeUrl preserves URI-safe characters.
+            let encoded =
+                percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC)
+                    .to_string();
+            // Restore URI-safe chars that shouldn't be encoded.
+            let encoded = encoded
+                .replace("%2F", "/")
+                .replace("%3A", ":")
+                .replace("%40", "@")
+                .replace("%21", "!")
+                .replace("%24", "$")
+                .replace("%26", "&")
+                .replace("%27", "'")
+                .replace("%28", "(")
+                .replace("%29", ")")
+                .replace("%2A", "*")
+                .replace("%2B", "+")
+                .replace("%2C", ",")
+                .replace("%3B", ";")
+                .replace("%3D", "=")
+                .replace("%3F", "?")
+                .replace("%23", "#")
+                .replace("%5B", "[")
+                .replace("%5D", "]");
+            Ok(Value::String(encoded))
+        }
+        _ => Err(JsonataError::new(
+            "T0410",
+            "$encodeUrl: argument must be a string",
+        )),
+    }
+}
+
+pub fn fn_encode_url_component(args: &[Value], _focus: &Value) -> JsonataResult {
+    if args.is_empty() || args[0].is_undefined() {
+        return Ok(Value::Undefined);
+    }
+    match &args[0] {
+        Value::String(s) => {
+            let encoded =
+                percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC)
+                    .to_string()
+                    .replace("%20", "%20")
+                    .replace("%21", "!")
+                    .replace("%27", "'")
+                    .replace("%28", "(")
+                    .replace("%29", ")")
+                    .replace("%2A", "*")
+                    .replace("%2D", "-")
+                    .replace("%2E", ".")
+                    .replace("%5F", "_")
+                    .replace("%7E", "~");
+            Ok(Value::String(encoded))
+        }
+        _ => Err(JsonataError::new(
+            "T0410",
+            "$encodeUrlComponent: argument must be a string",
+        )),
+    }
+}
+
+pub fn fn_decode_url(args: &[Value], _focus: &Value) -> JsonataResult {
+    if args.is_empty() || args[0].is_undefined() {
+        return Ok(Value::Undefined);
+    }
+    match &args[0] {
+        Value::String(s) => {
+            let decoded = percent_encoding::percent_decode_str(s)
+                .decode_utf8()
+                .map_err(|e| JsonataError::new("D3010", format!("$decodeUrl: {e}")))?
+                .to_string();
+            Ok(Value::String(decoded))
+        }
+        _ => Err(JsonataError::new(
+            "T0410",
+            "$decodeUrl: argument must be a string",
+        )),
+    }
+}
+
+pub fn fn_decode_url_component(args: &[Value], _focus: &Value) -> JsonataResult {
+    if args.is_empty() || args[0].is_undefined() {
+        return Ok(Value::Undefined);
+    }
+    match &args[0] {
+        Value::String(s) => {
+            let decoded = percent_encoding::percent_decode_str(s)
+                .decode_utf8()
+                .map_err(|e| JsonataError::new("D3010", format!("$decodeUrlComponent: {e}")))?
+                .to_string();
+            Ok(Value::String(decoded))
+        }
+        _ => Err(JsonataError::new(
+            "T0410",
+            "$decodeUrlComponent: argument must be a string",
         )),
     }
 }

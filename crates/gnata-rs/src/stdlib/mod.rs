@@ -32,6 +32,18 @@ pub fn register_all(env: &mut Environment) {
     bind_builtin(env, "join", string_funcs::fn_join);
     bind_builtin(env, "base64encode", string_funcs::fn_base64_encode);
     bind_builtin(env, "base64decode", string_funcs::fn_base64_decode);
+    bind_builtin(env, "encodeUrl", string_funcs::fn_encode_url);
+    bind_builtin(
+        env,
+        "encodeUrlComponent",
+        string_funcs::fn_encode_url_component,
+    );
+    bind_builtin(env, "decodeUrl", string_funcs::fn_decode_url);
+    bind_builtin(
+        env,
+        "decodeUrlComponent",
+        string_funcs::fn_decode_url_component,
+    );
 
     // ── Numeric ─────────────────────────────────────────────────────
     bind_builtin(env, "number", numeric::fn_number);
