@@ -4,9 +4,12 @@
 
 mod array;
 mod boolean;
+mod eval_fn;
+mod format_number;
 mod hof;
 mod numeric;
 mod object;
+pub mod regex;
 mod string_funcs;
 mod types;
 
@@ -59,6 +62,7 @@ pub fn register_all(env: &mut Environment) {
     bind_builtin(env, "min", numeric::fn_min);
     bind_builtin(env, "average", numeric::fn_average);
     bind_builtin(env, "formatBase", numeric::fn_format_base);
+    bind_builtin(env, "formatNumber", format_number::fn_format_number);
 
     // ── Array ───────────────────────────────────────────────────────
     bind_builtin(env, "count", array::fn_count);
@@ -95,9 +99,62 @@ pub fn register_all(env: &mut Environment) {
     bind_env_builtin(env, "sort", hof::fn_sort);
     bind_env_builtin(env, "single", hof::fn_single);
 
+    // ── Regex / Pattern ──────────────────────────────────────────────
+    bind_env_builtin(env, "match", regex::fn_match);
+    bind_env_builtin(env, "replace", regex::fn_replace);
+    bind_env_builtin(env, "eval", eval_fn::fn_eval);
+
     // ── DateTime ────────────────────────────────────────────────────
     bind_builtin(env, "now", types::fn_now);
     bind_builtin(env, "millis", types::fn_millis);
+}
+
+/// Register stdlib on an Rc<Environment> (for $eval child envs).
+pub fn register_all_on_rc(env: &Rc<Environment>) {
+    // String
+    env.bind("string".into(), _mk_b(string_funcs::fn_string));
+    env.bind("length".into(), _mk_b(string_funcs::fn_length));
+    env.bind("uppercase".into(), _mk_b(string_funcs::fn_uppercase));
+    env.bind("lowercase".into(), _mk_b(string_funcs::fn_lowercase));
+    env.bind("trim".into(), _mk_b(string_funcs::fn_trim));
+    env.bind("contains".into(), _mk_b(string_funcs::fn_contains));
+    env.bind("split".into(), _mk_b(string_funcs::fn_split));
+    env.bind("join".into(), _mk_b(string_funcs::fn_join));
+    // Numeric
+    env.bind("number".into(), _mk_b(numeric::fn_number));
+    env.bind("abs".into(), _mk_b(numeric::fn_abs));
+    env.bind("floor".into(), _mk_b(numeric::fn_floor));
+    env.bind("ceil".into(), _mk_b(numeric::fn_ceil));
+    env.bind("round".into(), _mk_b(numeric::fn_round));
+    env.bind("sum".into(), _mk_b(numeric::fn_sum));
+    env.bind("count".into(), _mk_b(array::fn_count));
+    env.bind("append".into(), _mk_b(array::fn_append));
+    env.bind("keys".into(), _mk_b(object::fn_keys));
+    env.bind("values".into(), _mk_b(object::fn_values));
+    env.bind("boolean".into(), _mk_b(boolean::fn_boolean));
+    env.bind("not".into(), _mk_b(boolean::fn_not));
+    env.bind("exists".into(), _mk_b(boolean::fn_exists));
+    env.bind("type".into(), _mk_b(types::fn_type_of));
+    // HOF
+    env.bind("map".into(), _mk_e(hof::fn_map));
+    env.bind("filter".into(), _mk_e(hof::fn_filter));
+    env.bind("reduce".into(), _mk_e(hof::fn_reduce));
+    env.bind("sort".into(), _mk_e(hof::fn_sort));
+}
+
+fn _mk_b(f: fn(&[Value], &Value) -> crate::error::JsonataResult) -> Value {
+    Value::Function(FunctionValue::Builtin(Rc::new(f)))
+}
+
+fn _mk_e(
+    f: fn(
+        &[Value],
+        &Value,
+        &Rc<Environment>,
+        &crate::parser::AstArena,
+    ) -> crate::error::JsonataResult,
+) -> Value {
+    Value::Function(FunctionValue::EnvAwareBuiltin(Rc::new(f)))
 }
 
 fn bind_builtin(

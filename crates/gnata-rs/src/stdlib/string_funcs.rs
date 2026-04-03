@@ -470,7 +470,6 @@ pub fn fn_encode_url_component(args: &[Value], _focus: &Value) -> JsonataResult 
             let encoded =
                 percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC)
                     .to_string()
-                    .replace("%20", "%20")
                     .replace("%21", "!")
                     .replace("%27", "'")
                     .replace("%28", "(")
