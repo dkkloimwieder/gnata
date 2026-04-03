@@ -25,16 +25,18 @@ pub fn fn_append(args: &[Value], _focus: &Value) -> JsonataResult {
     }
     let a = &args[0];
     let b = &args[1];
-    if a.is_undefined() && b.is_undefined() {
-        return Ok(Value::Undefined);
+    // If either is undefined, return the other unchanged.
+    if a.is_undefined() {
+        return Ok(b.clone());
+    }
+    if b.is_undefined() {
+        return Ok(a.clone());
     }
     let mut result = match a {
-        Value::Undefined => Vec::new(),
         Value::Array(arr) => arr.clone(),
         other => vec![other.clone()],
     };
     match b {
-        Value::Undefined => {}
         Value::Array(arr) => result.extend(arr.iter().cloned()),
         other => result.push(other.clone()),
     }

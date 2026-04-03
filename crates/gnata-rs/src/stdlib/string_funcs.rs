@@ -513,7 +513,7 @@ pub fn fn_decode_url(args: &[Value], _focus: &Value) -> JsonataResult {
         Value::String(s) => {
             let decoded = percent_encoding::percent_decode_str(s)
                 .decode_utf8()
-                .map_err(|e| JsonataError::new("D3010", format!("$decodeUrl: {e}")))?
+                .map_err(|e| JsonataError::new("D3140", format!("$decodeUrl: {e}")))?
                 .to_string();
             Ok(Value::String(decoded))
         }
@@ -532,7 +532,7 @@ pub fn fn_decode_url_component(args: &[Value], _focus: &Value) -> JsonataResult 
         Value::String(s) => {
             let decoded = percent_encoding::percent_decode_str(s)
                 .decode_utf8()
-                .map_err(|e| JsonataError::new("D3010", format!("$decodeUrlComponent: {e}")))?
+                .map_err(|e| JsonataError::new("D3140", format!("$decodeUrlComponent: {e}")))?
                 .to_string();
             Ok(Value::String(decoded))
         }

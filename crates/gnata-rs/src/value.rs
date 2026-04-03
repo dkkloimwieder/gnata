@@ -151,8 +151,7 @@ impl Value {
                 _ => arr.iter().any(|v| v.to_boolean()),
             },
             Value::Sequence(seq) => seq.collapse().to_boolean(),
-            Value::Function(_) => true,
-            Value::TailCall(_) => true,
+            Value::Function(_) | Value::TailCall(_) => false,
         }
     }
 
