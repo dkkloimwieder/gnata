@@ -32,7 +32,7 @@ pub fn fn_map(
             ));
         }
     };
-    let mut result = Vec::with_capacity(arr.len());
+    let mut seq = Sequence::new();
     for (i, item) in arr.iter().enumerate() {
         let call_args = vec![
             item.clone(),
@@ -41,10 +41,11 @@ pub fn fn_map(
         ];
         let val = call_function(&func, &call_args, item, env, arena)?;
         if !val.is_undefined() {
-            result.push(val);
+            seq.values.push(val);
         }
     }
-    Ok(Value::Array(result))
+    // Return as Sequence — caller handles collapse with keep_array support.
+    Ok(Value::Sequence(seq))
 }
 
 pub fn fn_filter(
@@ -286,23 +287,25 @@ pub fn fn_sort(
             return std::cmp::Ordering::Equal;
         }
         match &comparator {
-            Some(func) => match call_function(func, &[a.clone(), b.clone()], a, env, arena) {
-                Ok(val) => {
-                    if let Some(n) = val.as_f64() {
-                        n.partial_cmp(&0.0)
-                            .map(|c| c.reverse())
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    } else if val.to_boolean() {
-                        std::cmp::Ordering::Greater
-                    } else {
-                        std::cmp::Ordering::Less
+            Some(func) => {
+                // Match Go: call fn(b, a) (swapped) and map true→Less, false→Equal.
+                // JSONata comparator fn(a,b) returns true when a should sort AFTER b.
+                // By calling fn(b,a): true means b sorts after a → a < b → Less.
+                // false means equal or a sorts after b → preserve order → Equal.
+                match call_function(func, &[b.clone(), a.clone()], a, env, arena) {
+                    Ok(val) => {
+                        if val.to_boolean() {
+                            std::cmp::Ordering::Less
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    }
+                    Err(e) => {
+                        error = Some(e);
+                        std::cmp::Ordering::Equal
                     }
                 }
-                Err(e) => {
-                    error = Some(e);
-                    std::cmp::Ordering::Equal
-                }
-            },
+            }
             None => {
                 // Default: compare by value.
                 match a.compare_order(b) {

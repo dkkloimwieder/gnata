@@ -18,25 +18,10 @@ pub fn fn_string(args: &[Value], focus: &Value) -> JsonataResult {
         }
     }
     // Arity enforced by SignedBuiltin signature at call site.
-    let prettify = if args.len() >= 2 {
-        match &args[1] {
-            Value::Bool(b) => *b,
-            Value::Function(_) => {
-                return Err(JsonataError::new(
-                    "D3011",
-                    "$string: second argument cannot be a function",
-                ));
-            }
-            Value::Undefined => false,
-            _ => {
-                return Err(JsonataError::new(
-                    "T0410",
-                    "$string: second argument must be a boolean",
-                ));
-            }
-        }
-    } else {
-        false
+    // When called via HOF, extra args are present — only check arg[1] if it's a bool.
+    let prettify = match args.get(1) {
+        Some(Value::Bool(b)) => *b,
+        _ => false,
     };
     arg.stringify(prettify).map(Value::String)
 }

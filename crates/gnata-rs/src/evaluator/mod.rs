@@ -35,10 +35,18 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
 
     // If the node has a Group expression, evaluate the base node first,
     // then apply group-by reduction.
+    // Exception: Path nodes with tuple steps (#$var) handle groups internally.
     match arena.get(node) {
-        Expr::Name { group: Some(_), .. }
-        | Expr::Path { group: Some(_), .. }
-        | Expr::Variable { group: Some(_), .. } => {
+        Expr::Path {
+            group: Some(_),
+            steps,
+            ..
+        } => {
+            if !path_has_tuple_step(arena, steps) {
+                return eval_group_by(arena, node, input, env);
+            }
+        }
+        Expr::Name { group: Some(_), .. } | Expr::Variable { group: Some(_), .. } => {
             return eval_group_by(arena, node, input, env);
         }
         _ => {}
@@ -51,7 +59,14 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
         Expr::Variable { name, .. } => eval_variable(name, input, env),
         Expr::Name { value, .. } => eval_name(value, input),
         Expr::Wildcard { .. } => eval_wildcard(input),
-        Expr::Descendant { .. } => Ok(descendant_lookup(input)),
+        Expr::Descendant { .. } => {
+            let result = descendant_lookup(input);
+            // Collapse standalone descendant (not in path context).
+            match result {
+                Value::Sequence(seq) => Ok(seq.collapse()),
+                other => Ok(other),
+            }
+        }
         Expr::Path { .. } => eval_path(arena, node, input, env),
         Expr::Binary { .. } => eval_binary(arena, node, input, env),
         Expr::Unary { .. } => eval_unary(arena, node, input, env),
@@ -202,21 +217,40 @@ fn eval_wildcard(input: &Value) -> JsonataResult {
 fn descendant_lookup(input: &Value) -> Value {
     let mut seq = Sequence::new();
     collect_descendants(input, &mut seq);
-    seq.collapse()
+    // Return as Sequence (not collapsed) so that appendToSequence callers
+    // can flatten properly. collapse() is called by the caller when needed.
+    Value::Sequence(seq)
 }
 
+/// Recursively collect all values at all depths from objects and arrays.
+///
+/// Matches Go's `descendantLookup`: for objects, each field value is added and
+/// recursed into (with arrays expanded to individual items). For arrays, each
+/// element is added and recursed into.
 fn collect_descendants(input: &Value, seq: &mut Sequence) {
     match input {
         Value::Object(obj) => {
             for (_, val) in obj {
-                if !val.is_undefined() {
-                    seq.values.push(val.clone());
+                if val.is_undefined() {
+                    continue;
+                }
+                // When a field value is an array, iterate its elements directly
+                // (add each + recurse), matching Go's descendantLookup which
+                // treats arrays as transparent containers.
+                if let Value::Array(arr) = val {
+                    for item in arr {
+                        seq.append(item.clone());
+                        collect_descendants(item, seq);
+                    }
+                } else {
+                    seq.append(val.clone());
                     collect_descendants(val, seq);
                 }
             }
         }
         Value::Array(arr) => {
             for item in arr {
+                seq.append(item.clone());
                 collect_descendants(item, seq);
             }
         }
@@ -243,12 +277,13 @@ fn eval_path(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    let (steps, keep_singleton_array) = match arena.get(node) {
+    let (steps, keep_singleton_array, group) = match arena.get(node) {
         Expr::Path {
             steps,
             keep_singleton_array,
+            group,
             ..
-        } => (steps.clone(), *keep_singleton_array),
+        } => (steps.clone(), *keep_singleton_array, group.clone()),
         _ => unreachable!(),
     };
 
@@ -256,8 +291,247 @@ fn eval_path(
         return Ok(Value::Undefined);
     }
 
-    // TODO: pathHasTupleStep check → evalPathTuple (deferred until needed for conformance).
+    if path_has_tuple_step(arena, &steps) {
+        return eval_path_tuple(
+            arena,
+            &steps,
+            keep_singleton_array,
+            group.as_ref(),
+            input,
+            env,
+        );
+    }
     eval_path_simple(arena, &steps, keep_singleton_array, input, env)
+}
+
+/// Check whether any path step requires tuple-aware evaluation (#$var index bindings).
+fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
+    for &step in steps {
+        match arena.get(step) {
+            Expr::Name { index: Some(_), .. } => return true,
+            // A subscript step whose left child has an index binding.
+            Expr::Binary { op, lhs, .. } if op == "[" => {
+                if let Expr::Name { index: Some(_), .. } = arena.get(*lhs) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Tuple-aware path evaluation for paths containing #$var index bindings.
+///
+/// Maintains a list of (value, env) contexts so that position variables bound
+/// at one step remain accessible in all subsequent steps.
+fn eval_path_tuple(
+    arena: &AstArena,
+    steps: &[NodeId],
+    keep_singleton_array: bool,
+    group: Option<&crate::parser::GroupExpr>,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    // Each context pairs a value with the env it was produced under.
+    let mut ctxs: Vec<(Value, Rc<Environment>)> = vec![(input.clone(), env.clone())];
+
+    for (step_idx, &step) in steps.iter().enumerate() {
+        let mut next_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
+
+        // Sort steps must be applied globally to all tuples simultaneously.
+        if matches!(arena.get(step), Expr::Sort { .. }) {
+            // Evaluate sort on the collected values.
+            let mut arr: Vec<(Value, Rc<Environment>)> = ctxs;
+            let terms = match arena.get(step) {
+                Expr::Sort { terms, .. } => terms.clone(),
+                _ => unreachable!(),
+            };
+            let mut sort_err: Option<JsonataError> = None;
+            arr.sort_by(|a, b| {
+                if sort_err.is_some() {
+                    return std::cmp::Ordering::Equal;
+                }
+                match compare_sort_terms(arena, &terms, &a.0, &b.0, &a.1, &b.1) {
+                    Ok(cmp) => {
+                        if cmp < 0 {
+                            std::cmp::Ordering::Less
+                        } else if cmp > 0 {
+                            std::cmp::Ordering::Greater
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    }
+                    Err(e) => {
+                        sort_err = Some(e);
+                        std::cmp::Ordering::Equal
+                    }
+                }
+            });
+            if let Some(e) = sort_err {
+                return Err(e);
+            }
+            ctxs = arr;
+            continue;
+        }
+
+        for (val, ctx_env) in &ctxs {
+            // Collapse sequences between steps.
+            let val = match val {
+                Value::Sequence(seq) => {
+                    let collapsed = seq.collapse();
+                    if step_idx > 0 && collapsed.is_undefined() {
+                        continue;
+                    }
+                    collapsed
+                }
+                other => {
+                    if step_idx > 0 && other.is_undefined() {
+                        continue;
+                    }
+                    other.clone()
+                }
+            };
+
+            let result = eval_path_step(arena, step, &val, ctx_env, false, keep_singleton_array)?;
+            if result.is_undefined() {
+                continue;
+            }
+
+            // Get index var name from this step (if any).
+            let index_var = match arena.get(step) {
+                Expr::Name { index, .. } => index.clone(),
+                Expr::Binary { op, lhs, .. } if op == "[" => {
+                    if let Expr::Name { index, .. } = arena.get(*lhs) {
+                        index.clone()
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            // Flatten the result into individual (value, env) contexts.
+            let items: Vec<Value> = match result {
+                Value::Array(a) => a,
+                Value::Sequence(s) => {
+                    let collapsed = s.collapse();
+                    match collapsed {
+                        Value::Array(a) => a,
+                        Value::Undefined => continue,
+                        other => vec![other],
+                    }
+                }
+                other => vec![other],
+            };
+
+            for (j, elem) in items.iter().enumerate() {
+                let child_env = Environment::new_child(Rc::clone(ctx_env));
+                // Bind parent context (for % operator).
+                child_env.bind("%%".into(), val.clone());
+                // Bind index variable if present.
+                if let Some(ref var_name) = index_var {
+                    child_env.bind(var_name.clone(), Value::Number(j as f64));
+                }
+                next_ctxs.push((elem.clone(), Rc::new(child_env)));
+            }
+        }
+
+        ctxs = next_ctxs;
+        if ctxs.is_empty() {
+            return Ok(Value::Undefined);
+        }
+    }
+
+    // If there's a group expression, apply it with per-tuple envs.
+    if let Some(grp) = group {
+        return eval_tuple_group(arena, grp, &ctxs);
+    }
+
+    // Collect final values.
+    let mut seq = Sequence::new();
+    for (val, _) in &ctxs {
+        seq.append(val.clone());
+    }
+    let result = seq.collapse();
+
+    if keep_singleton_array {
+        match result {
+            Value::Array(_) => return Ok(result),
+            Value::Undefined => return Ok(Value::Undefined),
+            _ => return Ok(Value::Array(vec![result])),
+        }
+    }
+    Ok(result)
+}
+
+/// Apply a group-by expression to tuple contexts, using per-element environments.
+fn eval_tuple_group(
+    arena: &AstArena,
+    group: &crate::parser::GroupExpr,
+    ctxs: &[(Value, Rc<Environment>)],
+) -> JsonataResult {
+    let mut out_obj = indexmap::IndexMap::new();
+    let mut key_set = std::collections::HashSet::new();
+
+    for pair in &group.pairs {
+        let key_node = pair[0];
+        let val_node = pair[1];
+        let mut group_order: Vec<String> = Vec::new();
+        let mut groups: std::collections::HashMap<String, (Vec<(Value, Rc<Environment>)>, usize)> =
+            std::collections::HashMap::new();
+
+        for (i, (item, item_env)) in ctxs.iter().enumerate() {
+            let key_val = eval(arena, key_node, item, item_env)?;
+            if key_val.is_undefined() || key_val.is_null() {
+                continue;
+            }
+            let key_str = match &key_val {
+                Value::String(s) => s.clone(),
+                _ => {
+                    return Err(JsonataError::new(
+                        "T1003",
+                        "key expression must evaluate to a string",
+                    ));
+                }
+            };
+            if let Some(entry) = groups.get_mut(&key_str) {
+                entry.0.push((item.clone(), item_env.clone()));
+            } else {
+                group_order.push(key_str.clone());
+                groups.insert(key_str, (vec![(item.clone(), item_env.clone())], i));
+            }
+        }
+
+        for key_str in &group_order {
+            if key_set.contains(key_str) {
+                return Err(JsonataError::new(
+                    "D1009",
+                    format!("duplicate key: \"{key_str}\""),
+                ));
+            }
+            let (group_items, _first_idx) = groups.get(key_str).unwrap();
+            // Use the first item's env for evaluating the value expression.
+            let (first_val, first_env) = &group_items[0];
+            let group_input = if group_items.len() == 1 {
+                first_val.clone()
+            } else {
+                Value::Array(group_items.iter().map(|(v, _)| v.clone()).collect())
+            };
+            let val_result = if !val_node.is_empty() {
+                eval(arena, val_node, &group_input, first_env)?
+            } else {
+                group_input
+            };
+            out_obj.insert(key_str.clone(), val_result);
+            key_set.insert(key_str.clone());
+        }
+    }
+
+    if out_obj.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    Ok(Value::Object(out_obj))
 }
 
 /// Simple (non-tuple) path evaluation: thread each step's result into the next.
@@ -902,11 +1176,13 @@ fn eval_chain(
     if let Expr::Function {
         procedure,
         arguments,
+        keep_array,
         ..
     } = arena.get(rhs)
     {
         let procedure = *procedure;
         let arguments = arguments.clone();
+        let keep_array = *keep_array;
         let fn_val = eval(arena, procedure, input, env)?;
         let func = match fn_val {
             Value::Function(f) => f,
@@ -925,7 +1201,21 @@ fn eval_chain(
             }
             args.push(eval(arena, arg_node, input, env)?);
         }
-        return call_function(&func, &args, input, env, arena);
+        let result = call_function(&func, &args, input, env, arena)?;
+        // Apply keep_array wrapping if [] suffix present.
+        if keep_array {
+            return match result {
+                Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
+                Value::Array(_) => Ok(result),
+                Value::Undefined => Ok(Value::Undefined),
+                scalar => Ok(Value::Array(vec![scalar])),
+            };
+        }
+        // Collapse sequences from function results.
+        return match result {
+            Value::Sequence(seq) => Ok(seq.collapse()),
+            other => Ok(other),
+        };
     }
 
     // Otherwise evaluate right side and call it.
@@ -951,12 +1241,23 @@ fn eval_chain(
                           _env: &Rc<Environment>,
                           arena: &AstArena| {
                         let intermediate = call_function(&inner, args, focus, &env_clone, arena)?;
+                        // Collapse sequences between composition steps.
+                        let intermediate = match intermediate {
+                            Value::Sequence(seq) => seq.collapse(),
+                            other => other,
+                        };
                         call_function(&outer, &[intermediate], focus, &env_clone, arena)
                     },
                 );
                 return Ok(Value::Function(FunctionValue::EnvAwareBuiltin(composed)));
             }
-            call_function(func, std::slice::from_ref(piped), input, env, arena)
+            {
+                let result = call_function(func, std::slice::from_ref(piped), input, env, arena)?;
+                match result {
+                    Value::Sequence(seq) => Ok(seq.collapse()),
+                    other => Ok(other),
+                }
+            }
         }
         _ => Err(JsonataError::new(
             "T2006",
