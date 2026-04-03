@@ -754,24 +754,26 @@ fn eval_subscript(
     // If it errors or is non-numeric/non-index, fall through to per-element predicate filter.
     if let Ok(index) = eval(arena, rhs, left, env) {
         // Array of all-numeric values → select those indices (e.g. [[1..4]]).
-        // Preserve the order of indices as specified, matching Go's selectByIndices
-        // which sorts indices ascending. But JSONata actually preserves insertion order
-        // of the index list. Use the order from the index array.
+        // Matches Go's selectByIndices: resolve negative indices (add len), sort
+        // ascending, then select. This ensures [[1..3,8,-1]] on a 10-element array
+        // gives sorted actual indices [1,2,3,8,9] → elements [2,3,4,9,10].
         if let Value::Array(ref indices) = index
             && !indices.is_empty()
             && indices.iter().all(|v| v.as_f64().is_some())
         {
             let len = arr.len() as i64;
-            // Go sorts indices; but standard JSONata preserves index list order.
-            // We collect indices, deduplicate by tracking seen actual indices,
-            // and preserve the order they appear in the index array.
-            let mut seen = std::collections::HashSet::new();
-            let result: Vec<Value> = indices
+            let mut actual_indices: Vec<i64> = indices
                 .iter()
-                .filter_map(|v| {
+                .map(|v| {
                     let idx = v.as_f64().unwrap() as i64;
-                    let actual = if idx < 0 { len + idx } else { idx };
-                    if actual >= 0 && actual < len && seen.insert(actual) {
+                    if idx < 0 { len + idx } else { idx }
+                })
+                .collect();
+            actual_indices.sort_unstable();
+            let result: Vec<Value> = actual_indices
+                .into_iter()
+                .filter_map(|actual| {
+                    if actual >= 0 && actual < len {
                         Some(arr[actual as usize].clone())
                     } else {
                         None

@@ -191,13 +191,7 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
-    // Signature "s-:s" — takes at most 1 arg; extra args → T0410.
-    if args.len() > 1 {
-        return Err(JsonataError::new(
-            "T0410",
-            "$uppercase: takes at most 1 argument",
-        ));
-    }
+    // Don't enforce max arity — HOF callbacks pass extra args.
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);
@@ -212,13 +206,6 @@ pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
-    // Signature "s-:s" — takes at most 1 arg; extra args → T0410.
-    if args.len() > 1 {
-        return Err(JsonataError::new(
-            "T0410",
-            "$lowercase: takes at most 1 argument",
-        ));
-    }
     let arg = if args.is_empty() { focus } else { &args[0] };
     if arg.is_undefined() {
         return Ok(Value::Undefined);

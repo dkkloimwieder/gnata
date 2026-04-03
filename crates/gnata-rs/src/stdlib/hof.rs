@@ -188,17 +188,22 @@ pub fn fn_each(
 
 pub fn fn_sift(
     args: &[Value],
-    _focus: &Value,
+    focus: &Value,
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
-    if args.len() < 2 {
+    // When called with 1 arg (function), use focus as the object.
+    let (obj_arg, func_arg) = if args.len() >= 2 {
+        (&args[0], &args[1])
+    } else if args.len() == 1 && args[0].is_function() {
+        (focus, &args[0])
+    } else {
         return Err(JsonataError::new("T0410", "$sift: requires 2 arguments"));
-    }
-    if args[0].is_undefined() {
+    };
+    if obj_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let obj = match &args[0] {
+    let obj = match obj_arg {
         Value::Object(o) => o,
         _ => {
             return Err(JsonataError::new(
@@ -207,7 +212,7 @@ pub fn fn_sift(
             ));
         }
     };
-    let func = match &args[1] {
+    let func = match func_arg {
         Value::Function(f) => f.clone(),
         _ => {
             return Err(JsonataError::new(
