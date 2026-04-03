@@ -12,6 +12,40 @@
 use super::ast::{AstArena, Expr, NodeId};
 use crate::error::JsonataError;
 
+/// Check if a path step (or any node in its LHS chain) has keep_array set.
+fn step_has_keep_array(arena: &AstArena, step: NodeId) -> bool {
+    let mut current = step;
+    loop {
+        match arena.get(current) {
+            Expr::Name {
+                keep_array: true, ..
+            }
+            | Expr::Binary {
+                keep_array: true, ..
+            }
+            | Expr::Variable {
+                keep_array: true, ..
+            }
+            | Expr::Function {
+                keep_array: true, ..
+            }
+            | Expr::Sort {
+                keep_array: true, ..
+            } => {
+                return true;
+            }
+            _ => {}
+        }
+        // Walk into the LHS of Binary nodes (e.g. A[][filter] pattern).
+        if let Expr::Binary { lhs, .. } = arena.get(current) {
+            current = *lhs;
+        } else {
+            break;
+        }
+    }
+    false
+}
+
 /// Run the post-processing pass over a parsed AST.
 /// Call this after `Parser::parse()` and before evaluation.
 pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
@@ -211,13 +245,7 @@ pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsonata
                 .iter()
                 .map(|&s| {
                     let processed = process_ast(arena, s)?;
-                    if matches!(
-                        arena.get(processed),
-                        Expr::Name {
-                            keep_array: true,
-                            ..
-                        }
-                    ) {
+                    if step_has_keep_array(arena, processed) {
                         keep_singleton = true;
                     }
                     Ok(processed)
@@ -283,29 +311,13 @@ fn process_dot_binary(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Json
     let pos = arena.get(node).pos();
 
     // Check for KeepSingletonArray propagation.
+    // Any step (or a subscript step's left chain) with keep_array=true
+    // forces the entire path to preserve singletons as arrays.
     let mut keep_singleton = false;
     for &step in &steps {
-        match arena.get(step) {
-            Expr::Name {
-                keep_array: true, ..
-            } => {
-                keep_singleton = true;
-                break;
-            }
-            // A[][filter] pattern — Binary "[" with Name LHS that has keep_array.
-            Expr::Binary { op, lhs, .. } if op == "[" => {
-                if matches!(
-                    arena.get(*lhs),
-                    Expr::Name {
-                        keep_array: true,
-                        ..
-                    }
-                ) {
-                    keep_singleton = true;
-                    break;
-                }
-            }
-            _ => {}
+        if step_has_keep_array(arena, step) {
+            keep_singleton = true;
+            break;
         }
     }
 

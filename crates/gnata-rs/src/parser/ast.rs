@@ -73,6 +73,7 @@ pub enum Expr {
     Variable {
         name: String, // "" for bare $, "$" for $$
         group: Option<GroupExpr>,
+        keep_array: bool,
         pos: usize,
     },
     /// Wildcard (*).
@@ -105,6 +106,7 @@ pub enum Expr {
         lhs: NodeId,
         rhs: NodeId,
         group: Option<GroupExpr>,
+        keep_array: bool,
         pos: usize,
     },
 
@@ -144,6 +146,7 @@ pub enum Expr {
         arguments: Vec<NodeId>,
         pos: usize,
         thunk: bool, // TCO flag set by post-processing
+        keep_array: bool,
     },
 
     /// Partial application: procedure(args... with ? placeholders).
@@ -174,6 +177,7 @@ pub enum Expr {
     Sort {
         expr: NodeId,
         terms: Vec<SortTerm>,
+        keep_array: bool,
         pos: usize,
     },
 }

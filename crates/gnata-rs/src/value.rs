@@ -259,8 +259,20 @@ impl Value {
 
     // ── Stringify ────────────────────────────────────────────────────
 
+    /// Check if a value (recursively) contains any non-finite numbers (Inf/NaN).
+    pub fn contains_non_finite(&self) -> bool {
+        match self {
+            Value::Number(n) => n.is_infinite() || n.is_nan(),
+            Value::Array(arr) => arr.iter().any(|v| v.contains_non_finite()),
+            Value::Object(obj) => obj.values().any(|v| v.contains_non_finite()),
+            Value::Sequence(seq) => seq.values.iter().any(|v| v.contains_non_finite()),
+            _ => false,
+        }
+    }
+
     /// Convert a value to its string representation.
-    pub fn stringify(&self) -> JsonataResult<String> {
+    /// If `prettify` is true, objects and arrays are pretty-printed with 2-space indent.
+    pub fn stringify(&self, prettify: bool) -> JsonataResult<String> {
         match self {
             Value::Undefined => Ok(String::new()),
             Value::String(s) => Ok(s.clone()),
@@ -270,8 +282,17 @@ impl Value {
             Value::Function(_) => Ok(String::new()),
             Value::TailCall(_) => Ok(String::new()),
             other => {
-                let json = serde_json::to_string(&other.to_json())
-                    .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))?;
+                // Check for Inf/NaN anywhere in the structure → D1001
+                if other.contains_non_finite() {
+                    return Err(JsonataError::new("D1001", "Number out of range"));
+                }
+                let json_val = other.to_json();
+                let json = if prettify {
+                    serde_json::to_string_pretty(&json_val)
+                } else {
+                    serde_json::to_string(&json_val)
+                }
+                .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))?;
                 Ok(json)
             }
         }
@@ -335,8 +356,8 @@ impl Value {
                 obj.iter().map(|(k, v)| (k.clone(), v.to_json())).collect(),
             ),
             Value::Sequence(seq) => seq.collapse().to_json(),
-            // Functions and tail-calls are not JSON-representable.
-            Value::Function(_) | Value::TailCall(_) => serde_json::Value::Null,
+            // Functions serialize as empty string in JSONata (matches Go's sanitizeForJSON).
+            Value::Function(_) | Value::TailCall(_) => serde_json::Value::String(String::new()),
         }
     }
 
@@ -532,9 +553,9 @@ mod tests {
 
     #[test]
     fn stringify_values() {
-        assert_eq!(Value::Undefined.stringify().unwrap(), "");
-        assert_eq!(Value::Number(42.0).stringify().unwrap(), "42");
-        assert_eq!(Value::Bool(true).stringify().unwrap(), "true");
-        assert_eq!(Value::String("hi".into()).stringify().unwrap(), "hi");
+        assert_eq!(Value::Undefined.stringify(false).unwrap(), "");
+        assert_eq!(Value::Number(42.0).stringify(false).unwrap(), "42");
+        assert_eq!(Value::Bool(true).stringify(false).unwrap(), "true");
+        assert_eq!(Value::String("hi".into()).stringify(false).unwrap(), "hi");
     }
 }

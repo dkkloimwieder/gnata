@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::error::{JsonataError, JsonataResult};
 use crate::evaluator::{Environment, call_function};
 use crate::parser::AstArena;
-use crate::value::Value;
+use crate::value::{Sequence, Value};
 
 pub fn fn_map(
     args: &[Value],
@@ -178,21 +178,15 @@ pub fn fn_each(
             ));
         }
     };
-    let mut result = Vec::new();
+    let mut seq = Sequence::new();
     for (key, val) in obj {
         let call_args = vec![val.clone(), Value::String(key.clone())];
         let r = call_function(&func, &call_args, val, env, arena)?;
         if !r.is_undefined() {
-            result.push(r);
+            seq.values.push(r);
         }
     }
-    if result.is_empty() {
-        return Ok(Value::Undefined);
-    }
-    if result.len() == 1 {
-        return Ok(result.into_iter().next().unwrap());
-    }
-    Ok(Value::Array(result))
+    Ok(Value::Sequence(seq))
 }
 
 pub fn fn_sift(
@@ -212,15 +206,6 @@ pub fn fn_sift(
     if obj_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let obj = match obj_arg {
-        Value::Object(o) => o,
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$sift: first argument must be an object",
-            ));
-        }
-    };
     let func = match func_arg {
         Value::Function(f) => f.clone(),
         _ => {
@@ -230,43 +215,70 @@ pub fn fn_sift(
             ));
         }
     };
-    let mut result = indexmap::IndexMap::new();
-    for (key, val) in obj {
-        let call_args = vec![val.clone(), Value::String(key.clone())];
-        let keep = call_function(&func, &call_args, val, env, arena)?;
-        if keep.to_boolean() {
-            result.insert(key.clone(), val.clone());
+    // If the argument is an array, map $sift over each element.
+    if let Value::Array(arr) = obj_arg {
+        let mut results = Vec::new();
+        for item in arr {
+            if let Value::Object(obj) = item {
+                let sifted = sift_object(obj, &func, item, env, arena)?;
+                if !sifted.is_undefined() {
+                    results.push(sifted);
+                }
+            }
         }
+        if results.is_empty() {
+            return Ok(Value::Undefined);
+        }
+        return Ok(Value::Array(results));
     }
-    if result.is_empty() {
-        return Ok(Value::Undefined);
-    }
-    Ok(Value::Object(result))
+    let obj = match obj_arg {
+        Value::Object(o) => o,
+        _ => {
+            return Err(JsonataError::new(
+                "T0410",
+                "$sift: first argument must be an object",
+            ));
+        }
+    };
+    sift_object(obj, &func, obj_arg, env, arena)
 }
 
 pub fn fn_sort(
     args: &[Value],
-    _focus: &Value,
+    focus: &Value,
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
     if args.is_empty() {
         return Err(JsonataError::new("T0410", "$sort: argument is required"));
     }
-    if args[0].is_undefined() {
+    // Resolve array and comparator, mirroring Go's makeFnSort logic:
+    // - 1 arg that's a function → use focus as array, arg as comparator
+    // - 1 arg that's not a function → arg is the array, no comparator
+    // - 2+ args → args[0] is array, args[1] is comparator
+    let (arr_val, comparator) = if args.len() == 1 && args[0].is_function() {
+        let f = match &args[0] {
+            Value::Function(f) => Some(f.clone()),
+            _ => None,
+        };
+        (focus, f)
+    } else {
+        let f = args.get(1).and_then(|v| match v {
+            Value::Function(f) => Some(f.clone()),
+            _ => None,
+        });
+        (&args[0], f)
+    };
+    if arr_val.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let mut arr = match &args[0] {
+    let mut arr = match arr_val {
         Value::Array(a) => a.clone(),
         other => vec![other.clone()],
     };
     if arr.len() <= 1 {
         return Ok(Value::Array(arr));
     }
-    let comparator = args.get(1).and_then(|v| match v {
-        Value::Function(f) => Some(f.clone()),
-        _ => None,
-    });
     // Sort with optional comparator.
     let mut error: Option<JsonataError> = None;
     arr.sort_by(|a, b| {
@@ -369,4 +381,26 @@ pub fn fn_single(
         )),
         _ => Ok(matches.into_iter().next().unwrap()),
     }
+}
+
+/// Helper: sift a single object, passing (value, key, object) to the predicate.
+fn sift_object(
+    obj: &indexmap::IndexMap<String, Value>,
+    func: &crate::evaluator::functions::FunctionValue,
+    obj_val: &Value,
+    env: &Rc<Environment>,
+    arena: &AstArena,
+) -> JsonataResult {
+    let mut result = indexmap::IndexMap::new();
+    for (key, val) in obj {
+        let call_args = vec![val.clone(), Value::String(key.clone()), obj_val.clone()];
+        let keep = call_function(&func, &call_args, val, env, arena)?;
+        if keep.to_boolean() {
+            result.insert(key.clone(), val.clone());
+        }
+    }
+    if result.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    Ok(Value::Object(result))
 }

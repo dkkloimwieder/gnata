@@ -292,7 +292,7 @@ pub fn fn_format_base(args: &[Value], _focus: &Value) -> JsonataResult {
             "$formatBase: radix must be between 2 and 36",
         ));
     }
-    let int_val = n.trunc() as i64;
+    let int_val = n.round() as i64;
     let formatted = format_radix(int_val.unsigned_abs(), radix);
     if int_val < 0 {
         Ok(Value::String(format!("-{formatted}")))

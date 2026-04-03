@@ -73,6 +73,13 @@ pub fn process_call_args(
 ) -> Result<(Vec<Value>, bool), JsonataError> {
     let mut coerced: Vec<Value> = args.to_vec();
 
+    // Collapse any Sequence values before processing.
+    for v in coerced.iter_mut() {
+        if let Value::Sequence(seq) = v {
+            *v = seq.collapse();
+        }
+    }
+
     for (i, spec) in specs.iter().enumerate() {
         if spec.variadic {
             break;

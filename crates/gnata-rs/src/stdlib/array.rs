@@ -100,9 +100,6 @@ pub fn fn_distinct(args: &[Value], _focus: &Value) -> JsonataResult {
             result.push(item.clone());
         }
     }
-    if result.len() == 1 {
-        return Ok(result.into_iter().next().unwrap());
-    }
     Ok(Value::Array(result))
 }
 
@@ -147,23 +144,26 @@ pub fn fn_zip(args: &[Value], _focus: &Value) -> JsonataResult {
             "$zip: requires at least 1 argument",
         ));
     }
-    let arrays: Vec<&Vec<Value>> = args
+    // If any argument is undefined, return empty array.
+    if args.iter().any(|a| a.is_undefined()) {
+        return Ok(Value::Array(vec![]));
+    }
+    // Wrap non-array args as singleton arrays.
+    let arrays: Vec<Vec<Value>> = args
         .iter()
-        .filter_map(|a| match a {
-            Value::Array(arr) => Some(arr),
-            _ => None,
+        .map(|a| match a {
+            Value::Array(arr) => arr.clone(),
+            other => vec![other.clone()],
         })
         .collect();
     if arrays.is_empty() {
         return Ok(Value::Array(vec![]));
     }
-    let max_len = arrays.iter().map(|a| a.len()).max().unwrap_or(0);
-    let mut result = Vec::with_capacity(max_len);
-    for i in 0..max_len {
-        let tuple: Vec<Value> = arrays
-            .iter()
-            .map(|a| a.get(i).cloned().unwrap_or(Value::Undefined))
-            .collect();
+    // Use minimum length across all arrays.
+    let min_len = arrays.iter().map(|a| a.len()).min().unwrap_or(0);
+    let mut result = Vec::with_capacity(min_len);
+    for i in 0..min_len {
+        let tuple: Vec<Value> = arrays.iter().map(|a| a[i].clone()).collect();
         result.push(Value::Array(tuple));
     }
     Ok(Value::Array(result))

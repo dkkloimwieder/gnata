@@ -17,8 +17,28 @@ pub fn fn_string(args: &[Value], focus: &Value) -> JsonataResult {
             return Err(JsonataError::new("D3001", "Number out of range"));
         }
     }
-    // TODO: second arg (boolean) for pretty-printing
-    arg.stringify().map(Value::String)
+    // Arity enforced by SignedBuiltin signature at call site.
+    let prettify = if args.len() >= 2 {
+        match &args[1] {
+            Value::Bool(b) => *b,
+            Value::Function(_) => {
+                return Err(JsonataError::new(
+                    "D3011",
+                    "$string: second argument cannot be a function",
+                ));
+            }
+            Value::Undefined => false,
+            _ => {
+                return Err(JsonataError::new(
+                    "T0410",
+                    "$string: second argument must be a boolean",
+                ));
+            }
+        }
+    } else {
+        false
+    };
+    arg.stringify(prettify).map(Value::String)
 }
 
 pub fn fn_length(args: &[Value], focus: &Value) -> JsonataResult {
@@ -339,10 +359,14 @@ pub fn fn_contains(args: &[Value], focus: &Value) -> JsonataResult {
     match pattern_arg {
         Value::String(sub) => Ok(Value::Bool(s.contains(sub.as_str()))),
         Value::Object(obj) if obj.contains_key("pattern") => {
-            // Regex object.
+            // Regex object — use compile_regex to properly handle flags.
             if let Some(Value::String(pat)) = obj.get("pattern") {
-                let re = regex::Regex::new(pat).map_err(|e| {
-                    JsonataError::new("D3010", format!("$contains: invalid regex: {e}"))
+                let flags = match obj.get("flags") {
+                    Some(Value::String(f)) => f.as_str(),
+                    _ => "",
+                };
+                let re = crate::stdlib::regex::compile_regex(pat, flags).map_err(|e| {
+                    JsonataError::new("D3010", format!("$contains: invalid regex: {}", e.message))
                 })?;
                 Ok(Value::Bool(re.is_match(s)))
             } else {
@@ -421,8 +445,12 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
         }
         Value::Object(obj) if obj.contains_key("pattern") => {
             if let Some(Value::String(pat)) = obj.get("pattern") {
-                let re = regex::Regex::new(pat).map_err(|e| {
-                    JsonataError::new("D3010", format!("$split: invalid regex: {e}"))
+                let flags = match obj.get("flags") {
+                    Some(Value::String(f)) => f.as_str(),
+                    _ => "",
+                };
+                let re = crate::stdlib::regex::compile_regex(pat, flags).map_err(|e| {
+                    JsonataError::new("D3010", format!("$split: invalid regex: {}", e.message))
                 })?;
                 let splits: Vec<&str> = re.split(s).collect();
                 let mut result: Vec<Value> = splits
@@ -436,6 +464,12 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
             } else {
                 vec![Value::String(s.into())]
             }
+        }
+        Value::Function(_) => {
+            return Err(JsonataError::new(
+                "T1010",
+                "$split: second argument must be a string or regex",
+            ));
         }
         _ => {
             return Err(JsonataError::new(

@@ -87,13 +87,14 @@ pub fn eval_function(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    let (procedure, arguments, thunk) = match arena.get(node) {
+    let (procedure, arguments, thunk, keep_array) = match arena.get(node) {
         Expr::Function {
             procedure,
             arguments,
             thunk,
+            keep_array,
             ..
-        } => (*procedure, arguments.clone(), *thunk),
+        } => (*procedure, arguments.clone(), *thunk, *keep_array),
         _ => unreachable!("eval_function called on non-Function node"),
     };
 
@@ -151,7 +152,18 @@ pub fn eval_function(
         return Ok(Value::TailCall(Box::new(TailCall { func, args })));
     }
 
-    call_function(&func, &args, input, env, arena)
+    let result = call_function(&func, &args, input, env, arena)?;
+    if keep_array {
+        // Apply keep_array wrapping: collapse sequences and ensure array result.
+        match result {
+            Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
+            Value::Array(_) => Ok(result),
+            Value::Undefined => Ok(Value::Undefined),
+            scalar => Ok(Value::Array(vec![scalar])),
+        }
+    } else {
+        Ok(result)
+    }
 }
 
 /// Evaluate a lambda expression node, creating a closure.

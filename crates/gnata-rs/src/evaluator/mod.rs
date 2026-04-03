@@ -557,7 +557,18 @@ fn eval_binary(
             } else {
                 eval(arena, lhs, input, env)?
             };
-            eval_subscript(arena, rhs, &left, input, env)
+            // Check keep_array: the [] suffix on this node or anywhere in the LHS chain.
+            let keep_array = has_keep_array(arena, node);
+            let result = eval_subscript(arena, rhs, &left, input, env)?;
+            if keep_array {
+                match result {
+                    Value::Array(_) => Ok(result),
+                    Value::Undefined => Ok(Value::Array(vec![])),
+                    scalar => Ok(Value::Array(vec![scalar])),
+                }
+            } else {
+                Ok(result)
+            }
         }
         // Arithmetic operators.
         "+" | "-" | "*" | "/" | "%" | "**" => eval_arithmetic(arena, op, lhs, rhs, input, env),
@@ -568,12 +579,12 @@ fn eval_binary(
             let ls = if left.is_undefined() {
                 String::new()
             } else {
-                left.stringify()?
+                left.stringify(false)?
             };
             let rs = if right.is_undefined() {
                 String::new()
             } else {
-                right.stringify()?
+                right.stringify(false)?
             };
             Ok(Value::String(format!("{ls}{rs}")))
         }
@@ -730,6 +741,34 @@ fn eval_range(
     }
     let arr: Vec<Value> = (start..=end).map(|i| Value::Number(i as f64)).collect();
     Ok(Value::Array(arr))
+}
+
+/// Walk the left chain of a Binary "[" node to check if keep_array is set
+/// on the node itself or anywhere in the LHS chain.
+/// Go equivalent: `hasKeepArrayInChain` in `eval_binary.go`.
+fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
+    let mut current = node;
+    loop {
+        match arena.get(current) {
+            Expr::Name { keep_array, .. }
+            | Expr::Binary { keep_array, .. }
+            | Expr::Variable { keep_array, .. }
+            | Expr::Function { keep_array, .. }
+            | Expr::Sort { keep_array, .. } => {
+                if *keep_array {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        // Walk into the LHS of Binary nodes.
+        if let Expr::Binary { lhs, .. } = arena.get(current) {
+            current = *lhs;
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 fn eval_subscript(
@@ -891,6 +930,14 @@ fn eval_chain(
 
     // Otherwise evaluate right side and call it.
     let fn_val = eval(arena, rhs, input, env)?;
+
+    // If right side is a regex object, apply regex test (like $contains).
+    if let Value::Object(ref obj) = fn_val {
+        if obj.contains_key("pattern") {
+            return apply_regex_chain(piped, obj);
+        }
+    }
+
     match &fn_val {
         Value::Function(func) => {
             // If piped is itself a function, compose them rather than calling fn(piped).
@@ -915,6 +962,50 @@ fn eval_chain(
             "T2006",
             "the right-hand side of the ~> operator must be a function",
         )),
+    }
+}
+
+/// Apply a regex test to a piped value in chain context (~> /regex/).
+/// Returns the first match object if the regex matches, or Undefined if not.
+fn apply_regex_chain(
+    piped: &Value,
+    regex_obj: &indexmap::IndexMap<String, Value>,
+) -> JsonataResult {
+    let s = match piped {
+        Value::String(s) => s.as_str(),
+        _ => return Ok(Value::Undefined),
+    };
+    let pattern = match regex_obj.get("pattern") {
+        Some(Value::String(p)) => p.as_str(),
+        _ => return Ok(Value::Undefined),
+    };
+    let flags = match regex_obj.get("flags") {
+        Some(Value::String(f)) => f.as_str(),
+        _ => "",
+    };
+    let re = crate::stdlib::regex::compile_regex(pattern, flags)
+        .map_err(|e| JsonataError::new("D1002", format!("invalid regex: {}", e.message)))?;
+    if let Some(caps) = re.captures(s) {
+        let m = caps.get(0).unwrap();
+        // Build match object similar to $match.
+        let mut obj = indexmap::IndexMap::new();
+        obj.insert("match".into(), Value::String(m.as_str().into()));
+        let start = s[..m.start()].chars().count();
+        let end = s[..m.end()].chars().count();
+        obj.insert("start".into(), Value::Number(start as f64));
+        obj.insert("end".into(), Value::Number(end as f64));
+        // Collect capture groups (skip group 0 which is the full match).
+        let mut groups = Vec::new();
+        for i in 1..caps.len() {
+            match caps.get(i) {
+                Some(g) => groups.push(Value::String(g.as_str().into())),
+                None => groups.push(Value::String(String::new())),
+            }
+        }
+        obj.insert("groups".into(), Value::Array(groups));
+        Ok(Value::Object(obj))
+    } else {
+        Ok(Value::Undefined)
     }
 }
 
@@ -1549,11 +1640,32 @@ fn eval_group_by(
             child_env.bind("key".into(), Value::String(key_str.clone()));
             let child_env = Rc::new(child_env);
 
-            let val_result = if !val_node.is_empty() {
+            let mut val_result = if !val_node.is_empty() {
                 eval(arena, val_node, &group_input, &child_env)?
             } else {
                 group_input
             };
+
+            // Apply keep_array wrapping for value nodes with [] suffix.
+            let val_keep_array = match arena.get(val_node) {
+                Expr::Name { keep_array, .. }
+                | Expr::Binary { keep_array, .. }
+                | Expr::Variable { keep_array, .. }
+                | Expr::Function { keep_array, .. }
+                | Expr::Sort { keep_array, .. } => *keep_array,
+                Expr::Path {
+                    keep_singleton_array,
+                    ..
+                } => *keep_singleton_array,
+                _ => false,
+            };
+            if val_keep_array {
+                val_result = match val_result {
+                    Value::Undefined => Value::Array(vec![]),
+                    Value::Array(_) => val_result,
+                    scalar => Value::Array(vec![scalar]),
+                };
+            }
 
             if !val_result.is_undefined() {
                 key_set.insert(key_str.clone());

@@ -83,7 +83,10 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
             .collect()
     };
     match &args[0] {
-        Value::Object(obj) => Ok(Value::Array(spread_one(obj))),
+        Value::Object(obj) => {
+            let items = spread_one(obj);
+            Ok(Value::Sequence(crate::value::Sequence::with_items(items)))
+        }
         Value::Array(arr) => {
             let mut result = Vec::new();
             for item in arr {

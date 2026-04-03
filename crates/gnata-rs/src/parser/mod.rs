@@ -150,6 +150,7 @@ impl Parser {
                 Ok(self.arena.alloc(Expr::Variable {
                     name: tok.value,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -334,6 +335,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -373,6 +375,7 @@ impl Parser {
                         arguments: args,
                         pos: tok.pos,
                         thunk: false,
+                        keep_array: false,
                     }))
                 }
             }
@@ -394,6 +397,7 @@ impl Parser {
                         lhs: left,
                         rhs,
                         group: None,
+                        keep_array: false,
                         pos: tok.pos,
                     }))
                 }
@@ -492,6 +496,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -503,6 +508,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -514,6 +520,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -525,6 +532,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -536,6 +544,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -547,6 +556,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -558,6 +568,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -579,6 +590,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -592,6 +604,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     group: None,
+                    keep_array: false,
                     pos: tok.pos,
                 }))
             }
@@ -618,6 +631,7 @@ impl Parser {
             lhs: left,
             rhs,
             group: None,
+            keep_array: false,
             pos,
         }))
     }
@@ -641,6 +655,7 @@ impl Parser {
             let param = self.arena.alloc(Expr::Variable {
                 name: self.token.value.clone(),
                 group: None,
+                keep_array: false,
                 pos: self.token.pos,
             });
             params.push(param);
@@ -761,6 +776,7 @@ impl Parser {
         Ok(self.arena.alloc(Expr::Sort {
             expr: left,
             terms,
+            keep_array: false,
             pos,
         }))
     }
@@ -792,8 +808,15 @@ impl Parser {
     // ── Node modification helpers ────────────────────────────────────
 
     fn set_keep_array(&mut self, id: NodeId) {
-        if let Expr::Name { keep_array, .. } = self.arena.get_mut(id) {
-            *keep_array = true;
+        match self.arena.get_mut(id) {
+            Expr::Name { keep_array, .. }
+            | Expr::Binary { keep_array, .. }
+            | Expr::Variable { keep_array, .. }
+            | Expr::Function { keep_array, .. }
+            | Expr::Sort { keep_array, .. } => {
+                *keep_array = true;
+            }
+            _ => {}
         }
     }
 
