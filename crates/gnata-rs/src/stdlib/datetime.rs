@@ -1997,27 +1997,38 @@ fn day_of_week(y: i32, m: u8, d: u8) -> u8 {
 
 /// ISO week number: returns (iso_year, iso_week).
 fn iso_week(y: i32, m: u8, d: u8) -> (i32, u32) {
-    // ISO week: week containing the Thursday.
+    // ISO 8601 week date: weeks start on Monday, week 1 contains the year's first Thursday.
+    // Formula: week = (ordinalDay - isoDow + 10) / 7
+    //   where isoDow: Mon=1..Sun=7
     let doy = day_of_year(y, m, d) as i32;
-    let dow = day_of_week(y, m, d) as i32; // 0=Sun..6=Sat → convert to Mon=0..Sun=6
-    let dow_iso = (dow + 6) % 7; // Mon=0..Sun=6
-    let week = (doy - dow_iso - 1) / 7 + 1;
+    let dow = day_of_week(y, m, d) as i32; // 0=Sun..6=Sat
+    let dow_iso1 = (dow + 6) % 7 + 1; // Mon=1..Sun=7
+    let week = (doy - dow_iso1 + 10) / 7;
     if week < 1 {
         // Belongs to last week of previous year.
         let prev_y = y - 1;
-        let prev_dec28_doy = day_of_year(prev_y, 12, 28);
-        let prev_dec28_dow = (day_of_week(prev_y, 12, 28) as i32 + 6) % 7;
-        let prev_weeks = (prev_dec28_doy as i32 - prev_dec28_dow - 1) / 7 + 1;
-        return (prev_y, prev_weeks as u32);
+        return (prev_y, iso_weeks_in_year(prev_y));
     }
-    // Check if we're in week 1 of next year.
-    let dec28_doy = day_of_year(y, 12, 28) as i32;
-    let dec28_dow = (day_of_week(y, 12, 28) as i32 + 6) % 7;
-    let max_week = (dec28_doy - dec28_dow - 1) / 7 + 1;
-    if week > max_week {
+    let max_week = iso_weeks_in_year(y);
+    if week > max_week as i32 {
         return (y + 1, 1);
     }
     (y, week as u32)
+}
+
+/// Returns the number of ISO weeks in a given year (52 or 53).
+fn iso_weeks_in_year(y: i32) -> u32 {
+    // A year has 53 weeks if and only if Dec 31 is a Thursday,
+    // or Dec 30 is a Thursday (which happens in leap years).
+    // Equivalently: Jan 1 is Thursday, or Dec 31 is Thursday.
+    let jan1_dow = day_of_week(y, 1, 1); // 0=Sun..6=Sat
+    let dec31_dow = day_of_week(y, 12, 31);
+    // Thursday = 4 in our system (0=Sun)
+    if jan1_dow == 4 || dec31_dow == 4 {
+        53
+    } else {
+        52
+    }
 }
 
 /// Returns the Thursday of the ISO week for a given date.
@@ -2528,6 +2539,39 @@ mod tests {
         assert_eq!(iso_week(2018, 1, 1), (2018, 1));
         // 2018-12-31 is Monday, week 1 of 2019
         assert_eq!(iso_week(2018, 12, 31), (2019, 1));
+    }
+
+    #[test]
+    fn test_iso_week_all_edge_cases() {
+        // From isoWeekDate.json test suite
+        assert_eq!(iso_week(2005, 1, 1), (2004, 53)); // Sat 1 Jan 2005
+        assert_eq!(iso_week(2005, 1, 2), (2004, 53)); // Sun 2 Jan 2005
+        assert_eq!(iso_week(2005, 12, 31), (2005, 52)); // Sat 31 Dec 2005
+        assert_eq!(iso_week(2006, 1, 1), (2005, 52)); // Sun 1 Jan 2006
+        assert_eq!(iso_week(2006, 1, 2), (2006, 1)); // Mon 2 Jan 2006
+        assert_eq!(iso_week(2006, 12, 31), (2006, 52)); // Sun 31 Dec 2006
+        assert_eq!(iso_week(2007, 1, 1), (2007, 1)); // Mon 1 Jan 2007
+        assert_eq!(iso_week(2007, 12, 30), (2007, 52)); // Sun 30 Dec 2007
+        assert_eq!(iso_week(2007, 12, 31), (2008, 1)); // Mon 31 Dec 2007
+        assert_eq!(iso_week(2008, 1, 1), (2008, 1)); // Tue 1 Jan 2008
+        assert_eq!(iso_week(2008, 12, 28), (2008, 52)); // Sun 28 Dec 2008
+        assert_eq!(iso_week(2008, 12, 29), (2009, 1)); // Mon 29 Dec 2008
+        assert_eq!(iso_week(2008, 12, 30), (2009, 1)); // Tue 30 Dec 2008
+        assert_eq!(iso_week(2008, 12, 31), (2009, 1)); // Wed 31 Dec 2008
+        assert_eq!(iso_week(2009, 1, 1), (2009, 1)); // Thu 1 Jan 2009
+        assert_eq!(iso_week(2009, 12, 31), (2009, 53)); // Thu 31 Dec 2009
+        assert_eq!(iso_week(2010, 1, 1), (2009, 53)); // Fri 1 Jan 2010
+        assert_eq!(iso_week(2010, 1, 2), (2009, 53)); // Sat 2 Jan 2010
+        assert_eq!(iso_week(2010, 1, 3), (2009, 53)); // Sun 3 Jan 2010
+        // From formatDateTime.json W tests
+        assert_eq!(iso_week(2014, 12, 23), (2014, 52)); // Tue
+        assert_eq!(iso_week(2014, 12, 28), (2014, 52)); // Sun
+        assert_eq!(iso_week(2014, 12, 29), (2015, 1)); // Mon
+        assert_eq!(iso_week(2015, 1, 1), (2015, 1)); // Thu
+        assert_eq!(iso_week(2015, 1, 5), (2015, 2)); // Mon
+        assert_eq!(iso_week(2015, 12, 28), (2015, 53)); // Mon
+        assert_eq!(iso_week(2015, 12, 31), (2015, 53)); // Thu
+        assert_eq!(iso_week(2016, 1, 2), (2015, 53)); // Sat
     }
 
     #[test]

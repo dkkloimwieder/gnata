@@ -99,7 +99,13 @@ pub fn eval_function(
     };
 
     // Resolve the function value.
-    let fn_val = eval(arena, procedure, input, env)?;
+    // When % is used as a function callee (e.g., %(1)), the parent context
+    // error S0217 should become T1006 (not a function).
+    let fn_val = match eval(arena, procedure, input, env) {
+        Ok(v) => v,
+        Err(e) if e.code == "S0217" => Value::Undefined,
+        Err(e) => return Err(e),
+    };
 
     let func = match fn_val {
         Value::Function(f) => f,

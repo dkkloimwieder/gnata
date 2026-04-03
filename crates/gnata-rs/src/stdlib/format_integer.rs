@@ -29,9 +29,13 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
     };
 
     let truncated = n.trunc();
-    const MAX_I64: f64 = (1_i64 << 63) as f64 - 1024.0;
+    // i64::MAX is 9223372036854775807. When cast to f64 it rounds up to 9.223372036854776e18
+    // (which is 2^63), so any f64 >= that value would overflow i64 on cast.
+    // i64::MIN is -9223372036854775808 = -2^63, which is exactly representable as f64,
+    // so truncated == i64::MIN as f64 is still valid.
+    const MAX_I64_F64: f64 = 9.223372036854776e18; // == i64::MAX as f64 (rounds up to 2^63)
 
-    if truncated > MAX_I64 || truncated < -MAX_I64 {
+    if truncated >= MAX_I64_F64 || truncated < -MAX_I64_F64 {
         let (format_token, modifier) = split_picture_modifier(picture);
         if format_token == "w" || format_token == "W" || format_token == "Ww" {
             return Ok(Value::String(format_big_float_words(

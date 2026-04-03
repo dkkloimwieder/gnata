@@ -83,13 +83,13 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
         Expr::Transform { .. } => eval_transform(arena, node, input, env),
         Expr::Parent { .. } => {
             // % retrieves parent context stored by path tuple evaluation.
-            if let Some(val) = env.lookup("%%") {
-                Ok(val.clone())
-            } else {
-                Err(JsonataError::new(
+            // In Go, nil parent (equivalent to Null/Undefined) triggers S0217.
+            match env.lookup("%%") {
+                Some(val) if !val.is_null() && !val.is_undefined() => Ok(val),
+                _ => Err(JsonataError::new(
                     "S0217",
                     "% operator used outside of a valid path context",
-                ))
+                )),
             }
         }
         Expr::Placeholder { .. } => Ok(Value::Undefined),
@@ -459,7 +459,7 @@ fn group_has_parent_ref(arena: &AstArena, group: Option<&crate::parser::GroupExp
     }
 }
 
-/// Tuple-aware path evaluation for paths containing #$var index bindings.
+/// Tuple-aware path evaluation for paths containing #$var index bindings or % parent refs.
 ///
 /// Maintains a list of (value, env) contexts so that position variables bound
 /// at one step remain accessible in all subsequent steps.
@@ -481,10 +481,11 @@ fn eval_path_tuple(
         if let Expr::Sort { expr, terms, .. } = arena.get(step) {
             let expr = *expr;
             let terms = terms.clone();
-            // If the sort's inner expression contains tuple bindings,
-            // evaluate it as a tuple path first to populate ctxs with the
-            // bound environments.
-            if node_has_index_binding(arena, expr) {
+            // Match Go's evalTupleSort: if the sort has a non-variable inner expression
+            // (needsNavigation), expand it in tuple mode so parent bindings are preserved.
+            let needs_navigation =
+                !expr.is_empty() && !matches!(arena.get(expr), Expr::Variable { .. });
+            if needs_navigation {
                 // Evaluate the inner expression as a tuple path.
                 let mut inner_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
                 for (val, ctx_env) in &ctxs {
@@ -494,45 +495,34 @@ fn eval_path_tuple(
                     } = arena.get(expr)
                     {
                         let inner_steps = inner_steps.clone();
-                        let mut sub_ctxs = vec![(val.clone(), ctx_env.clone())];
-                        for &inner_step in &inner_steps {
-                            let mut sub_next: Vec<(Value, Rc<Environment>)> = Vec::new();
-                            for (sv, se) in &sub_ctxs {
-                                let result =
-                                    eval_path_step(arena, inner_step, sv, se, false, false)?;
-                                if result.is_undefined() {
-                                    continue;
-                                }
-                                let index_var = match arena.get(inner_step) {
-                                    Expr::Name { index, .. } => index.clone(),
-                                    _ => None,
-                                };
-                                let items: Vec<Value> = match result {
-                                    Value::Array(a) => a,
-                                    Value::Sequence(s) => match s.collapse() {
-                                        Value::Array(a) => a,
-                                        Value::Undefined => continue,
-                                        other => vec![other],
-                                    },
-                                    other => vec![other],
-                                };
-                                for (j, elem) in items.iter().enumerate() {
-                                    let child_env = Environment::new_child(Rc::clone(se));
-                                    child_env.bind("%%".into(), sv.clone());
-                                    if let Some(ref var_name) = index_var {
-                                        child_env.bind(var_name.clone(), Value::Number(j as f64));
-                                    }
-                                    sub_next.push((elem.clone(), Rc::new(child_env)));
-                                }
-                            }
-                            sub_ctxs = sub_next;
-                        }
-                        inner_ctxs.extend(sub_ctxs);
+                        let expanded = expand_path_tuple(
+                            arena,
+                            &inner_steps,
+                            &[(val.clone(), ctx_env.clone())],
+                        )?;
+                        inner_ctxs.extend(expanded);
                     } else {
-                        // Non-path inner expression — evaluate directly.
+                        // Non-path inner expression — evaluate and bind %% for parent context.
                         let result = eval(arena, expr, val, ctx_env)?;
                         if !result.is_undefined() {
-                            inner_ctxs.push((result, ctx_env.clone()));
+                            let items = flatten_to_vec(result);
+                            let (index_var, focus_var) = get_step_bindings(arena, expr);
+                            let is_join = focus_var.is_some();
+                            for (j, elem) in items.iter().enumerate() {
+                                let child_env = Environment::new_child(Rc::clone(ctx_env));
+                                child_env.bind("%%".into(), val.clone());
+                                if is_join {
+                                    child_env.bind("%%j".into(), Value::Bool(true));
+                                }
+                                if let Some(ref var_name) = index_var {
+                                    child_env.bind(var_name.clone(), Value::Number(j as f64));
+                                }
+                                if let Some(ref var_name) = focus_var {
+                                    child_env.bind(var_name.clone(), elem.clone());
+                                }
+                                let ctx_value = if is_join { val.clone() } else { elem.clone() };
+                                inner_ctxs.push((ctx_value, Rc::new(child_env)));
+                            }
                         }
                     }
                 }
@@ -569,17 +559,44 @@ fn eval_path_tuple(
         }
 
         // Parent (%) steps navigate up the parent chain using the %% env bindings
-        // set by appendTupleResults. The parent value is retrieved via %%, and the
+        // set by append_tuple_results. The parent value is retrieved via %%, and the
         // new env is the parent of the binding env so chained %.% walks upward.
         if matches!(arena.get(step), Expr::Parent { .. }) {
             for (_, ctx_env) in &ctxs {
                 if let Some((parent_val, binding_env)) = Environment::lookup_with_env(ctx_env, "%%")
                 {
+                    // In Go, nil parent means "no valid parent context" → S0217.
+                    if parent_val.is_null() || parent_val.is_undefined() {
+                        return Err(JsonataError::new(
+                            "S0217",
+                            "% operator used outside of a valid path context",
+                        ));
+                    }
                     // Use the binding env's parent so chained %.% walks up correctly.
-                    let parent_env = binding_env
+                    let mut parent_env = binding_env
                         .parent()
                         .cloned()
                         .unwrap_or_else(|| binding_env.clone());
+                    // When the current binding was made by a join step, skip
+                    // through any ancestor envs that are ALSO join bindings with
+                    // the same parent value.
+                    if binding_env.lookup_direct("%%j").is_some() {
+                        loop {
+                            if parent_env.lookup_direct("%%j").is_none() {
+                                break;
+                            }
+                            if let Some((pv, pe)) = Environment::lookup_with_env(&parent_env, "%%")
+                            {
+                                if value_ptr_eq(&pv, &parent_val) {
+                                    parent_env = pe.parent().cloned().unwrap_or_else(|| pe.clone());
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
                     next_ctxs.push((parent_val, parent_env));
                 } else {
                     return Err(JsonataError::new(
@@ -595,65 +612,221 @@ fn eval_path_tuple(
             continue;
         }
 
+        // Subscript steps whose LEFT is Parent (%[predicate]) require special
+        // handling: navigate % to the parent first, then apply the predicate using
+        // the parent's own env (so that nested % inside the predicate refers to
+        // the grandparent correctly).
+        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
+            let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
+            if op == "[" && !lhs.is_empty() && matches!(arena.get(lhs), Expr::Parent { .. }) {
+                for (_, ctx_env) in &ctxs {
+                    if let Some((parent_val, binding_env)) =
+                        Environment::lookup_with_env(ctx_env, "%%")
+                    {
+                        if parent_val.is_null() || parent_val.is_undefined() {
+                            return Err(JsonataError::new(
+                                "S0217",
+                                "% operator used outside of a valid path context",
+                            ));
+                        }
+                        let parent_env = binding_env
+                            .parent()
+                            .cloned()
+                            .unwrap_or_else(|| binding_env.clone());
+                        let pred_result = eval(arena, rhs, &parent_val, &parent_env)?;
+                        if pred_result.to_boolean() {
+                            next_ctxs.push((parent_val, parent_env));
+                        }
+                    } else {
+                        return Err(JsonataError::new(
+                            "S0217",
+                            "% operator used outside of a valid path context",
+                        ));
+                    }
+                }
+                ctxs = next_ctxs;
+                if ctxs.is_empty() {
+                    return Ok(Value::Undefined);
+                }
+                continue;
+            }
+        }
+
+        // Subscript whose Left is a Block containing a path expression, and
+        // whose Right (predicate) references %. The block would normally discard
+        // per-element parent context, so we evaluate the block's inner path in
+        // tuple mode to preserve parent bindings, then apply the predicate per-tuple.
+        // Example: (Account.Order.Product)[%.OrderID='order104'].SKU
+        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
+            let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
+            if op == "["
+                && !lhs.is_empty()
+                && matches!(arena.get(lhs), Expr::Block { .. })
+                && node_has_parent_ref(arena, rhs)
+            {
+                for (val, ctx_env) in &ctxs {
+                    let mut tuple_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
+                    if let Expr::Block { expressions, .. } = arena.get(lhs) {
+                        let expressions = expressions.clone();
+                        if expressions.len() == 1 {
+                            if let Expr::Path {
+                                steps: inner_steps, ..
+                            } = arena.get(expressions[0])
+                            {
+                                let inner_steps = inner_steps.clone();
+                                tuple_ctxs = expand_path_tuple(
+                                    arena,
+                                    &inner_steps,
+                                    &[(val.clone(), ctx_env.clone())],
+                                )?;
+                            }
+                        }
+                        if tuple_ctxs.is_empty() {
+                            // Fallback: evaluate block normally.
+                            let block_result = eval(arena, lhs, val, ctx_env)?;
+                            if block_result.is_undefined() {
+                                continue;
+                            }
+                            match block_result {
+                                Value::Array(arr) => {
+                                    for item in arr {
+                                        tuple_ctxs.push((item, ctx_env.clone()));
+                                    }
+                                }
+                                other => tuple_ctxs.push((other, ctx_env.clone())),
+                            }
+                        }
+                    }
+                    for (tval, tenv) in &tuple_ctxs {
+                        let pred_result = eval(arena, rhs, tval, tenv)?;
+                        if pred_result.to_boolean() {
+                            next_ctxs.push((tval.clone(), tenv.clone()));
+                        }
+                    }
+                }
+                ctxs = next_ctxs;
+                if ctxs.is_empty() {
+                    return Ok(Value::Undefined);
+                }
+                continue;
+            }
+        }
+
+        // When the step is a Block containing a single Path expression,
+        // expand the inner path in tuple mode to preserve parent bindings
+        // for the % operator (e.g., Account.(Order.Product).{%.OrderID}).
+        if let Expr::Block { expressions, .. } = arena.get(step) {
+            let expressions = expressions.clone();
+            if expressions.len() == 1 {
+                if let Expr::Path {
+                    steps: inner_steps, ..
+                } = arena.get(expressions[0])
+                {
+                    let inner_steps = inner_steps.clone();
+                    next_ctxs = expand_path_tuple(arena, &inner_steps, &ctxs)?;
+                    ctxs = next_ctxs;
+                    if ctxs.is_empty() {
+                        return Ok(Value::Undefined);
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // Subscript step whose Left has a Focus binding (join operator @):
+        // e.g., Contact@$c[$c.ssn = $e.SSN]. Bind focus var and apply predicate.
+        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
+            let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
+            if op == "["
+                && !lhs.is_empty()
+                && matches!(arena.get(lhs), Expr::Name { focus: Some(_), .. })
+            {
+                let (focus_var, index_var) = match arena.get(lhs) {
+                    Expr::Name { focus, index, .. } => (focus.clone(), index.clone()),
+                    _ => (None, None),
+                };
+                if let Some(ref focus_name) = focus_var {
+                    for (val, ctx_env) in &ctxs {
+                        let val = collapse_val(val);
+                        if val.is_undefined() {
+                            continue;
+                        }
+                        let left_result = eval_path_step(arena, lhs, &val, ctx_env, false, false)?;
+                        if left_result.is_undefined() {
+                            continue;
+                        }
+                        let items = flatten_to_vec(left_result);
+                        for (j, item) in items.iter().enumerate() {
+                            let child_env = Environment::new_child(Rc::clone(ctx_env));
+                            child_env.bind("%%".into(), val.clone());
+                            child_env.bind("%%j".into(), Value::Bool(true));
+                            child_env.bind(focus_name.clone(), item.clone());
+                            if let Some(ref idx_name) = index_var {
+                                child_env.bind(idx_name.clone(), Value::Number(j as f64));
+                            }
+                            let child_rc = Rc::new(child_env);
+                            let pred_result = eval(arena, rhs, item, &child_rc)?;
+                            if pred_result.to_boolean() {
+                                next_ctxs.push((val.clone(), child_rc));
+                            }
+                        }
+                    }
+                    ctxs = next_ctxs;
+                    if ctxs.is_empty() {
+                        return Ok(Value::Undefined);
+                    }
+                    continue;
+                }
+            }
+        }
+
         for (val, ctx_env) in &ctxs {
             // Collapse sequences between steps.
-            let val = match val {
-                Value::Sequence(seq) => {
-                    let collapsed = seq.collapse();
-                    if step_idx > 0 && collapsed.is_undefined() {
-                        continue;
-                    }
-                    collapsed
-                }
-                other => {
-                    if step_idx > 0 && other.is_undefined() {
-                        continue;
-                    }
-                    other.clone()
-                }
-            };
+            let val = collapse_val(val);
+            if step_idx > 0 && val.is_undefined() {
+                continue;
+            }
 
             let result = eval_path_step(arena, step, &val, ctx_env, false, keep_singleton_array)?;
             if result.is_undefined() {
                 continue;
             }
 
-            // Get index var name from this step (if any).
-            let index_var = match arena.get(step) {
-                Expr::Name { index, .. } => index.clone(),
-                Expr::Binary { op, lhs, .. } if op == "[" => {
-                    if let Expr::Name { index, .. } = arena.get(*lhs) {
-                        index.clone()
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
+            // Skip parent binding for step 0 when it is $ or $$
+            // (root references don't have a parent context).
+            let skip_parent = step_idx == 0
+                && matches!(
+                    arena.get(step),
+                    Expr::Variable { name, .. } if name.is_empty() || name == "$"
+                );
+
+            // Get index var and focus var from this step.
+            let (index_var, focus_var) = get_step_bindings(arena, step);
+            let is_join = focus_var.is_some();
 
             // Flatten the result into individual (value, env) contexts.
-            let items: Vec<Value> = match result {
-                Value::Array(a) => a,
-                Value::Sequence(s) => {
-                    let collapsed = s.collapse();
-                    match collapsed {
-                        Value::Array(a) => a,
-                        Value::Undefined => continue,
-                        other => vec![other],
-                    }
-                }
-                other => vec![other],
-            };
+            let items = flatten_to_vec(result);
 
             for (j, elem) in items.iter().enumerate() {
                 let child_env = Environment::new_child(Rc::clone(ctx_env));
-                // Bind parent context (for % operator).
-                child_env.bind("%%".into(), val.clone());
+                // Bind parent context (for % operator), unless this is a root step.
+                if !skip_parent {
+                    child_env.bind("%%".into(), val.clone());
+                    if is_join {
+                        child_env.bind("%%j".into(), Value::Bool(true));
+                    }
+                }
                 // Bind index variable if present.
                 if let Some(ref var_name) = index_var {
                     child_env.bind(var_name.clone(), Value::Number(j as f64));
                 }
-                next_ctxs.push((elem.clone(), Rc::new(child_env)));
+                // Bind focus variable if present (join @$var).
+                if let Some(ref var_name) = focus_var {
+                    child_env.bind(var_name.clone(), elem.clone());
+                }
+                // For join steps, the context value stays at parent level.
+                let ctx_value = if is_join { val.clone() } else { elem.clone() };
+                next_ctxs.push((ctx_value, Rc::new(child_env)));
             }
         }
 
@@ -683,6 +856,99 @@ fn eval_path_tuple(
         }
     }
     Ok(result)
+}
+
+/// Expand a sequence of path steps in tuple mode, preserving parent bindings.
+/// Port of Go's `expandPathTuple`.
+fn expand_path_tuple(
+    arena: &AstArena,
+    steps: &[NodeId],
+    ctxs: &[(Value, Rc<Environment>)],
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    let mut current = ctxs.to_vec();
+    for &step in steps {
+        let mut next: Vec<(Value, Rc<Environment>)> = Vec::new();
+        for (val, ctx_env) in &current {
+            let val = collapse_val(val);
+            if val.is_undefined() {
+                continue;
+            }
+            let result = eval_path_step(arena, step, &val, ctx_env, false, false)?;
+            if result.is_undefined() {
+                continue;
+            }
+            let (index_var, focus_var) = get_step_bindings(arena, step);
+            let is_join = focus_var.is_some();
+            let items = flatten_to_vec(result);
+            for (j, elem) in items.iter().enumerate() {
+                let child_env = Environment::new_child(Rc::clone(ctx_env));
+                child_env.bind("%%".into(), val.clone());
+                if is_join {
+                    child_env.bind("%%j".into(), Value::Bool(true));
+                }
+                if let Some(ref var_name) = index_var {
+                    child_env.bind(var_name.clone(), Value::Number(j as f64));
+                }
+                if let Some(ref var_name) = focus_var {
+                    child_env.bind(var_name.clone(), elem.clone());
+                }
+                let ctx_value = if is_join { val.clone() } else { elem.clone() };
+                next.push((ctx_value, Rc::new(child_env)));
+            }
+        }
+        current = next;
+        if current.is_empty() {
+            return Ok(vec![]);
+        }
+    }
+    Ok(current)
+}
+
+/// Collapse a value (unwrap Sequence), returning the inner value.
+fn collapse_val(val: &Value) -> Value {
+    match val {
+        Value::Sequence(seq) => seq.collapse(),
+        other => other.clone(),
+    }
+}
+
+/// Flatten a result value into a Vec of individual items.
+fn flatten_to_vec(val: Value) -> Vec<Value> {
+    match val {
+        Value::Array(a) => a,
+        Value::Sequence(s) => {
+            let collapsed = s.collapse();
+            match collapsed {
+                Value::Array(a) => a,
+                Value::Undefined => vec![],
+                other => vec![other],
+            }
+        }
+        other => vec![other],
+    }
+}
+
+/// Extract index and focus variable names from a path step.
+fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<String>) {
+    match arena.get(step) {
+        Expr::Name { index, focus, .. } => (index.clone(), focus.clone()),
+        Expr::Binary { op, lhs, .. } if op == "[" => {
+            if let Expr::Name { index, focus, .. } = arena.get(*lhs) {
+                (index.clone(), focus.clone())
+            } else {
+                (None, None)
+            }
+        }
+        _ => (None, None),
+    }
+}
+
+/// Shallow equality check for Values (used for join flag parent comparison).
+/// This approximates Go's pointer equality by checking structural equality.
+fn value_ptr_eq(a: &Value, b: &Value) -> bool {
+    // In Go, this is a pointer comparison. We use structural equality
+    // as an approximation which is correct for the parent chain use case.
+    a == b
 }
 
 /// Apply a group-by expression to tuple contexts, using per-element environments.
@@ -1248,7 +1514,7 @@ fn eval_subscript(
     arena: &AstArena,
     rhs: NodeId,
     left: &Value,
-    _input: &Value,
+    input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
     // For non-array inputs, evaluate directly.
@@ -1328,9 +1594,13 @@ fn eval_subscript(
     }
 
     // Predicate filter — evaluate rhs against each element.
+    // Bind %% → input (parent context) so the % operator can navigate upward.
+    // This matches Go's filterByPredicate which binds parentKey to the input.
+    let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
+    filter_env.bind("%%".into(), input.clone());
     let mut seq = Sequence::new();
     for item in arr.iter() {
-        let test = eval(arena, rhs, item, env)?;
+        let test = eval(arena, rhs, item, &filter_env)?;
         // Numeric result = index selection from entire array.
         if let Some(n) = test.as_f64() {
             let idx = n.trunc() as i64;
