@@ -70,11 +70,6 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
 
         let cur_env = cur_env_owned.as_ref().unwrap_or(env);
 
-        // Check cancellation at every expression boundary.
-        if cur_env.is_cancelled() {
-            return Err(JsonataError::new("D3001", "evaluation cancelled"));
-        }
-
         match arena.get(cur_node) {
             // ── Leaf nodes ──
             Expr::ValueLit { value, .. } => return eval_value_lit(value),
@@ -243,7 +238,7 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
         },
         Value::Array(arr) => {
             // JSONata auto-maps field lookups across arrays.
-            let mut seq = Sequence::new();
+            let mut seq = Sequence::with_capacity(arr.len());
             let mut field_found = false;
             for item in arr.iter() {
                 let val = eval_name(name, item)?;
@@ -300,7 +295,7 @@ fn eval_wildcard(input: &Value) -> JsonataResult {
             }
         }
         Value::Array(arr) => {
-            let mut seq = Sequence::new();
+            let mut seq = Sequence::with_capacity(arr.len());
             for item in arr.iter() {
                 if item.is_object() {
                     let val = eval_wildcard(item)?;
@@ -1573,7 +1568,7 @@ fn eval_path_step(
     };
 
     let is_group_step = matches!(expr, Expr::Unary { op, .. } if op == "[");
-    let mut seq = Sequence::new();
+    let mut seq = Sequence::with_capacity(arr.len());
 
     for item in arr.iter() {
         let val = if matches!(arena.get(step), Expr::Function { .. }) {
@@ -2096,7 +2091,7 @@ fn eval_subscript(
     // This matches Go's filterByPredicate which binds parentKey to the input.
     let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
     filter_env.bind("%%".into(), input.clone());
-    let mut seq = Sequence::new();
+    let mut seq = Sequence::with_capacity(arr.len());
     for (i, item) in arr.iter().enumerate() {
         // Bind index variable if present (e.g. $#$pos[...]).
         if let Some(var_name) = index_var {

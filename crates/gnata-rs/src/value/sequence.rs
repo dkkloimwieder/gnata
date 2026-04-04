@@ -34,6 +34,17 @@ impl Sequence {
         }
     }
 
+    /// Create an empty sequence with pre-allocated capacity.
+    pub fn with_capacity(cap: usize) -> Self {
+        Self {
+            values: Vec::with_capacity(cap),
+            keep_singleton: false,
+            cons_array: false,
+            outer_wrapper: false,
+            tuple_stream: false,
+        }
+    }
+
     /// Create a sequence pre-populated with items.
     pub fn with_items(items: Vec<Value>) -> Self {
         Self {
