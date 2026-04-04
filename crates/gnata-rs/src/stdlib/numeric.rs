@@ -85,7 +85,7 @@ fn to_number_array(v: &Value) -> Option<Vec<f64>> {
         Value::Number(n) => Some(vec![*n]),
         Value::Array(arr) => {
             let mut nums = Vec::with_capacity(arr.len());
-            for item in arr {
+            for item in arr.iter() {
                 match item.as_f64() {
                     Some(n) => nums.push(n),
                     None => return None,
@@ -296,9 +296,9 @@ pub fn fn_format_base(args: &[Value], _focus: &Value) -> JsonataResult {
     let int_val = n.round() as i64;
     let formatted = format_radix(int_val.unsigned_abs(), radix);
     if int_val < 0 {
-        Ok(Value::String(format!("-{formatted}")))
+        Ok(Value::String(format!("-{formatted}").into()))
     } else {
-        Ok(Value::String(formatted))
+        Ok(Value::String(formatted.into()))
     }
 }
 

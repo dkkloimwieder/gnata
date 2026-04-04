@@ -77,7 +77,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
         match arena.get(cur_node) {
             // ── Leaf nodes ──
             Expr::ValueLit { value, .. } => return eval_value_lit(value),
-            Expr::StringLit { value, .. } => return Ok(Value::String(value.clone())),
+            Expr::StringLit { value, .. } => return Ok(Value::String(value.clone().into())),
             Expr::NumberLit { value: n, .. } => return Ok(Value::Number(*n)),
             Expr::Variable { name, .. } => return eval_variable(name, input, &cur_env),
             Expr::Name { value, .. } => return eval_name(value, input),
@@ -232,7 +232,7 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
             // JSONata auto-maps field lookups across arrays.
             let mut seq = Sequence::new();
             let mut field_found = false;
-            for item in arr {
+            for item in arr.iter() {
                 let val = eval_name(name, item)?;
                 if val.is_undefined() {
                     continue;
@@ -241,9 +241,9 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
                 // Flatten plain arrays from navigating through arrays.
                 match val {
                     Value::Array(inner) => {
-                        for sv in inner {
+                        for sv in inner.iter() {
                             seq.values
-                                .push(if sv.is_undefined() { Value::Null } else { sv });
+                                .push(if sv.is_undefined() { Value::Null } else { sv.clone() });
                         }
                     }
                     other => {
@@ -254,7 +254,7 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
             if seq.values.is_empty() {
                 if field_found {
                     // Field exists but was empty array — return empty array.
-                    return Ok(Value::Array(vec![]));
+                    return Ok(Value::Array(Rc::new(vec![])));
                 }
                 return Ok(Value::Undefined);
             }
@@ -274,7 +274,7 @@ fn eval_wildcard(input: &Value) -> JsonataResult {
                 return Ok(Value::Undefined);
             }
             let mut seq = Sequence::new();
-            for (_, val) in obj {
+            for (_, val) in obj.iter() {
                 match val {
                     Value::Array(arr) => seq.values.extend(arr.iter().cloned()),
                     other => seq.values.push(other.clone()),
@@ -288,7 +288,7 @@ fn eval_wildcard(input: &Value) -> JsonataResult {
         }
         Value::Array(arr) => {
             let mut seq = Sequence::new();
-            for item in arr {
+            for item in arr.iter() {
                 if item.is_object() {
                     let val = eval_wildcard(item)?;
                     if !val.is_undefined() {
@@ -322,7 +322,7 @@ fn descendant_lookup(input: &Value) -> Value {
 fn collect_descendants(input: &Value, seq: &mut Sequence) {
     match input {
         Value::Object(obj) => {
-            for (_, val) in obj {
+            for (_, val) in obj.iter() {
                 if val.is_undefined() {
                     continue;
                 }
@@ -330,7 +330,7 @@ fn collect_descendants(input: &Value, seq: &mut Sequence) {
                 // (add each + recurse), matching Go's descendantLookup which
                 // treats arrays as transparent containers.
                 if let Value::Array(arr) = val {
-                    for item in arr {
+                    for item in arr.iter() {
                         seq.append(item.clone());
                         collect_descendants(item, seq);
                     }
@@ -341,7 +341,7 @@ fn collect_descendants(input: &Value, seq: &mut Sequence) {
             }
         }
         Value::Array(arr) => {
-            for item in arr {
+            for item in arr.iter() {
                 seq.append(item.clone());
                 collect_descendants(item, seq);
             }
@@ -356,9 +356,9 @@ fn eval_regex(pattern: &str, flags: &str) -> Value {
     // For now, return a map with pattern and flags for the regex.
     // Full regex evaluation will be implemented with the stdlib.
     let mut obj = indexmap::IndexMap::new();
-    obj.insert("pattern".into(), Value::String(pattern.to_string()));
-    obj.insert("flags".into(), Value::String(flags.to_string()));
-    Value::Object(obj)
+    obj.insert("pattern".into(), Value::String(pattern.into()));
+    obj.insert("flags".into(), Value::String(flags.into()));
+    Value::Object(Rc::new(obj))
 }
 
 // ── Path evaluation (simplified for Phase 5) ────────────────────────
@@ -889,8 +889,8 @@ fn eval_path_tuple(
                             }
                             match block_result {
                                 Value::Array(arr) => {
-                                    for item in arr {
-                                        tuple_ctxs.push((item, ctx_env.clone()));
+                                    for item in arr.iter() {
+                                        tuple_ctxs.push((item.clone(), ctx_env.clone()));
                                     }
                                 }
                                 other => tuple_ctxs.push((other, ctx_env.clone())),
@@ -1103,7 +1103,7 @@ fn eval_path_tuple(
         match result {
             Value::Array(_) => return Ok(result),
             Value::Undefined => return Ok(Value::Undefined),
-            _ => return Ok(Value::Array(vec![result])),
+            _ => return Ok(Value::Array(Rc::new(vec![result]))),
         }
     }
     Ok(result)
@@ -1206,11 +1206,11 @@ fn collapse_val(val: &Value) -> Value {
 /// Flatten a result value into a Vec of individual items.
 fn flatten_to_vec(val: Value) -> Vec<Value> {
     match val {
-        Value::Array(a) => a,
+        Value::Array(a) => (*a).clone(),
         Value::Sequence(s) => {
             let collapsed = s.collapse();
             match collapsed {
-                Value::Array(a) => a,
+                Value::Array(a) => (*a).clone(),
                 Value::Undefined => vec![],
                 other => vec![other],
             }
@@ -1314,8 +1314,8 @@ fn eval_tuple_group(
 
         for (item, item_env) in ctxs {
             let key_val = eval(arena, key_node, item, item_env)?;
-            let key_str = match &key_val {
-                Value::String(s) => s.clone(),
+            let key_str: String = match &key_val {
+                Value::String(s) => s.to_string(),
                 _ => {
                     return Err(JsonataError::new(
                         "T1003",
@@ -1334,12 +1334,12 @@ fn eval_tuple_group(
 
         // Phase 2: evaluate value expression per group.
         for key in &key_order {
-            let (values, envs) = groups.get(key).ok_or_else(|| JsonataError::new("D0000", "key from key_order must exist in groups"))?;
+            let (values, envs) = groups.get(key.as_str()).ok_or_else(|| JsonataError::new("D0000", "key from key_order must exist in groups"))?;
             let (group_ctx, group_env) = if values.len() == 1 {
                 (values[0].clone(), Rc::clone(&envs[0]))
             } else {
                 let merged = merge_group_envs(envs);
-                (Value::Array(values.clone()), Rc::new(merged))
+                (Value::Array(Rc::new(values.clone())), Rc::new(merged))
             };
             let val = if val_node.is_empty() {
                 group_ctx
@@ -1355,7 +1355,7 @@ fn eval_tuple_group(
     if result_map.is_empty() {
         Ok(Value::Undefined)
     } else {
-        Ok(Value::Object(result_map))
+        Ok(Value::Object(Rc::new(result_map)))
     }
 }
 
@@ -1416,7 +1416,7 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
             if all_same {
                 merged.bind(name.clone(), vals.into_iter().next().unwrap_or(Value::Undefined));
             } else {
-                merged.bind(name.clone(), Value::Array(vals));
+                merged.bind(name.clone(), Value::Array(Rc::new(vals)));
             }
         }
     }
@@ -1473,7 +1473,7 @@ fn eval_path_simple(
         match result {
             Value::Array(_) => return Ok(result),
             Value::Undefined => return Ok(Value::Undefined),
-            _ => return Ok(Value::Array(vec![result])),
+            _ => return Ok(Value::Array(Rc::new(vec![result]))),
         }
     }
     Ok(result)
@@ -1518,8 +1518,8 @@ fn eval_path_step(
             let descendants = descendant_lookup(input);
             match descendants {
                 Value::Array(arr) => {
-                    for item in arr {
-                        seq.append(item);
+                    for item in arr.iter() {
+                        seq.append(item.clone());
                     }
                 }
                 Value::Sequence(s) => {
@@ -1562,7 +1562,7 @@ fn eval_path_step(
     let is_group_step = matches!(expr, Expr::Unary { op, .. } if op == "[");
     let mut seq = Sequence::new();
 
-    for item in &arr {
+    for item in arr.iter() {
         let val = if matches!(arena.get(step), Expr::Function { .. }) {
             eval_path_function_step(arena, step, item, env)?
         } else {
@@ -1576,7 +1576,7 @@ fn eval_path_step(
             continue;
         }
         match val {
-            Value::Array(inner) => seq.values.extend(inner),
+            Value::Array(inner) => seq.values.extend(inner.iter().cloned()),
             Value::Sequence(s) => seq.values.extend(s.values),
             other => seq.append(other),
         }
@@ -1586,7 +1586,7 @@ fn eval_path_step(
         return Ok(Value::Undefined);
     }
     if is_group_step && keep_singleton_array {
-        return Ok(Value::Array(seq.values));
+        return Ok(Value::Array(Rc::new(seq.values)));
     }
     Ok(seq.collapse())
 }
@@ -1704,8 +1704,8 @@ fn eval_subscript_binary(
         seq.append(input.clone());
         match descendants {
             Value::Array(arr) => {
-                for item in arr {
-                    seq.append(item);
+                for item in arr.iter() {
+                    seq.append(item.clone());
                 }
             }
             Value::Sequence(s) => {
@@ -1734,8 +1734,8 @@ fn eval_subscript_binary(
     if keep_array {
         match result {
             Value::Array(_) => Ok(result),
-            Value::Undefined => Ok(Value::Array(vec![])),
-            scalar => Ok(Value::Array(vec![scalar])),
+            Value::Undefined => Ok(Value::Array(Rc::new(vec![]))),
+            scalar => Ok(Value::Array(Rc::new(vec![scalar]))),
         }
     } else {
         Ok(result)
@@ -1803,7 +1803,7 @@ fn apply_binary_op(
             } else {
                 right.stringify(false)?
             };
-            Ok(Value::String(format!("{ls}{rs}")))
+            Ok(Value::String(format!("{ls}{rs}").into()))
         }
         // Equality.
         "=" => {
@@ -1940,7 +1940,7 @@ fn apply_range(_op: &str, left: &Value, right: &Value) -> JsonataResult {
         return Err(JsonataError::new("D2014", "range operator too large"));
     }
     let arr: Vec<Value> = (start..=end).map(|i| Value::Number(i as f64)).collect();
-    Ok(Value::Array(arr))
+    Ok(Value::Array(Rc::new(arr)))
 }
 
 /// Walk the left chain of a Binary "[" node to check if keep_array is set
@@ -2003,8 +2003,8 @@ fn eval_subscript(
         // When there's an index variable, wrap in array so the predicate filter
         // path handles index binding correctly (like Go's evalSubscriptLeft).
 
-    let arr = match left {
-        Value::Array(a) => a.clone(),
+    let arr: Vec<Value> = match left {
+        Value::Array(a) => a.to_vec(),
         Value::Sequence(s) => s.to_vec(),
         _ => vec![left.clone()],
     };
@@ -2044,7 +2044,7 @@ fn eval_subscript(
             return if result.is_empty() {
                 Ok(Value::Undefined)
             } else {
-                Ok(Value::Array(result))
+                Ok(Value::Array(Rc::new(result)))
             };
         }
         // Single numeric index.
@@ -2164,7 +2164,7 @@ fn eval_chain_step(
                 Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
                 Value::Array(_) => Ok(result),
                 Value::Undefined => Ok(Value::Undefined),
-                scalar => Ok(Value::Array(vec![scalar])),
+                scalar => Ok(Value::Array(Rc::new(vec![scalar]))),
             };
         }
         // Collapse sequences from function results.
@@ -2228,15 +2228,15 @@ fn apply_regex_chain(
     regex_obj: &indexmap::IndexMap<String, Value>,
 ) -> JsonataResult {
     let s = match piped {
-        Value::String(s) => s.as_str(),
+        Value::String(s) => &**s,
         _ => return Ok(Value::Undefined),
     };
     let pattern = match regex_obj.get("pattern") {
-        Some(Value::String(p)) => p.as_str(),
+        Some(Value::String(p)) => &**p,
         _ => return Ok(Value::Undefined),
     };
     let flags = match regex_obj.get("flags") {
-        Some(Value::String(f)) => f.as_str(),
+        Some(Value::String(f)) => &**f,
         _ => "",
     };
     let re = crate::stdlib::regex::compile_regex(pattern, flags)
@@ -2255,11 +2255,11 @@ fn apply_regex_chain(
         for i in 1..caps.len() {
             match caps.get(i) {
                 Some(g) => groups.push(Value::String(g.as_str().into())),
-                None => groups.push(Value::String(String::new())),
+                None => groups.push(Value::String("".into())),
             }
         }
-        obj.insert("groups".into(), Value::Array(groups));
-        Ok(Value::Object(obj))
+        obj.insert("groups".into(), Value::Array(Rc::new(groups)));
+        Ok(Value::Object(Rc::new(obj)))
     } else {
         Ok(Value::Undefined)
     }
@@ -2321,13 +2321,13 @@ fn eval_unary(
                         if is_explicit_array {
                             result.push(Value::Array(arr));
                         } else {
-                            result.extend(arr);
+                            result.extend(arr.iter().cloned());
                         }
                     }
                     other => result.push(other),
                 }
             }
-            Ok(Value::Array(result))
+            Ok(Value::Array(Rc::new(result)))
         }
         "{" => {
             // Object constructor.
@@ -2341,8 +2341,8 @@ fn eval_unary(
                     i += 2;
                     continue;
                 }
-                let key = match &key_val {
-                    Value::String(s) => s.clone(),
+                let key: String = match &key_val {
+                    Value::String(s) => s.to_string(),
                     _ => {
                         return Err(JsonataError::new(
                             "T1003",
@@ -2372,7 +2372,7 @@ fn eval_unary(
                 obj.insert(key, val_val);
                 i += 2;
             }
-            Ok(Value::Object(obj))
+            Ok(Value::Object(Rc::new(obj)))
         }
         _ => Err(JsonataError::new(
             "D3001",
@@ -2438,12 +2438,12 @@ fn eval_sort(
     }
 
     let (mut arr, was_array) = match items {
-        Value::Array(a) => (a, true),
+        Value::Array(a) => ((*a).clone(), true),
         Value::Sequence(seq) => {
             let collapsed = seq.collapse();
             match collapsed {
                 Value::Undefined => return Ok(Value::Undefined),
-                Value::Array(a) => (a, true),
+                Value::Array(a) => ((*a).clone(), true),
                 other => (vec![other], false),
             }
         }
@@ -2454,7 +2454,7 @@ fn eval_sort(
         if !was_array && arr.len() == 1 {
             return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
         }
-        return Ok(Value::Array(arr));
+        return Ok(Value::Array(Rc::new(arr)));
     }
 
     // Stable sort with error propagation.
@@ -2478,7 +2478,7 @@ fn eval_sort(
     if !was_array && arr.len() == 1 {
         return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
     }
-    Ok(Value::Array(arr))
+    Ok(Value::Array(Rc::new(arr)))
 }
 
 /// Sort with parent-tracking: when sort terms reference %, we need to build
@@ -2546,7 +2546,7 @@ fn build_sort_ctxs(
         return Ok(vec![]);
     }
     match result {
-        Value::Array(arr) => Ok(arr.into_iter().map(|v| (v, env.clone())).collect()),
+        Value::Array(arr) => Ok(arr.iter().cloned().map(|v| (v, env.clone())).collect()),
         other => Ok(vec![(other, env.clone())]),
     }
 }
@@ -2729,9 +2729,9 @@ fn deep_clone(v: &Value) -> Value {
                 .iter()
                 .map(|(k, v)| (k.clone(), deep_clone(v)))
                 .collect();
-            Value::Object(cloned)
+            Value::Object(Rc::new(cloned))
         }
-        Value::Array(arr) => Value::Array(arr.iter().map(deep_clone).collect()),
+        Value::Array(arr) => Value::Array(Rc::new(arr.iter().map(deep_clone).collect())),
         other => other.clone(),
     }
 }
@@ -2762,7 +2762,7 @@ fn apply_transform(
     match &matched {
         Value::Object(_) => targets.push(matched.clone()),
         Value::Array(arr) => {
-            for item in arr {
+            for item in arr.iter() {
                 if item.is_object() {
                     targets.push(item.clone());
                 }
@@ -2812,9 +2812,10 @@ fn compute_updated_object(
         let update_val = eval(arena, update, target, env)?;
         if !update_val.is_undefined() && !update_val.is_null() {
             if let Value::Object(updates) = update_val {
-                if let Value::Object(obj) = &mut result {
-                    for (k, v) in updates {
-                        obj.insert(k, v);
+                if let Value::Object(ref mut obj) = result {
+                    let obj = Rc::make_mut(obj);
+                    for (k, v) in updates.iter() {
+                        obj.insert(k.clone(), v.clone());
                     }
                 }
             } else {
@@ -2833,15 +2834,16 @@ fn compute_updated_object(
         if !delete_val.is_undefined() && !delete_val.is_null() {
             match delete_val {
                 Value::String(key) => {
-                    if let Value::Object(obj) = &mut result {
-                        obj.shift_remove(&key);
+                    if let Value::Object(ref mut obj) = result {
+                        Rc::make_mut(obj).shift_remove(&*key);
                     }
                 }
                 Value::Array(keys) => {
-                    if let Value::Object(obj) = &mut result {
-                        for k in keys {
+                    if let Value::Object(ref mut obj) = result {
+                        let obj = Rc::make_mut(obj);
+                        for k in keys.iter() {
                             if let Value::String(key) = k {
-                                obj.shift_remove(&key);
+                                obj.shift_remove(&**key);
                             }
                         }
                     }
@@ -2870,12 +2872,12 @@ fn replace_in_value(value: &mut Value, original: &Value, replacement: &Value) {
     }
     match value {
         Value::Array(arr) => {
-            for item in arr.iter_mut() {
+            for item in Rc::make_mut(arr).iter_mut() {
                 replace_in_value(item, original, replacement);
             }
         }
         Value::Object(obj) => {
-            for v in obj.values_mut() {
+            for v in Rc::make_mut(obj).values_mut() {
                 replace_in_value(v, original, replacement);
             }
         }
@@ -2949,12 +2951,12 @@ fn eval_group_by(
     }
 
     let items: Vec<Value> = match base {
-        Value::Array(a) => a,
+        Value::Array(a) => (*a).clone(),
         Value::Sequence(seq) => {
             let collapsed = seq.collapse();
             match collapsed {
                 Value::Undefined => return Ok(Value::Undefined),
-                Value::Array(a) => a,
+                Value::Array(a) => (*a).clone(),
                 other => vec![other],
             }
         }
@@ -2976,8 +2978,8 @@ fn eval_group_by(
             if key_val.is_undefined() || key_val.is_null() {
                 continue;
             }
-            let key_str = match &key_val {
-                Value::String(s) => s.clone(),
+            let key_str: String = match &key_val {
+                Value::String(s) => s.to_string(),
                 _ => {
                     return Err(JsonataError::new(
                         "T1003",
@@ -3000,16 +3002,16 @@ fn eval_group_by(
                     format!("duplicate key: \"{key_str}\""),
                 ));
             }
-            let (group_items, first_idx) = groups.get(key_str).ok_or_else(|| JsonataError::new("D0000", "key from group_order must exist in groups"))?;
+            let (group_items, first_idx) = groups.get(key_str.as_str()).ok_or_else(|| JsonataError::new("D0000", "key from group_order must exist in groups"))?;
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {
-                Value::Array(group_items.clone())
+                Value::Array(Rc::new(group_items.clone()))
             };
 
             let child_env = Environment::new_child(Rc::clone(env));
             child_env.bind("index".into(), Value::Number(*first_idx as f64));
-            child_env.bind("key".into(), Value::String(key_str.clone()));
+            child_env.bind("key".into(), Value::String(key_str.as_str().into()));
             let child_env = Rc::new(child_env);
 
             let mut val_result = if val_node.is_empty() {
@@ -3034,9 +3036,9 @@ fn eval_group_by(
             };
             if val_keep_array {
                 val_result = match val_result {
-                    Value::Undefined => Value::Array(vec![]),
+                    Value::Undefined => Value::Array(Rc::new(vec![])),
                     Value::Array(_) => val_result,
-                    scalar => Value::Array(vec![scalar]),
+                    scalar => Value::Array(Rc::new(vec![scalar])),
                 };
             }
 
@@ -3047,12 +3049,13 @@ fn eval_group_by(
         }
     }
 
-    Ok(Value::Object(out_obj))
+    Ok(Value::Object(Rc::new(out_obj)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
     use crate::parser::{Parser, process_ast};
 
     /// Helper: parse, process, and evaluate.
@@ -3138,7 +3141,7 @@ mod tests {
         let result = eval_with_data("name", r#"[{"name": "A"}, {"name": "B"}]"#);
         assert_eq!(
             result,
-            Value::Array(vec![Value::String("A".into()), Value::String("B".into())])
+            Value::Array(Rc::new(vec![Value::String("A".into()), Value::String("B".into())]))
         );
     }
 
@@ -3169,7 +3172,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::Array(vec![Value::Number(10.0), Value::Number(20.0)])
+            Value::Array(Rc::new(vec![Value::Number(10.0), Value::Number(20.0)]))
         );
     }
 
@@ -3193,7 +3196,7 @@ mod tests {
         let result = eval_with_data("nums[$ > 2]", r#"{"nums": [1, 2, 3, 4]}"#);
         assert_eq!(
             result,
-            Value::Array(vec![Value::Number(3.0), Value::Number(4.0)])
+            Value::Array(Rc::new(vec![Value::Number(3.0), Value::Number(4.0)]))
         );
     }
 
@@ -3220,7 +3223,7 @@ mod tests {
         let result = eval_with_data("*", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(vec![Value::Number(1.0), Value::Number(2.0)])
+            Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -3334,11 +3337,11 @@ mod tests {
     fn array_constructor() {
         assert_eq!(
             eval_simple("[1, 2, 3]"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
-            ])
+            ]))
         );
     }
 
@@ -3362,13 +3365,13 @@ mod tests {
     fn range_operator() {
         assert_eq!(
             eval_simple("[1..5]"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0),
                 Value::Number(5.0),
-            ])
+            ]))
         );
     }
 
@@ -3482,11 +3485,11 @@ mod tests {
     fn stdlib_split() {
         assert_eq!(
             eval_simple(r#"$split("a,b,c", ",")"#),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::String("a".into()),
                 Value::String("b".into()),
                 Value::String("c".into()),
-            ])
+            ]))
         );
     }
 
@@ -3552,12 +3555,12 @@ mod tests {
     fn stdlib_append() {
         assert_eq!(
             eval_simple("$append([1, 2], [3, 4])"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0),
-            ])
+            ]))
         );
     }
 
@@ -3565,11 +3568,11 @@ mod tests {
     fn stdlib_reverse() {
         assert_eq!(
             eval_simple("$reverse([1, 2, 3])"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
-            ])
+            ]))
         );
     }
 
@@ -3578,7 +3581,7 @@ mod tests {
         let result = eval_with_data("$keys($)", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(vec![Value::String("a".into()), Value::String("b".into()),])
+            Value::Array(Rc::new(vec![Value::String("a".into()), Value::String("b".into()),]))
         );
     }
 
@@ -3587,7 +3590,7 @@ mod tests {
         let result = eval_with_data("$values($)", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(vec![Value::Number(1.0), Value::Number(2.0)])
+            Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -3633,11 +3636,11 @@ mod tests {
         };
         assert_eq!(
             collapsed,
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(2.0),
                 Value::Number(4.0),
                 Value::Number(6.0),
-            ])
+            ]))
         );
     }
 
@@ -3645,7 +3648,7 @@ mod tests {
     fn stdlib_filter() {
         assert_eq!(
             eval_simple("$filter([1, 2, 3, 4], function($v){$v > 2})"),
-            Value::Array(vec![Value::Number(3.0), Value::Number(4.0)])
+            Value::Array(Rc::new(vec![Value::Number(3.0), Value::Number(4.0)]))
         );
     }
 
@@ -3661,11 +3664,11 @@ mod tests {
     fn stdlib_sort_default() {
         assert_eq!(
             eval_simple("$sort([3, 1, 2])"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -3673,11 +3676,11 @@ mod tests {
     fn stdlib_distinct() {
         assert_eq!(
             eval_simple("$distinct([1, 2, 2, 3, 1])"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
-            ])
+            ]))
         );
     }
 
@@ -3697,13 +3700,13 @@ mod tests {
     fn stdlib_flatten() {
         assert_eq!(
             eval_simple("$flatten([[1, 2], [3, [4, 5]]])"),
-            Value::Array(vec![
+            Value::Array(Rc::new(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0),
                 Value::Number(5.0),
-            ])
+            ]))
         );
     }
 
@@ -3802,7 +3805,7 @@ mod tests {
     fn group_by_variable() {
         // Test group-by on a $$ variable (case026)
         let result = eval_expr(r#"$${id: value}"#, &Value::from_json_str("[]").unwrap()).unwrap();
-        assert_eq!(result, Value::Object(indexmap::IndexMap::new()));
+        assert_eq!(result, Value::Object(Rc::new(indexmap::IndexMap::new())));
     }
 
     // ── Variable binding in blocks ──────────────────────────────

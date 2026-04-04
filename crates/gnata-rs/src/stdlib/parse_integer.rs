@@ -17,8 +17,8 @@ pub fn fn_parse_integer(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
 
-    let s = match &args[0] {
-        Value::String(s) => s.as_str(),
+    let s: &str = match &args[0] {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -27,8 +27,8 @@ pub fn fn_parse_integer(args: &[Value], _focus: &Value) -> JsonataResult {
         }
     };
 
-    let picture = match &args[1] {
-        Value::String(s) => s.as_str(),
+    let picture: &str = match &args[1] {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",

@@ -9,6 +9,8 @@
 //!
 //! Port of Go `internal/parser/analysis.go` and `func_fast.go`.
 
+use std::rc::Rc;
+
 use crate::parser::{AstArena, Expr, NodeId};
 use crate::value::Value;
 
@@ -245,7 +247,7 @@ fn try_function(arena: &AstArena, node: NodeId) -> Option<FuncFastPath> {
 /// Extract a literal value from an AST node.
 fn extract_literal(arena: &AstArena, node: NodeId) -> Option<Value> {
     match arena.get(node) {
-        Expr::StringLit { value, .. } => Some(Value::String(value.clone())),
+        Expr::StringLit { value, .. } => Some(Value::String(value.as_str().into())),
         Expr::NumberLit { value, .. } => Some(Value::Number(*value)),
         Expr::ValueLit { value, .. } => match value.as_str() {
             "true" => Some(Value::Bool(true)),
@@ -282,12 +284,12 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
             // Auto-map over arrays.
             Value::Array(arr) => {
                 let mut results = Vec::new();
-                for item in arr {
+                for item in arr.iter() {
                     if let Value::Object(obj) = item
                         && let Some(v) = obj.get(segment)
                     {
                         match v {
-                            Value::Array(inner) => results.extend(inner.clone()),
+                            Value::Array(inner) => results.extend(inner.iter().cloned()),
                             Value::Undefined => {}
                             other => results.push(other.clone()),
                         }
@@ -299,7 +301,7 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
                 if results.len() == 1 {
                     results.into_iter().next().unwrap_or(Value::Undefined)
                 } else {
-                    Value::Array(results)
+                    Value::Array(Rc::new(results))
                 }
             }
             _ => return Value::Undefined,
@@ -379,7 +381,7 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
 
         FuncFastKind::String => match val {
             Value::String(_) => Some(val.clone()),
-            Value::Number(n) => Some(Value::String(crate::value::format_float(*n))),
+            Value::Number(n) => Some(Value::String(crate::value::format_float(*n).into())),
             Value::Bool(b) => Some(Value::String(if *b { "true" } else { "false" }.into())),
             Value::Null => Some(Value::String("null".into())),
             _ => None,
@@ -403,19 +405,19 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
         FuncFastKind::Not => Some(Value::Bool(!val.to_boolean())),
 
         FuncFastKind::Lowercase => match val {
-            Value::String(s) => Some(Value::String(s.to_lowercase())),
+            Value::String(s) => Some(Value::String(s.to_lowercase().into())),
             _ => None,
         },
 
         FuncFastKind::Uppercase => match val {
-            Value::String(s) => Some(Value::String(s.to_uppercase())),
+            Value::String(s) => Some(Value::String(s.to_uppercase().into())),
             _ => None,
         },
 
         FuncFastKind::Trim => match val {
             Value::String(s) => {
                 let trimmed: Vec<&str> = s.split_whitespace().collect();
-                Some(Value::String(trimmed.join(" ")))
+                Some(Value::String(trimmed.join(" ").into()))
             }
             _ => None,
         },
@@ -487,11 +489,11 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
 
         FuncFastKind::Keys => match val {
             Value::Object(obj) => {
-                let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.clone())).collect();
+                let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.as_str().into())).collect();
                 Some(match keys.len() {
                     0 => Value::Undefined,
                     1 => keys.into_iter().next().unwrap_or(Value::Undefined),
-                    _ => Value::Array(keys),
+                    _ => Value::Array(Rc::new(keys)),
                 })
             }
             _ => None,
@@ -500,16 +502,16 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
         FuncFastKind::Values => match val {
             Value::Object(obj) => {
                 let vals: Vec<Value> = obj.values().cloned().collect();
-                Some(Value::Array(vals))
+                Some(Value::Array(Rc::new(vals)))
             }
             _ => None,
         },
 
         FuncFastKind::Reverse => match val {
             Value::Array(arr) => {
-                let mut rev = arr.clone();
+                let mut rev = (**arr).clone();
                 rev.reverse();
-                Some(Value::Array(rev))
+                Some(Value::Array(Rc::new(rev)))
             }
             _ => None,
         },
@@ -518,13 +520,13 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
             Value::Array(arr) => {
                 let mut seen = std::collections::HashSet::new();
                 let mut result = Vec::new();
-                for item in arr {
+                for item in arr.iter() {
                     let key = canonical_key(item);
                     if seen.insert(key) {
                         result.push(item.clone());
                     }
                 }
-                Some(Value::Array(result))
+                Some(Value::Array(Rc::new(result)))
             }
             _ => None,
         },
@@ -537,7 +539,7 @@ fn collect_numbers(val: &Value) -> Option<Vec<f64>> {
         Value::Number(n) => Some(vec![*n]),
         Value::Array(arr) => {
             let mut nums = Vec::with_capacity(arr.len());
-            for item in arr {
+            for item in arr.iter() {
                 match item {
                     Value::Number(n) => nums.push(*n),
                     _ => return None,

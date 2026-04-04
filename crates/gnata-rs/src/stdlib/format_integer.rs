@@ -24,8 +24,8 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
     let n = args[0]
         .as_f64()
         .ok_or_else(|| JsonataError::new("T0410", "$formatInteger: argument 1 must be a number"))?;
-    let picture = match &args[1] {
-        Value::String(s) => s.as_str(),
+    let picture: &str = match &args[1] {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -43,7 +43,7 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
                 truncated,
                 format_token,
                 modifier,
-            )));
+            ).into()));
         }
         return Err(JsonataError::new(
             "D3137",
@@ -52,7 +52,7 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 
     let result = format_integer_with_picture(truncated as i64, picture)?;
-    Ok(Value::String(result))
+    Ok(Value::String(result.into()))
 }
 
 fn format_integer_with_picture(n: i64, picture: &str) -> Result<String, JsonataError> {

@@ -1,5 +1,7 @@
 //! Array functions: $count, $append, $reverse, $shuffle, $distinct, $flatten, $zip.
 
+use std::rc::Rc;
+
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
@@ -33,14 +35,14 @@ pub fn fn_append(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(a.clone());
     }
     let mut result = match a {
-        Value::Array(arr) => arr.clone(),
+        Value::Array(arr) => (**arr).clone(),
         other => vec![other.clone()],
     };
     match b {
         Value::Array(arr) => result.extend(arr.iter().cloned()),
         other => result.push(other.clone()),
     }
-    Ok(Value::Array(result))
+    Ok(Value::Array(Rc::new(result)))
 }
 
 pub fn fn_reverse(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -51,11 +53,11 @@ pub fn fn_reverse(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     let mut arr = match &args[0] {
-        Value::Array(a) => a.clone(),
+        Value::Array(a) => (**a).clone(),
         other => vec![other.clone()],
     };
     arr.reverse();
-    Ok(Value::Array(arr))
+    Ok(Value::Array(Rc::new(arr)))
 }
 
 pub fn fn_shuffle(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -66,7 +68,7 @@ pub fn fn_shuffle(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     let mut arr = match &args[0] {
-        Value::Array(a) => a.clone(),
+        Value::Array(a) => (**a).clone(),
         other => vec![other.clone()],
     };
     // Fisher-Yates shuffle.
@@ -74,7 +76,7 @@ pub fn fn_shuffle(args: &[Value], _focus: &Value) -> JsonataResult {
         let j = fastrand::usize(..=i);
         arr.swap(i, j);
     }
-    Ok(Value::Array(arr))
+    Ok(Value::Array(Rc::new(arr)))
 }
 
 pub fn fn_distinct(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -92,7 +94,7 @@ pub fn fn_distinct(args: &[Value], _focus: &Value) -> JsonataResult {
         other => return Ok(other.clone()),
     };
     let mut result = Vec::new();
-    for item in arr {
+    for item in arr.iter() {
         if !result
             .iter()
             .any(|existing: &Value| existing.deep_equal(item))
@@ -100,7 +102,7 @@ pub fn fn_distinct(args: &[Value], _focus: &Value) -> JsonataResult {
             result.push(item.clone());
         }
     }
-    Ok(Value::Array(result))
+    Ok(Value::Array(Rc::new(result)))
 }
 
 pub fn fn_flatten(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -111,15 +113,15 @@ pub fn fn_flatten(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     let arr = match &args[0] {
-        Value::Array(a) => a.clone(),
+        Value::Array(a) => a,
         other => return Ok(other.clone()),
     };
     let depth = args
         .get(1)
         .and_then(super::super::value::Value::as_f64)
         .map_or(usize::MAX, |n| n as usize);
-    let result = flatten_recursive(&arr, depth);
-    Ok(Value::Array(result))
+    let result = flatten_recursive(arr, depth);
+    Ok(Value::Array(Rc::new(result)))
 }
 
 fn flatten_recursive(arr: &[Value], depth: usize) -> Vec<Value> {
@@ -128,7 +130,7 @@ fn flatten_recursive(arr: &[Value], depth: usize) -> Vec<Value> {
         if depth > 0
             && let Value::Array(inner) = item
         {
-            result.extend(flatten_recursive(inner, depth - 1));
+            result.extend(flatten_recursive(inner.as_ref(), depth - 1));
             continue;
         }
         result.push(item.clone());
@@ -145,25 +147,25 @@ pub fn fn_zip(args: &[Value], _focus: &Value) -> JsonataResult {
     }
     // If any argument is undefined, return empty array.
     if args.iter().any(super::super::value::Value::is_undefined) {
-        return Ok(Value::Array(vec![]));
+        return Ok(Value::Array(Rc::new(vec![])));
     }
     // Wrap non-array args as singleton arrays.
     let arrays: Vec<Vec<Value>> = args
         .iter()
         .map(|a| match a {
-            Value::Array(arr) => arr.clone(),
+            Value::Array(arr) => (**arr).clone(),
             other => vec![other.clone()],
         })
         .collect();
     if arrays.is_empty() {
-        return Ok(Value::Array(vec![]));
+        return Ok(Value::Array(Rc::new(vec![])));
     }
     // Use minimum length across all arrays.
     let min_len = arrays.iter().map(std::vec::Vec::len).min().unwrap_or(0);
     let mut result = Vec::with_capacity(min_len);
     for i in 0..min_len {
         let tuple: Vec<Value> = arrays.iter().map(|a| a[i].clone()).collect();
-        result.push(Value::Array(tuple));
+        result.push(Value::Array(Rc::new(tuple)));
     }
-    Ok(Value::Array(result))
+    Ok(Value::Array(Rc::new(result)))
 }

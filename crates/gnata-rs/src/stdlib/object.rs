@@ -1,5 +1,7 @@
 //! Object functions: $keys, $values, $spread, $merge, $lookup, $error.
 
+use std::rc::Rc;
+
 use indexmap::IndexMap;
 
 use crate::error::{JsonataError, JsonataResult};
@@ -17,23 +19,23 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
             if obj.is_empty() {
                 return Ok(Value::Undefined);
             }
-            let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.clone())).collect();
+            let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.as_str().into())).collect();
             if keys.len() == 1 {
                 return Ok(keys.into_iter().next().unwrap_or(Value::Undefined));
             }
-            Ok(Value::Array(keys))
+            Ok(Value::Array(Rc::new(keys)))
         }
         Value::Array(arr) => {
             // Collect all keys from array of objects.
             let mut all_keys = Vec::new();
-            for item in arr {
+            for item in arr.iter() {
                 if let Value::Object(obj) = item {
                     for k in obj.keys() {
                         if !all_keys
                             .iter()
-                            .any(|existing: &Value| matches!(existing, Value::String(s) if s == k))
+                            .any(|existing: &Value| matches!(existing, Value::String(s) if s.as_ref() == k))
                         {
-                            all_keys.push(Value::String(k.clone()));
+                            all_keys.push(Value::String(k.as_str().into()));
                         }
                     }
                 }
@@ -44,7 +46,7 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
             if all_keys.len() == 1 {
                 return Ok(all_keys.into_iter().next().unwrap_or(Value::Undefined));
             }
-            Ok(Value::Array(all_keys))
+            Ok(Value::Array(Rc::new(all_keys)))
         }
         _ => Ok(Value::Undefined),
     }
@@ -60,7 +62,7 @@ pub fn fn_values(args: &[Value], _focus: &Value) -> JsonataResult {
     match &args[0] {
         Value::Object(obj) => {
             let vals: Vec<Value> = obj.values().cloned().collect();
-            Ok(Value::Array(vals))
+            Ok(Value::Array(Rc::new(vals)))
         }
         _ => Ok(Value::Undefined),
     }
@@ -78,7 +80,7 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
             .map(|(k, v)| {
                 let mut m = IndexMap::new();
                 m.insert(k.clone(), v.clone());
-                Value::Object(m)
+                Value::Object(Rc::new(m))
             })
             .collect()
     };
@@ -89,12 +91,12 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
         }
         Value::Array(arr) => {
             let mut result = Vec::new();
-            for item in arr {
+            for item in arr.iter() {
                 if let Value::Object(obj) = item {
                     result.extend(spread_one(obj));
                 }
             }
-            Ok(Value::Array(result))
+            Ok(Value::Array(Rc::new(result)))
         }
         _ => Ok(args[0].clone()),
     }
@@ -115,7 +117,7 @@ pub fn fn_merge(args: &[Value], _focus: &Value) -> JsonataResult {
     };
     match &args[0] {
         Value::Array(arr) => {
-            for item in arr {
+            for item in arr.iter() {
                 if let Value::Object(obj) = item {
                     merge_obj(&mut merged, obj);
                 }
@@ -129,7 +131,7 @@ pub fn fn_merge(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     }
-    Ok(Value::Object(merged))
+    Ok(Value::Object(Rc::new(merged)))
 }
 
 pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -139,8 +141,8 @@ pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let key = match &args[1] {
-        Value::String(s) => s.as_str(),
+    let key: &str = match &args[1] {
+        Value::String(s) => s,
         _ => return Err(JsonataError::new("T0410", "$lookup: key must be a string")),
     };
     match &args[0] {
@@ -148,7 +150,7 @@ pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
         Value::Array(arr) => {
             // Lookup across array of objects.
             let mut result = Vec::new();
-            for item in arr {
+            for item in arr.iter() {
                 if let Value::Object(obj) = item
                     && let Some(v) = obj.get(key)
                 {
@@ -158,7 +160,7 @@ pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
             match result.len() {
                 0 => Ok(Value::Undefined),
                 1 => Ok(result.into_iter().next().unwrap_or(Value::Undefined)),
-                _ => Ok(Value::Array(result)),
+                _ => Ok(Value::Array(Rc::new(result))),
             }
         }
         _ => Ok(Value::Undefined),
@@ -170,7 +172,7 @@ pub fn fn_error(args: &[Value], _focus: &Value) -> JsonataResult {
         return Err(JsonataError::new("D3137", "$error() function evaluated"));
     }
     match &args[0] {
-        Value::String(s) => Err(JsonataError::new("D3137", s.clone())),
+        Value::String(s) => Err(JsonataError::new("D3137", s.to_string())),
         _ => Err(JsonataError::new(
             "T0410",
             "$error: argument must be a string",

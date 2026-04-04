@@ -24,8 +24,8 @@ pub fn fn_eval(
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let expr = match &args[0] {
-        Value::String(s) => s.as_str(),
+    let expr: &str = match &args[0] {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",

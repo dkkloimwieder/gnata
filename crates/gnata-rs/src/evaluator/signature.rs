@@ -2,6 +2,8 @@
 //!
 //! Port of Go `internal/parser/signature.go` and `internal/evaluator/signature.go`.
 
+use std::rc::Rc;
+
 use crate::error::JsonataError;
 use crate::value::Value;
 
@@ -105,7 +107,7 @@ pub fn process_call_args(
             && !arg_matches_types(&coerced[i], b"a")
             && (spec.content_type == 0 || arg_matches_types(&coerced[i], &[spec.content_type]))
         {
-            coerced[i] = Value::Array(vec![coerced[i].clone()]);
+            coerced[i] = Value::Array(Rc::new(vec![coerced[i].clone()]));
         }
     }
 
@@ -185,7 +187,7 @@ fn validate_one_arg(spec: &ParamSpec, arg: &Value, pos: usize) -> Result<(), Jso
         && let Value::Array(arr) = arg
     {
         let ct = [spec.content_type];
-        for elem in arr {
+        for elem in arr.iter() {
             if !arg_matches_types(elem, &ct) {
                 return Err(JsonataError::new(
                     "T0412",
@@ -399,8 +401,8 @@ mod tests {
         assert!(type_matches(&Value::Bool(true), b'b'));
         assert!(type_matches(&Value::Undefined, b'l'));
         assert!(type_matches(&Value::Null, b'l'));
-        assert!(type_matches(&Value::Array(vec![]), b'a'));
-        assert!(type_matches(&Value::Object(Default::default()), b'o'));
+        assert!(type_matches(&Value::Array(Rc::new(vec![])), b'a'));
+        assert!(type_matches(&Value::Object(Rc::new(Default::default())), b'o'));
         assert!(type_matches(&Value::Number(1.0), b'x'));
         assert!(type_matches(&Value::Number(1.0), b'j'));
     }
@@ -417,7 +419,7 @@ mod tests {
     fn singleton_coercion() {
         let specs = parse_signature("a<n>").unwrap();
         let (coerced, _) = process_call_args(&specs, &[Value::Number(42.0)]).unwrap();
-        assert_eq!(coerced[0], Value::Array(vec![Value::Number(42.0)]));
+        assert_eq!(coerced[0], Value::Array(Rc::new(vec![Value::Number(42.0)])));
     }
 
     #[test]

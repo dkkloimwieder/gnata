@@ -38,7 +38,7 @@ pub fn fn_assert(args: &[Value], _focus: &Value) -> JsonataResult {
                 let msg = args
                     .get(1)
                     .and_then(|v| match v {
-                        Value::String(s) => Some(s.clone()),
+                        Value::String(s) => Some(s.to_string()),
                         _ => None,
                     })
                     .unwrap_or_else(|| "assertion failed".into());

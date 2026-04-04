@@ -21,7 +21,7 @@ pub fn fn_map(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => vec![other.clone()],
+        other => Rc::new(vec![other.clone()]),
     };
     let func = match &args[1] {
         Value::Function(f) => f.clone(),
@@ -62,7 +62,7 @@ pub fn fn_filter(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => vec![other.clone()],
+        other => Rc::new(vec![other.clone()]),
     };
     let func = match &args[1] {
         Value::Function(f) => f.clone(),
@@ -91,7 +91,7 @@ pub fn fn_filter(
     if result.len() == 1 {
         return Ok(result.swap_remove(0));
     }
-    Ok(Value::Array(result))
+    Ok(Value::Array(Rc::new(result)))
 }
 
 pub fn fn_reduce(
@@ -108,7 +108,7 @@ pub fn fn_reduce(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => vec![other.clone()],
+        other => Rc::new(vec![other.clone()]),
     };
     let func = match &args[1] {
         Value::Function(f) => f.clone(),
@@ -194,8 +194,8 @@ pub fn fn_each(
         }
     };
     let mut seq = Sequence::new();
-    for (key, val) in obj {
-        let call_args = vec![val.clone(), Value::String(key.clone())];
+    for (key, val) in obj.iter() {
+        let call_args = vec![val.clone(), Value::String(key.as_str().into())];
         let r = call_function(&func, &call_args, val, env, arena)?;
         if !r.is_undefined() {
             seq.values.push(r);
@@ -233,7 +233,7 @@ pub fn fn_sift(
     // If the argument is an array, map $sift over each element.
     if let Value::Array(arr) = obj_arg {
         let mut results = Vec::new();
-        for item in arr {
+        for item in arr.iter() {
             if let Value::Object(obj) = item {
                 let sifted = sift_object(obj, &func, item, env, arena)?;
                 if !sifted.is_undefined() {
@@ -244,7 +244,7 @@ pub fn fn_sift(
         if results.is_empty() {
             return Ok(Value::Undefined);
         }
-        return Ok(Value::Array(results));
+        return Ok(Value::Array(Rc::new(results)));
     }
     let Value::Object(obj) = obj_arg else {
         return Err(JsonataError::new(
@@ -285,11 +285,11 @@ pub fn fn_sort(
         return Ok(Value::Undefined);
     }
     let mut arr = match arr_val {
-        Value::Array(a) => a.clone(),
+        Value::Array(a) => (**a).clone(),
         other => vec![other.clone()],
     };
     if arr.len() <= 1 {
-        return Ok(Value::Array(arr));
+        return Ok(Value::Array(Rc::new(arr)));
     }
     // Sort with optional comparator.
     let mut error: Option<JsonataError> = None;
@@ -342,7 +342,7 @@ pub fn fn_sort(
     if let Some(e) = error {
         return Err(e);
     }
-    Ok(Value::Array(arr))
+    Ok(Value::Array(Rc::new(arr)))
 }
 
 pub fn fn_single(
@@ -359,7 +359,7 @@ pub fn fn_single(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => vec![other.clone()],
+        other => Rc::new(vec![other.clone()]),
     };
     let func = args.get(1).and_then(|v| match v {
         Value::Function(f) => Some(f.clone()),
@@ -399,15 +399,15 @@ pub fn fn_single(
 
 /// Helper: sift a single object, passing (value, key, object) to the predicate.
 fn sift_object(
-    obj: &indexmap::IndexMap<String, Value>,
+    obj: &Rc<indexmap::IndexMap<String, Value>>,
     func: &crate::evaluator::functions::FunctionValue,
     obj_val: &Value,
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
     let mut result = indexmap::IndexMap::new();
-    for (key, val) in obj {
-        let call_args = vec![val.clone(), Value::String(key.clone()), obj_val.clone()];
+    for (key, val) in obj.iter() {
+        let call_args = vec![val.clone(), Value::String(key.as_str().into()), obj_val.clone()];
         let keep = call_function(func, &call_args, val, env, arena)?;
         if keep.to_boolean() {
             result.insert(key.clone(), val.clone());
@@ -416,5 +416,5 @@ fn sift_object(
     if result.is_empty() {
         return Ok(Value::Undefined);
     }
-    Ok(Value::Object(result))
+    Ok(Value::Object(Rc::new(result)))
 }

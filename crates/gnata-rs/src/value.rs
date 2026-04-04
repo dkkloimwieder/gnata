@@ -4,6 +4,8 @@ mod sequence;
 pub use format::{format_float, format_number};
 pub use sequence::Sequence;
 
+use std::rc::Rc;
+
 use indexmap::IndexMap;
 use serde_json::Number;
 
@@ -11,26 +13,27 @@ use crate::error::{JsonataError, JsonataResult};
 
 /// Core value type for JSONata evaluation.
 ///
-/// Uses owned types throughout — no lifetimes in the public API.
+/// Heap-allocated variants (String, Array, Object) are wrapped in `Rc` for
+/// O(1) clone via reference counting. This eliminates the deep-copy overhead
+/// that dominated the profile (62% of CPU was malloc/free/clone/drop).
+///
+/// Mutation requires `Rc::make_mut()` for copy-on-write semantics.
 /// `Undefined` and `Null` are distinct enum variants preserving JSONata semantics.
 /// `Sequence` is internal-only and never exposed to users.
 #[derive(Debug, Clone)]
 pub enum Value {
     /// JSONata undefined — missing value, no representation in JSON.
-    /// Go equivalent: `nil`.
     Undefined,
     /// JSON null — explicit null value.
-    /// Go equivalent: `jsonNullType{}` sentinel.
     Null,
     Bool(bool),
     Number(f64),
-    String(String),
-    Array(Vec<Value>),
-    Object(IndexMap<String, Value>),
+    String(Rc<str>),
+    Array(Rc<Vec<Value>>),
+    Object(Rc<IndexMap<String, Value>>),
     /// Internal sequence used during evaluation. Never returned to users.
     Sequence(Sequence),
     /// Function value (built-in, lambda, partial application).
-    /// Internal — collapsed before returning to users.
     Function(crate::evaluator::FunctionValue),
     /// Tail-call sentinel for TCO trampoline. Internal only.
     TailCall(Box<crate::evaluator::TailCall>),
@@ -178,7 +181,7 @@ impl Value {
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => {
-                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.deep_equal(y))
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.deep_equal(y))
             }
             (Value::Object(a), Value::Object(b)) => {
                 a.len() == b.len()
@@ -287,7 +290,7 @@ impl Value {
     pub fn stringify(&self, prettify: bool) -> JsonataResult<String> {
         match self {
             Value::Undefined => Ok(String::new()),
-            Value::String(s) => Ok(s.clone()),
+            Value::String(s) => Ok(s.to_string()),
             Value::Number(n) => Ok(format_float(*n)),
             Value::Bool(true) => Ok("true".into()),
             Value::Bool(false) => Ok("false".into()),
@@ -330,17 +333,17 @@ impl Value {
                 // With arbitrary_precision, n.as_f64() parses the string repr
                 Value::Number(n.as_f64().unwrap_or(f64::NAN))
             }
-            serde_json::Value::String(s) => Value::String(s),
+            serde_json::Value::String(s) => Value::String(s.into()),
             serde_json::Value::Array(arr) => {
-                Value::Array(arr.into_iter().map(Value::from_json).collect())
+                Value::Array(Rc::new(arr.into_iter().map(Value::from_json).collect()))
             }
             serde_json::Value::Object(obj) => {
                 // serde_json with preserve_order uses IndexMap internally
-                Value::Object(
+                Value::Object(Rc::new(
                     obj.into_iter()
                         .map(|(k, v)| (k, Value::from_json(v)))
                         .collect(),
-                )
+                ))
             }
         }
     }
@@ -360,7 +363,7 @@ impl Value {
                     Number::from_string_unchecked(s).into()
                 }
             }
-            Value::String(s) => serde_json::Value::String(s.clone()),
+            Value::String(s) => serde_json::Value::String(s.to_string()),
             Value::Array(arr) => {
                 serde_json::Value::Array(arr.iter().map(Value::to_json).collect())
             }
@@ -418,19 +421,19 @@ impl From<i64> for Value {
 
 impl From<&str> for Value {
     fn from(s: &str) -> Self {
-        Value::String(s.to_owned())
+        Value::String(Rc::from(s))
     }
 }
 
 impl From<String> for Value {
     fn from(s: String) -> Self {
-        Value::String(s)
+        Value::String(Rc::from(s))
     }
 }
 
 impl<T: Into<Value>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
-        Value::Array(v.into_iter().map(Into::into).collect())
+        Value::Array(Rc::new(v.into_iter().map(Into::into).collect()))
     }
 }
 
@@ -477,13 +480,13 @@ mod tests {
     #[test]
     fn boolean_array_coercion() {
         // Empty array → false
-        assert!(!Value::Array(vec![]).to_boolean());
+        assert!(!Value::Array(Rc::new(vec![])).to_boolean());
         // Single element → recurse
-        assert!(Value::Array(vec![Value::Bool(true)]).to_boolean());
-        assert!(!Value::Array(vec![Value::Bool(false)]).to_boolean());
+        assert!(Value::Array(Rc::new(vec![Value::Bool(true)])).to_boolean());
+        assert!(!Value::Array(Rc::new(vec![Value::Bool(false)])).to_boolean());
         // Multiple → any truthy
-        assert!(Value::Array(vec![Value::Bool(false), Value::Bool(true)]).to_boolean());
-        assert!(!Value::Array(vec![Value::Bool(false), Value::Bool(false)]).to_boolean());
+        assert!(Value::Array(Rc::new(vec![Value::Bool(false), Value::Bool(true)])).to_boolean());
+        assert!(!Value::Array(Rc::new(vec![Value::Bool(false), Value::Bool(false)])).to_boolean());
     }
 
     // ── Deep equality ────────────────────────────────────────────────
@@ -496,9 +499,9 @@ mod tests {
 
     #[test]
     fn deep_equal_arrays() {
-        let a = Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]);
-        let b = Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]);
-        let c = Value::Array(vec![Value::Number(1.0), Value::Number(3.0)]);
+        let a = Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
+        let b = Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
+        let c = Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(3.0)]));
         assert!(a.deep_equal(&b));
         assert!(!a.deep_equal(&c));
     }
@@ -514,7 +517,7 @@ mod tests {
         b.insert("x".into(), Value::Number(1.0));
 
         // Order-independent comparison
-        assert!(Value::Object(a).deep_equal(&Value::Object(b)));
+        assert!(Value::Object(Rc::new(a)).deep_equal(&Value::Object(Rc::new(b))));
     }
 
     #[test]

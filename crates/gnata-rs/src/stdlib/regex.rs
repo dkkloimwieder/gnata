@@ -41,12 +41,12 @@ fn compile_regex_arg(v: &Value) -> Result<Regex, JsonataError> {
                 .map_err(|e| JsonataError::new("D3137", format!("regex error: {e}")))
         }
         Value::Object(obj) => {
-            let pattern = match obj.get("pattern") {
-                Some(Value::String(s)) => s.as_str(),
+            let pattern: &str = match obj.get("pattern") {
+                Some(Value::String(s)) => s,
                 _ => "",
             };
-            let flags = match obj.get("flags") {
-                Some(Value::String(s)) => s.as_str(),
+            let flags: &str = match obj.get("flags") {
+                Some(Value::String(s)) => s,
                 _ => "",
             };
             compile_regex(pattern, flags)
@@ -60,15 +60,15 @@ fn compile_regex_arg(v: &Value) -> Result<Regex, JsonataError> {
 
 /// Build a match result object from a regex match.
 fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Value {
-    let match_str = m.as_str().to_string();
+    let match_str: Rc<str> = m.as_str().into();
     let start = s[..m.start()].chars().count() as f64;
     let end = s[..m.end()].chars().count() as f64;
 
     let mut groups = Vec::new();
     for i in 1..caps.len() {
         match caps.get(i) {
-            Some(g) => groups.push(Value::String(g.as_str().to_string())),
-            None => groups.push(Value::String(String::new())),
+            Some(g) => groups.push(Value::String(g.as_str().into())),
+            None => groups.push(Value::String("".into())),
         }
     }
 
@@ -76,8 +76,8 @@ fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Valu
     obj.insert("match".into(), Value::String(match_str));
     obj.insert("start".into(), Value::Number(start));
     obj.insert("end".into(), Value::Number(end));
-    obj.insert("groups".into(), Value::Array(groups));
-    Value::Object(obj)
+    obj.insert("groups".into(), Value::Array(Rc::new(groups)));
+    Value::Object(Rc::new(obj))
 }
 
 /// $match(str, pattern, limit?)
@@ -97,8 +97,8 @@ pub fn fn_match(
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
-        Value::String(s) => s.as_str(),
+    let s: &str = match &args[0] {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -134,7 +134,7 @@ pub fn fn_match(
     if result.len() == 1 {
         return Ok(result.swap_remove(0));
     }
-    Ok(Value::Array(result))
+    Ok(Value::Array(Rc::new(result)))
 }
 
 /// Custom matcher: call a function that returns {match, start, groups, next} objects.
@@ -150,7 +150,7 @@ fn match_with_custom_matcher(
     // Initial call: matcher_fn(str, 0)
     let mut res = call_function(
         matcher_fn,
-        &[Value::String(s.to_string()), Value::Number(0.0)],
+        &[Value::String(s.into()), Value::Number(0.0)],
         &Value::Undefined,
         env,
         arena,
@@ -160,13 +160,13 @@ fn match_with_custom_matcher(
 
         let match_val = obj.get("match").cloned().unwrap_or(Value::Undefined);
         let start_val = obj.get("start").cloned().unwrap_or(Value::Undefined);
-        let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(vec![]));
+        let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(Rc::new(vec![])));
 
         let mut match_obj = indexmap::IndexMap::new();
         match_obj.insert("match".into(), match_val);
         match_obj.insert("index".into(), start_val);
         match_obj.insert("groups".into(), groups_val);
-        result.push(Value::Object(match_obj));
+        result.push(Value::Object(Rc::new(match_obj)));
 
         if let Some(lim) = limit
             && result.len() >= lim {
@@ -187,7 +187,7 @@ fn match_with_custom_matcher(
     if result.len() == 1 {
         return Ok(result.swap_remove(0));
     }
-    Ok(Value::Array(result))
+    Ok(Value::Array(Rc::new(result)))
 }
 
 /// $replace(str, pattern, replacement, limit?)
@@ -201,7 +201,7 @@ pub fn fn_replace(
     if args.is_empty() || args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
+    let s: Rc<str> = match &args[0] {
         Value::String(s) => s.clone(),
         _ => {
             return Err(JsonataError::new(
@@ -256,7 +256,7 @@ pub fn fn_replace(
             pattern,
             replacement,
             limit,
-        )));
+        ).into()));
     }
 
     // Regex pattern.
@@ -264,10 +264,10 @@ pub fn fn_replace(
 
     match &args[2] {
         Value::String(replacement) => {
-            replace_regex_string(&s, &re, replacement, limit).map(Value::String)
+            replace_regex_string(&s, &re, replacement, limit).map(|s| Value::String(s.into()))
         }
         Value::Function(func) => {
-            replace_with_fn(&s, &re, func, limit, env, arena).map(Value::String)
+            replace_with_fn(&s, &re, func, limit, env, arena).map(|s| Value::String(s.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",

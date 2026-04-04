@@ -41,15 +41,15 @@ pub fn fn_format_number(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.len() >= 3
         && let Value::Object(map) = &args[2]
     {
-        for (k, v) in map {
+        for (k, v) in map.iter() {
             if let Value::String(s) = v {
-                opts.push((k.clone(), s.clone()));
+                opts.push((k.clone(), s.to_string()));
             }
         }
     }
 
     let result = format_number_picture(n, &picture, &opts)?;
-    Ok(Value::String(result))
+    Ok(Value::String(result.into()))
 }
 
 // ── Format character set ──────────────────────────────────────────────────────

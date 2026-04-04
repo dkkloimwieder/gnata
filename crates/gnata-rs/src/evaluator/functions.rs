@@ -168,7 +168,7 @@ pub fn eval_function(
             Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
             Value::Array(_) => Ok(result),
             Value::Undefined => Ok(Value::Undefined),
-            scalar => Ok(Value::Array(vec![scalar])),
+            scalar => Ok(Value::Array(Rc::new(vec![scalar]))),
         }
     } else {
         Ok(result)

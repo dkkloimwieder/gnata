@@ -2,6 +2,8 @@
 //! $uppercase, $lowercase, $trim, $pad, $contains, $split, $join,
 //! $base64encode, $base64decode.
 
+use std::rc::Rc;
+
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 use base64::Engine;
@@ -22,7 +24,7 @@ pub fn fn_string(args: &[Value], focus: &Value) -> JsonataResult {
         Some(Value::Bool(b)) => *b,
         _ => false,
     };
-    arg.stringify(prettify).map(Value::String)
+    arg.stringify(prettify).map(|s| Value::String(s.into()))
 }
 
 pub fn fn_length(args: &[Value], focus: &Value) -> JsonataResult {
@@ -59,8 +61,8 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
-        Value::String(s) => s.as_str(),
+    let s: &str = match &args[0] {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -109,7 +111,7 @@ pub fn fn_substring(args: &[Value], _focus: &Value) -> JsonataResult {
     } else {
         chars[actual_start..].iter().collect()
     };
-    Ok(Value::String(result))
+    Ok(Value::String(result.into()))
 }
 
 pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
@@ -134,7 +136,7 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
     if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = if let Value::String(s) = str_arg { s.as_str() } else {
+    let s: &str = if let Value::String(s) = str_arg { s } else {
         // When using focus as context and it's not a string → T0411
         let code = if from_context { "T0411" } else { "T0410" };
         return Err(JsonataError::new(
@@ -142,8 +144,8 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
             "$substringBefore: argument 1 must be a string",
         ));
     };
-    let sep = match sep_arg {
-        Value::String(s) => s.as_str(),
+    let sep: &str = match sep_arg {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -152,8 +154,8 @@ pub fn fn_substring_before(args: &[Value], focus: &Value) -> JsonataResult {
         }
     };
     match s.find(sep) {
-        Some(idx) => Ok(Value::String(s[..idx].to_string())),
-        None => Ok(Value::String(s.to_string())),
+        Some(idx) => Ok(Value::String(s[..idx].into())),
+        None => Ok(Value::String(s.into())),
     }
 }
 
@@ -179,15 +181,15 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
     if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = if let Value::String(s) = str_arg { s.as_str() } else {
+    let s: &str = if let Value::String(s) = str_arg { s } else {
         let code = if from_context { "T0411" } else { "T0410" };
         return Err(JsonataError::new(
             code,
             "$substringAfter: argument 1 must be a string",
         ));
     };
-    let sep = match sep_arg {
-        Value::String(s) => s.as_str(),
+    let sep: &str = match sep_arg {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -196,8 +198,8 @@ pub fn fn_substring_after(args: &[Value], focus: &Value) -> JsonataResult {
         }
     };
     match s.find(sep) {
-        Some(idx) => Ok(Value::String(s[idx + sep.len()..].to_string())),
-        None => Ok(Value::String(s.to_string())),
+        Some(idx) => Ok(Value::String(s[idx + sep.len()..].into())),
+        None => Ok(Value::String(s.into())),
     }
 }
 
@@ -207,7 +209,7 @@ pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     match arg {
-        Value::String(s) => Ok(Value::String(s.to_uppercase())),
+        Value::String(s) => Ok(Value::String(s.to_uppercase().into())),
         _ => Err(JsonataError::new(
             "T0410",
             "$uppercase: argument must be a string",
@@ -221,7 +223,7 @@ pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     match arg {
-        Value::String(s) => Ok(Value::String(s.to_lowercase())),
+        Value::String(s) => Ok(Value::String(s.to_lowercase().into())),
         _ => Err(JsonataError::new(
             "T0410",
             "$lowercase: argument must be a string",
@@ -251,7 +253,7 @@ pub fn fn_trim(args: &[Value], focus: &Value) -> JsonataResult {
                     prev_space = false;
                 }
             }
-            Ok(Value::String(result))
+            Ok(Value::String(result.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",
@@ -270,7 +272,7 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match &args[0] {
+    let s: Rc<str> = match &args[0] {
         Value::String(s) => s.clone(),
         _ => {
             return Err(JsonataError::new(
@@ -283,13 +285,13 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
         .as_f64()
         .ok_or_else(|| JsonataError::new("T0410", "$pad: width must be a number"))?
         as i64;
-    let pad_str = if args.len() >= 3 {
+    let pad_str: Rc<str> = if args.len() >= 3 {
         match &args[2] {
             Value::String(c) if !c.is_empty() => c.clone(),
-            _ => " ".to_string(),
+            _ => " ".into(),
         }
     } else {
-        " ".to_string()
+        " ".into()
     };
 
     let char_count = s.chars().count() as i64;
@@ -301,9 +303,9 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
     let padding: String = pad_str.chars().cycle().take(pad_count).collect();
 
     if width > 0 {
-        Ok(Value::String(format!("{s}{padding}")))
+        Ok(Value::String(format!("{s}{padding}").into()))
     } else {
-        Ok(Value::String(format!("{padding}{s}")))
+        Ok(Value::String(format!("{padding}{s}").into()))
     }
 }
 
@@ -322,8 +324,8 @@ pub fn fn_contains(args: &[Value], focus: &Value) -> JsonataResult {
     if str_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s = match str_arg {
-        Value::String(s) => s.as_str(),
+    let s: &str = match str_arg {
+        Value::String(s) => s,
         _ => {
             return Err(JsonataError::new(
                 "T0410",
@@ -332,12 +334,12 @@ pub fn fn_contains(args: &[Value], focus: &Value) -> JsonataResult {
         }
     };
     match pattern_arg {
-        Value::String(sub) => Ok(Value::Bool(s.contains(sub.as_str()))),
+        Value::String(sub) => Ok(Value::Bool(s.contains(&**sub))),
         Value::Object(obj) if obj.contains_key("pattern") => {
             // Regex object — use compile_regex to properly handle flags.
             if let Some(Value::String(pat)) = obj.get("pattern") {
-                let flags = match obj.get("flags") {
-                    Some(Value::String(f)) => f.as_str(),
+                let flags: &str = match obj.get("flags") {
+                    Some(Value::String(f)) => f,
                     _ => "",
                 };
                 let re = crate::stdlib::regex::compile_regex(pat, flags).map_err(|e| {
@@ -366,8 +368,8 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     // Non-string first arg → undefined
-    let s = match &args[0] {
-        Value::String(s) => s.as_str(),
+    let s: &str = match &args[0] {
+        Value::String(s) => s,
         _ => return Ok(Value::Undefined),
     };
     if args.len() < 2 {
@@ -405,7 +407,7 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
                     .map(|(i, c)| &s[i..i + c.len_utf8()])
                     .collect()
             } else {
-                s.split(sep.as_str()).collect()
+                s.split(&**sep).collect()
             };
             let mut result: Vec<Value> = splits
                 .into_iter()
@@ -419,8 +421,8 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
         }
         Value::Object(obj) if obj.contains_key("pattern") => {
             if let Some(Value::String(pat)) = obj.get("pattern") {
-                let flags = match obj.get("flags") {
-                    Some(Value::String(f)) => f.as_str(),
+                let flags: &str = match obj.get("flags") {
+                    Some(Value::String(f)) => f,
                     _ => "",
                 };
                 let re = crate::stdlib::regex::compile_regex(pat, flags).map_err(|e| {
@@ -452,7 +454,7 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    Ok(Value::Array(parts))
+    Ok(Value::Array(Rc::new(parts)))
 }
 
 pub fn fn_join(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -472,8 +474,8 @@ pub fn fn_join(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    let sep = match args.get(1) {
-        Some(Value::String(s)) => s.as_str(),
+    let sep: &str = match args.get(1) {
+        Some(Value::String(s)) => s,
         None | Some(Value::Undefined) => "",
         _ => {
             return Err(JsonataError::new(
@@ -485,14 +487,14 @@ pub fn fn_join(args: &[Value], _focus: &Value) -> JsonataResult {
     let strings: Result<Vec<&str>, _> = arr
         .iter()
         .map(|v| match v {
-            Value::String(s) => Ok(s.as_str()),
+            Value::String(s) => Ok(s as &str),
             _ => Err(JsonataError::new(
                 "T0412",
                 "$join: array must contain only strings",
             )),
         })
         .collect();
-    Ok(Value::String(strings?.join(sep)))
+    Ok(Value::String(strings?.join(sep).into()))
 }
 
 pub fn fn_base64_encode(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -502,7 +504,7 @@ pub fn fn_base64_encode(args: &[Value], _focus: &Value) -> JsonataResult {
     match &args[0] {
         Value::String(s) => {
             let encoded = base64::engine::general_purpose::STANDARD.encode(s.as_bytes());
-            Ok(Value::String(encoded))
+            Ok(Value::String(encoded.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",
@@ -522,7 +524,7 @@ pub fn fn_base64_decode(args: &[Value], _focus: &Value) -> JsonataResult {
                 .map_err(|e| JsonataError::new("D3010", format!("$base64decode: {e}")))?;
             let result = String::from_utf8(decoded)
                 .map_err(|e| JsonataError::new("D3010", format!("$base64decode: {e}")))?;
-            Ok(Value::String(result))
+            Ok(Value::String(result.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",
@@ -565,7 +567,7 @@ pub fn fn_encode_url(args: &[Value], _focus: &Value) -> JsonataResult {
                 .replace("%2E", ".")
                 .replace("%5F", "_")
                 .replace("%7E", "~");
-            Ok(Value::String(encoded))
+            Ok(Value::String(encoded.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",
@@ -592,7 +594,7 @@ pub fn fn_encode_url_component(args: &[Value], _focus: &Value) -> JsonataResult 
                     .replace("%2E", ".")
                     .replace("%5F", "_")
                     .replace("%7E", "~");
-            Ok(Value::String(encoded))
+            Ok(Value::String(encoded.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",
@@ -611,7 +613,7 @@ pub fn fn_decode_url(args: &[Value], _focus: &Value) -> JsonataResult {
                 .decode_utf8()
                 .map_err(|e| JsonataError::new("D3140", format!("$decodeUrl: {e}")))?
                 .to_string();
-            Ok(Value::String(decoded))
+            Ok(Value::String(decoded.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",
@@ -630,7 +632,7 @@ pub fn fn_decode_url_component(args: &[Value], _focus: &Value) -> JsonataResult 
                 .decode_utf8()
                 .map_err(|e| JsonataError::new("D3140", format!("$decodeUrlComponent: {e}")))?
                 .to_string();
-            Ok(Value::String(decoded))
+            Ok(Value::String(decoded.into()))
         }
         _ => Err(JsonataError::new(
             "T0410",

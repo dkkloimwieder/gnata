@@ -32,12 +32,12 @@ pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
         let ts = now.timestamp();
         let millis = ts.as_millisecond();
         let s = format_with_picture(millis, &picture, tz_offset)?;
-        return Ok(Value::String(s));
+        return Ok(Value::String(s.into()));
     }
     // Default: ISO 8601 with milliseconds
     let ts = now.timestamp();
     let millis = ts.as_millisecond();
-    Ok(Value::String(format_default_iso(millis, 0)))
+    Ok(Value::String(format_default_iso(millis, 0).into()))
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -96,11 +96,11 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
             }
         };
         let s = format_with_picture(ms, &picture, tz_offset)?;
-        return Ok(Value::String(s));
+        return Ok(Value::String(s.into()));
     }
 
     // No picture: ISO 8601 default.
-    Ok(Value::String(format_default_iso(ms, tz_offset)))
+    Ok(Value::String(format_default_iso(ms, tz_offset).into()))
 }
 
 #[allow(clippy::missing_errors_doc)]
