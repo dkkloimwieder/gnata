@@ -20,6 +20,8 @@
 
 pub mod error;
 pub mod evaluator;
+pub mod expression;
+pub mod fast_path;
 pub mod lexer;
 pub mod parser;
 pub mod stdlib;
@@ -27,6 +29,8 @@ pub mod value;
 
 pub use error::JsonataError;
 pub use evaluator::{Environment, FunctionValue, eval};
+pub use expression::Expression;
+pub use fast_path::FastPath;
 pub use lexer::{Lexer, Token, TokenType};
 pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
 pub use value::Value;
