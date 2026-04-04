@@ -2008,7 +2008,13 @@ fn eval_subscript(
     // variable). If it resolves to a number, use it as a direct index.
     // If it resolves to an array of all-numeric values, use as index list.
     // If it errors or is non-numeric/non-index, fall through to per-element predicate filter.
-    if let Ok(index) = eval_fast_inner(arena, rhs, left, env) {
+    //
+    // Optimization: skip the probe for comparison/boolean predicates — they can't
+    // be numeric indices. Only probe when RHS could plausibly produce a number.
+    let rhs_could_be_numeric = !matches!(arena.get(rhs),
+        Expr::Binary { op, .. } if matches!(op.as_str(), "=" | "!=" | "<" | "<=" | ">" | ">=" | "and" | "or" | "in")
+    );
+    if rhs_could_be_numeric && let Ok(index) = eval_fast_inner(arena, rhs, left, env) {
         // Array of all-numeric values → select those indices (e.g. [[1..4]]).
         // Matches Go's selectByIndices: resolve negative indices (add len), sort
         // ascending, then select. This ensures [[1..3,8,-1]] on a 10-element array
