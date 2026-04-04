@@ -56,37 +56,23 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
     // Iterative evaluation loop with tail-call optimization.
     // Tail positions (Block last expr, Condition then/else, Binary ?:/??/~>)
     // update `cur_node`/`cur_env` and continue the loop instead of recursing.
+    //
+    // PERF: Single arena.get() + single match per iteration. Group-by check is
+    // merged into the dispatch arms to avoid a second match. Rc::clone(env)
+    // is deferred to the TCO path — non-looping arms use env directly.
     let mut cur_node = node;
-    let mut cur_env = Rc::clone(env);
+    let mut cur_env_owned: Option<Rc<Environment>> = None;
 
     loop {
         if cur_node.is_empty() {
             return Ok(Value::Undefined);
         }
 
+        let cur_env = cur_env_owned.as_ref().unwrap_or(env);
+
         // Check cancellation at every expression boundary.
         if cur_env.is_cancelled() {
             return Err(JsonataError::new("D3001", "evaluation cancelled"));
-        }
-
-        // If the node has a Group expression, evaluate the base node first,
-        // then apply group-by reduction.
-        // Exception: Path nodes with tuple steps (#$var) handle groups internally.
-        match arena.get(cur_node) {
-            Expr::Path {
-                group: Some(_),
-                steps,
-                ..
-            }
-                if !path_has_tuple_step(arena, steps) => {
-                    return eval_group_by(arena, cur_node, input, &cur_env);
-                }
-            Expr::Name { group: Some(_), .. }
-            | Expr::Variable { group: Some(_), .. }
-            | Expr::Function { group: Some(_), .. } => {
-                return eval_group_by(arena, cur_node, input, &cur_env);
-            }
-            _ => {}
         }
 
         match arena.get(cur_node) {
@@ -94,8 +80,14 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             Expr::ValueLit { value, .. } => return eval_value_lit(value),
             Expr::StringLit { value, .. } => return Ok(Value::String(value.clone().into())),
             Expr::NumberLit { value: n, .. } => return Ok(Value::Number(*n)),
-            Expr::Variable { name, .. } => return eval_variable(name, input, &cur_env),
-            Expr::Name { value, .. } => return eval_name(value, input),
+            Expr::Variable { name, group, .. } => {
+                if group.is_some() { return eval_group_by(arena, cur_node, input, cur_env); }
+                return eval_variable(name, input, cur_env);
+            }
+            Expr::Name { value, group, .. } => {
+                if group.is_some() { return eval_group_by(arena, cur_node, input, cur_env); }
+                return eval_name(value, input);
+            }
             Expr::Wildcard { .. } => return eval_wildcard(input),
             Expr::Descendant { .. } => {
                 let result = descendant_lookup(input);
@@ -117,10 +109,9 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             Expr::Placeholder { .. } => return Ok(Value::Undefined),
 
             // ── Tail-call optimized: Block ──
-            // Evaluate all but last expression, then loop for last.
             Expr::Block { expressions, .. } => {
                 let expressions = expressions.clone();
-                let child_env = Rc::new(Environment::new_child(Rc::clone(&cur_env)));
+                let child_env = Rc::new(Environment::new_child(Rc::clone(cur_env)));
                 if expressions.is_empty() {
                     return Ok(Value::Undefined);
                 }
@@ -128,12 +119,11 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                     eval_fast_inner(arena, expr, input, &child_env)?;
                 }
                 cur_node = expressions[expressions.len() - 1];
-                cur_env = child_env;
+                cur_env_owned = Some(child_env);
                 continue;
             }
 
             // ── Tail-call optimized: Condition ──
-            // Evaluate condition, then loop for the chosen branch.
             Expr::Condition {
                 condition,
                 then,
@@ -141,7 +131,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                 ..
             } => {
                 let (cond_id, then_id, else_id) = (*condition, *then, *else_);
-                let cond_val = eval_fast_inner(arena, cond_id, input, &cur_env)?;
+                let cond_val = eval_fast_inner(arena, cond_id, input, cur_env)?;
                 if cond_val.to_boolean() {
                     cur_node = then_id;
                     continue;
@@ -157,7 +147,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                 let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
                 match op.as_str() {
                     "?:" => {
-                        let left = eval_fast_inner(arena, lhs, input, &cur_env)?;
+                        let left = eval_fast_inner(arena, lhs, input, cur_env)?;
                         if left.to_boolean() {
                             return Ok(left);
                         }
@@ -165,31 +155,39 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                         continue;
                     }
                     "??" => {
-                        let left = eval_fast_inner(arena, lhs, input, &cur_env)?;
-                        if !left.is_undefined() {
-                            return Ok(left);
+                        let left = eval_fast_inner(arena, lhs, input, cur_env)?;
+                        if left.is_undefined() {
+                            cur_node = rhs;
+                            continue;
                         }
-                        cur_node = rhs;
-                        continue;
+                        return Ok(left);
                     }
                     "~>" => {
-                        let piped = eval_fast_inner(arena, lhs, input, &cur_env)?;
-                        return eval_chain(arena, rhs, &piped, input, &cur_env);
+                        let piped = eval_fast_inner(arena, lhs, input, cur_env)?;
+                        return eval_chain(arena, rhs, &piped, input, cur_env);
                     }
                     _ => unreachable!(),
                 }
             }
 
-            // ── Non-tail dispatch ──
-            Expr::Path { .. } => return eval_path(arena, cur_node, input, &cur_env),
-            Expr::Binary { .. } => return eval_binary(arena, cur_node, input, &cur_env),
-            Expr::Unary { .. } => return eval_unary(arena, cur_node, input, &cur_env),
-            Expr::Bind { .. } => return eval_bind(arena, cur_node, input, &cur_env),
-            Expr::Function { .. } => return eval_function(arena, cur_node, input, &cur_env),
-            Expr::Lambda { .. } => return eval_lambda(arena, cur_node, input, &cur_env),
-            Expr::Partial { .. } => return eval_partial(arena, cur_node, input, &cur_env),
-            Expr::Sort { .. } => return eval_sort(arena, cur_node, input, &cur_env),
-            Expr::Transform { .. } => return eval_transform(arena, cur_node, input, &cur_env),
+            // ── Non-tail dispatch (group-by check merged in) ──
+            Expr::Path { group, steps, .. } => {
+                if group.is_some() && !path_has_tuple_step(arena, steps) {
+                    return eval_group_by(arena, cur_node, input, cur_env);
+                }
+                return eval_path(arena, cur_node, input, cur_env);
+            }
+            Expr::Function { group, .. } => {
+                if group.is_some() { return eval_group_by(arena, cur_node, input, cur_env); }
+                return eval_function(arena, cur_node, input, cur_env);
+            }
+            Expr::Binary { .. } => return eval_binary(arena, cur_node, input, cur_env),
+            Expr::Unary { .. } => return eval_unary(arena, cur_node, input, cur_env),
+            Expr::Bind { .. } => return eval_bind(arena, cur_node, input, cur_env),
+            Expr::Lambda { .. } => return eval_lambda(arena, cur_node, input, cur_env),
+            Expr::Partial { .. } => return eval_partial(arena, cur_node, input, cur_env),
+            Expr::Sort { .. } => return eval_sort(arena, cur_node, input, cur_env),
+            Expr::Transform { .. } => return eval_transform(arena, cur_node, input, cur_env),
         }
     }
 }
