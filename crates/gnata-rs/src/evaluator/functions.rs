@@ -10,7 +10,7 @@ use crate::parser::{AstArena, Expr, NodeId};
 use crate::value::Value;
 
 use super::environment::Environment;
-use super::eval;
+use super::eval_fast_inner;
 
 /// A native Rust function implementing a JSONata built-in.
 /// `args` are the evaluated arguments; `focus` is the current context value.
@@ -104,7 +104,7 @@ pub fn eval_function(
     // Resolve the function value.
     // When % is used as a function callee (e.g., %(1)), the parent context
     // error S0217 should become T1006 (not a function).
-    let fn_val = match eval(arena, procedure, input, env) {
+    let fn_val = match eval_fast_inner(arena, procedure, input, env) {
         Ok(v) => v,
         Err(e) if e.code == "S0217" => Value::Undefined,
         Err(e) => return Err(e),
@@ -140,7 +140,7 @@ pub fn eval_function(
             args.push(Value::Undefined);
             continue;
         }
-        let val = eval(arena, arg_node, input, env)?;
+        let val = eval_fast_inner(arena, arg_node, input, env)?;
         args.push(val);
     }
 
@@ -244,7 +244,7 @@ pub fn eval_partial(
         _ => unreachable!("eval_partial called on non-Partial node"),
     };
 
-    let fn_val = eval(arena, procedure, input, env)?;
+    let fn_val = eval_fast_inner(arena, procedure, input, env)?;
     let func = match fn_val {
         Value::Function(f) => f,
         Value::Undefined => {
@@ -283,7 +283,7 @@ pub fn eval_partial(
             bound_args.push(Value::Undefined);
         } else {
             is_placeholder.push(false);
-            let val = eval(arena, arg_node, input, env)?;
+            let val = eval_fast_inner(arena, arg_node, input, env)?;
             bound_args.push(val);
         }
     }
@@ -383,7 +383,7 @@ pub fn call_function(
                     focus
                 };
 
-                let result = eval(arena, lambda.body, body_focus, &child_env);
+                let result = super::eval_with_stack_check(arena, lambda.body, body_focus, &child_env);
                 counter.depth.set(depth - 1);
 
                 match result {
