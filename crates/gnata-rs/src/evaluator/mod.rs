@@ -1670,18 +1670,33 @@ fn eval_binary(
         return eval_subscript_binary(arena, node, *lhs, *rhs, input, env);
     }
 
+    // Fast path: single binary operation (no left chain). Avoids Vec allocation.
+    let (op, lhs, rhs) = match arena.get(node) {
+        Expr::Binary { op, lhs, rhs, .. } => (op.as_str(), *lhs, *rhs),
+        _ => unreachable!(),
+    };
+
+    // Check if lhs is itself a flattenable binary (i.e., this is a chain).
+    let is_chain = matches!(arena.get(lhs), Expr::Binary { op, .. }
+        if !matches!(op.as_str(), "[" | "~>" | "?:" | "??"));
+
+    if !is_chain {
+        // Single binary op — evaluate directly, no Vec allocation.
+        let left = eval_fast_inner(arena, lhs, input, env)?;
+        return apply_binary_op(arena, op, left, rhs, lhs, input, env);
+    }
+
     // Flatten the left-associative chain. Walk the lhs spine collecting
     // (operator, rhs) pairs until we hit a non-flattenable node.
-    // `~>`, `?:`, `??` are handled by the TCO loop in eval().
-    let mut chain: Vec<(String, NodeId)> = Vec::new();
-    let mut leftmost = node;
+    let mut chain: Vec<(&str, NodeId)> = vec![(op, rhs)];
+    let mut leftmost = lhs;
 
     loop {
         match arena.get(leftmost) {
             Expr::Binary { op, lhs, rhs, .. }
                 if !matches!(op.as_str(), "[" | "~>" | "?:" | "??") =>
             {
-                chain.push((op.clone(), *rhs));
+                chain.push((op.as_str(), *rhs));
                 leftmost = *lhs;
             }
             _ => break,
@@ -1695,8 +1710,8 @@ fn eval_binary(
     let mut result = eval_fast_inner(arena, leftmost, input, env)?;
 
     // Apply each operator iteratively.
-    for (op, rhs) in &chain {
-        result = apply_binary_op(arena, op, result, *rhs, leftmost, input, env)?;
+    for &(op, rhs) in &chain {
+        result = apply_binary_op(arena, op, result, rhs, leftmost, input, env)?;
     }
     Ok(result)
 }
