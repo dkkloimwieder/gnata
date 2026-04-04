@@ -2018,10 +2018,12 @@ fn eval_subscript(
         // When there's an index variable, wrap in array so the predicate filter
         // path handles index binding correctly (like Go's evalSubscriptLeft).
 
-    let arr: Vec<Value> = match left {
-        Value::Array(a) => a.to_vec(),
-        Value::Sequence(s) => s.to_vec(),
-        _ => vec![left.clone()],
+    // Avoid cloning: borrow the array as a slice where possible.
+    let owned_arr;
+    let arr: &[Value] = match &left {
+        Value::Array(a) => a,
+        Value::Sequence(s) => { owned_arr = s.values.clone(); &owned_arr }
+        _ => { owned_arr = vec![left.clone()]; &owned_arr }
     };
 
     // Try evaluating RHS as a simple expression (might be a numeric literal or
