@@ -1665,16 +1665,19 @@ fn eval_binary(
         return eval_subscript_binary(arena, node, *lhs, *rhs, input, env);
     }
 
-    // Evaluate lhs and rhs, apply operator. No chain flattening — just recurse.
-    // Stack safety for deep left-chains (a + b + c + ... × 1000) is handled by
-    // eval_with_stack_check which only allocates a new stack segment when needed
-    // (~1ns check, segment alloc only on deep recursion).
     let (op, lhs, rhs) = match arena.get(node) {
         Expr::Binary { op, lhs, rhs, .. } => (op.as_str(), *lhs, *rhs),
         _ => unreachable!(),
     };
 
-    let left = eval_with_stack_check(arena, lhs, input, env)?;
+    // Only use stacker check when lhs is a Binary (could recurse into another
+    // eval_binary creating a deep chain). Leaf nodes (Name, Number, Variable, etc.)
+    // are evaluated directly without the closure overhead.
+    let left = if matches!(arena.get(lhs), Expr::Binary { .. }) {
+        eval_with_stack_check(arena, lhs, input, env)?
+    } else {
+        eval_fast_inner(arena, lhs, input, env)?
+    };
     apply_binary_op(arena, op, left, rhs, lhs, input, env)
 }
 
