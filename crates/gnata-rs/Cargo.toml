@@ -41,7 +41,7 @@ bumpalo = "3.17"
 # RNG
 fastrand = "2"
 
-# Stack growth
+# Stack growth (mirrors Go's auto-growing goroutine stacks)
 stacker = "0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

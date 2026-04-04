@@ -29,81 +29,153 @@ use crate::value::{Sequence, Value};
 /// stack overflows, cancellation, and other evaluation failures.
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     // Grow the stack on demand to prevent overflow on deep recursion.
-    // This mirrors Go's auto-growing goroutine stacks.
-    stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
+    // This mirrors Go's auto-growing goroutine stacks. The check is a single
+    // pointer comparison (~1-2ns); new segments are only allocated when needed.
+    stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
         eval_inner(arena, node, input, env)
     })
 }
 
+#[allow(clippy::too_many_lines, clippy::needless_continue)]
 fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
-    if node.is_empty() {
-        return Ok(Value::Undefined);
-    }
+    // Iterative evaluation loop with tail-call optimization.
+    // Tail positions (Block last expr, Condition then/else, Binary ?:/??/~>)
+    // update `cur_node`/`cur_env` and continue the loop instead of recursing.
+    let mut cur_node = node;
+    let mut cur_env = Rc::clone(env);
 
-    // Check cancellation at every expression boundary.
-    if env.is_cancelled() {
-        return Err(JsonataError::new("D3001", "evaluation cancelled"));
-    }
+    loop {
+        if cur_node.is_empty() {
+            return Ok(Value::Undefined);
+        }
 
-    // If the node has a Group expression, evaluate the base node first,
-    // then apply group-by reduction.
-    // Exception: Path nodes with tuple steps (#$var) handle groups internally.
-    match arena.get(node) {
-        Expr::Path {
-            group: Some(_),
-            steps,
-            ..
+        // Check cancellation at every expression boundary.
+        if cur_env.is_cancelled() {
+            return Err(JsonataError::new("D3001", "evaluation cancelled"));
         }
-            if !path_has_tuple_step(arena, steps) => {
-                return eval_group_by(arena, node, input, env);
-            }
-        Expr::Name { group: Some(_), .. }
-        | Expr::Variable { group: Some(_), .. }
-        | Expr::Function { group: Some(_), .. } => {
-            return eval_group_by(arena, node, input, env);
-        }
-        _ => {}
-    }
 
-    match arena.get(node) {
-        Expr::ValueLit { value, .. } => eval_value_lit(value),
-        Expr::StringLit { value, .. } => Ok(Value::String(value.clone())),
-        Expr::NumberLit { value: n, .. } => Ok(Value::Number(*n)),
-        Expr::Variable { name, .. } => eval_variable(name, input, env),
-        Expr::Name { value, .. } => eval_name(value, input),
-        Expr::Wildcard { .. } => eval_wildcard(input),
-        Expr::Descendant { .. } => {
-            let result = descendant_lookup(input);
-            // Collapse standalone descendant (not in path context).
-            match result {
-                Value::Sequence(seq) => Ok(seq.collapse()),
-                other => Ok(other),
+        // If the node has a Group expression, evaluate the base node first,
+        // then apply group-by reduction.
+        // Exception: Path nodes with tuple steps (#$var) handle groups internally.
+        match arena.get(cur_node) {
+            Expr::Path {
+                group: Some(_),
+                steps,
+                ..
             }
-        }
-        Expr::Path { .. } => eval_path(arena, node, input, env),
-        Expr::Binary { .. } => eval_binary(arena, node, input, env),
-        Expr::Unary { .. } => eval_unary(arena, node, input, env),
-        Expr::Block { .. } => eval_block(arena, node, input, env),
-        Expr::Condition { .. } => eval_condition(arena, node, input, env),
-        Expr::Bind { .. } => eval_bind(arena, node, input, env),
-        Expr::Function { .. } => eval_function(arena, node, input, env),
-        Expr::Lambda { .. } => eval_lambda(arena, node, input, env),
-        Expr::Partial { .. } => eval_partial(arena, node, input, env),
-        Expr::Sort { .. } => eval_sort(arena, node, input, env),
-        Expr::Regex { pattern, flags, .. } => Ok(eval_regex(pattern, flags)),
-        Expr::Transform { .. } => eval_transform(arena, node, input, env),
-        Expr::Parent { .. } => {
-            // % retrieves parent context stored by path tuple evaluation.
-            // In Go, nil parent (equivalent to Null/Undefined) triggers S0217.
-            match env.lookup("%%") {
-                Some(val) if !val.is_null() && !val.is_undefined() => Ok(val),
-                _ => Err(JsonataError::new(
-                    "S0217",
-                    "% operator used outside of a valid path context",
-                )),
+                if !path_has_tuple_step(arena, steps) => {
+                    return eval_group_by(arena, cur_node, input, &cur_env);
+                }
+            Expr::Name { group: Some(_), .. }
+            | Expr::Variable { group: Some(_), .. }
+            | Expr::Function { group: Some(_), .. } => {
+                return eval_group_by(arena, cur_node, input, &cur_env);
             }
+            _ => {}
         }
-        Expr::Placeholder { .. } => Ok(Value::Undefined),
+
+        match arena.get(cur_node) {
+            // ── Leaf nodes ──
+            Expr::ValueLit { value, .. } => return eval_value_lit(value),
+            Expr::StringLit { value, .. } => return Ok(Value::String(value.clone())),
+            Expr::NumberLit { value: n, .. } => return Ok(Value::Number(*n)),
+            Expr::Variable { name, .. } => return eval_variable(name, input, &cur_env),
+            Expr::Name { value, .. } => return eval_name(value, input),
+            Expr::Wildcard { .. } => return eval_wildcard(input),
+            Expr::Descendant { .. } => {
+                let result = descendant_lookup(input);
+                return match result {
+                    Value::Sequence(seq) => Ok(seq.collapse()),
+                    other => Ok(other),
+                };
+            }
+            Expr::Regex { pattern, flags, .. } => return Ok(eval_regex(pattern, flags)),
+            Expr::Parent { .. } => {
+                return match cur_env.lookup("%%") {
+                    Some(val) if !val.is_null() && !val.is_undefined() => Ok(val),
+                    _ => Err(JsonataError::new(
+                        "S0217",
+                        "% operator used outside of a valid path context",
+                    )),
+                };
+            }
+            Expr::Placeholder { .. } => return Ok(Value::Undefined),
+
+            // ── Tail-call optimized: Block ──
+            // Evaluate all but last expression, then loop for last.
+            Expr::Block { expressions, .. } => {
+                let expressions = expressions.clone();
+                let child_env = Rc::new(Environment::new_child(Rc::clone(&cur_env)));
+                if expressions.is_empty() {
+                    return Ok(Value::Undefined);
+                }
+                for &expr in &expressions[..expressions.len() - 1] {
+                    eval(arena, expr, input, &child_env)?;
+                }
+                cur_node = expressions[expressions.len() - 1];
+                cur_env = child_env;
+                continue;
+            }
+
+            // ── Tail-call optimized: Condition ──
+            // Evaluate condition, then loop for the chosen branch.
+            Expr::Condition {
+                condition,
+                then,
+                else_,
+                ..
+            } => {
+                let (cond_id, then_id, else_id) = (*condition, *then, *else_);
+                let cond_val = eval(arena, cond_id, input, &cur_env)?;
+                if cond_val.to_boolean() {
+                    cur_node = then_id;
+                    continue;
+                } else if let Some(e) = else_id {
+                    cur_node = e;
+                    continue;
+                }
+                return Ok(Value::Undefined);
+            }
+
+            // ── Tail-call optimized: Binary ?:, ??, ~> ──
+            Expr::Binary { op, lhs, rhs, .. } if op == "?:" || op == "??" || op == "~>" => {
+                let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
+                match op.as_str() {
+                    "?:" => {
+                        let left = eval(arena, lhs, input, &cur_env)?;
+                        if left.to_boolean() {
+                            return Ok(left);
+                        }
+                        cur_node = rhs;
+                        continue;
+                    }
+                    "??" => {
+                        let left = eval(arena, lhs, input, &cur_env)?;
+                        if !left.is_undefined() {
+                            return Ok(left);
+                        }
+                        cur_node = rhs;
+                        continue;
+                    }
+                    "~>" => {
+                        let piped = eval(arena, lhs, input, &cur_env)?;
+                        return eval_chain(arena, rhs, &piped, input, &cur_env);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            // ── Non-tail dispatch ──
+            Expr::Path { .. } => return eval_path(arena, cur_node, input, &cur_env),
+            Expr::Binary { .. } => return eval_binary(arena, cur_node, input, &cur_env),
+            Expr::Unary { .. } => return eval_unary(arena, cur_node, input, &cur_env),
+            Expr::Bind { .. } => return eval_bind(arena, cur_node, input, &cur_env),
+            Expr::Function { .. } => return eval_function(arena, cur_node, input, &cur_env),
+            Expr::Lambda { .. } => return eval_lambda(arena, cur_node, input, &cur_env),
+            Expr::Partial { .. } => return eval_partial(arena, cur_node, input, &cur_env),
+            Expr::Sort { .. } => return eval_sort(arena, cur_node, input, &cur_env),
+            Expr::Transform { .. } => return eval_transform(arena, cur_node, input, &cur_env),
+        }
     }
 }
 
@@ -1569,6 +1641,7 @@ fn eval_path_function_step(
 // ── Binary operators (stub for Phase 5, full impl in Phase 7) ───────
 
 // Large dispatch function for all binary operator types.
+// Flattens left-associative chains iteratively to avoid deep recursion.
 #[allow(clippy::too_many_lines)]
 fn eval_binary(
     arena: &AstArena,
@@ -1576,15 +1649,114 @@ fn eval_binary(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    let (op, lhs, rhs) = match arena.get(node) {
-        Expr::Binary { op, lhs, rhs, .. } => (op.as_str(), *lhs, *rhs),
-        _ => unreachable!(),
-    };
+    // Handle subscript `[` separately — it needs AST-level lhs access
+    // for Descendant checks, index_var extraction, and keep_array.
+    if let Expr::Binary { op, lhs, rhs, .. } = arena.get(node)
+        && op == "["
+    {
+        return eval_subscript_binary(arena, node, *lhs, *rhs, input, env);
+    }
 
+    // Flatten the left-associative chain. Walk the lhs spine collecting
+    // (operator, rhs) pairs until we hit a non-flattenable node.
+    // `~>`, `?:`, `??` are handled by the TCO loop in eval().
+    let mut chain: Vec<(String, NodeId)> = Vec::new();
+    let mut leftmost = node;
+
+    loop {
+        match arena.get(leftmost) {
+            Expr::Binary { op, lhs, rhs, .. }
+                if !matches!(op.as_str(), "[" | "~>" | "?:" | "??") =>
+            {
+                chain.push((op.clone(), *rhs));
+                leftmost = *lhs;
+            }
+            _ => break,
+        }
+    }
+
+    // chain is outermost-first. Reverse to get innermost-first (left-to-right eval order).
+    chain.reverse();
+
+    // Evaluate the leftmost (non-binary) node.
+    let mut result = eval(arena, leftmost, input, env)?;
+
+    // Apply each operator iteratively.
+    for (op, rhs) in &chain {
+        result = apply_binary_op(arena, op, result, *rhs, leftmost, input, env)?;
+    }
+    Ok(result)
+}
+
+/// Subscript/filter binary `[` — needs AST-level access to lhs for
+/// Descendant checks, index_var extraction, and keep_array detection.
+fn eval_subscript_binary(
+    arena: &AstArena,
+    node: NodeId,
+    lhs: NodeId,
+    rhs: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    let left = if matches!(arena.get(lhs), Expr::Descendant { .. }) {
+        let descendants = descendant_lookup(input);
+        let mut seq = Sequence::new();
+        seq.append(input.clone());
+        match descendants {
+            Value::Array(arr) => {
+                for item in arr {
+                    seq.append(item);
+                }
+            }
+            Value::Sequence(s) => {
+                for item in s.values {
+                    seq.append(item);
+                }
+            }
+            Value::Undefined => {}
+            other => seq.append(other),
+        }
+        seq.collapse()
+    } else {
+        eval(arena, lhs, input, env)?
+    };
+    // Extract index variable from the LHS (e.g. $#$pos[...] → index_var="pos").
+    let index_var = match arena.get(lhs) {
+        Expr::Name { index, .. }
+        | Expr::Variable { index, .. }
+        | Expr::Binary { index, .. }
+        | Expr::Sort { index, .. } => index.clone(),
+        _ => None,
+    };
+    // Check keep_array: the [] suffix on this node or anywhere in the LHS chain.
+    let keep_array = has_keep_array(arena, node);
+    let result = eval_subscript(arena, rhs, &left, input, env, index_var.as_ref())?;
+    if keep_array {
+        match result {
+            Value::Array(_) => Ok(result),
+            Value::Undefined => Ok(Value::Array(vec![])),
+            scalar => Ok(Value::Array(vec![scalar])),
+        }
+    } else {
+        Ok(result)
+    }
+}
+
+/// Apply a single binary operator given a pre-evaluated left value and an unevaluated rhs node.
+/// `lhs_node` is the original LHS NodeId (used only for subscript `[` AST inspection).
+#[allow(clippy::too_many_lines)]
+fn apply_binary_op(
+    arena: &AstArena,
+    op: &str,
+    left: Value,
+    rhs: NodeId,
+    _lhs_node: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
     match op {
         // Short-circuit operators.
         "and" => {
-            let left = eval(arena, lhs, input, env)?;
             if !left.to_boolean() {
                 return Ok(Value::Bool(false));
             }
@@ -1592,7 +1764,6 @@ fn eval_binary(
             Ok(Value::Bool(right.to_boolean()))
         }
         "or" => {
-            let left = eval(arena, lhs, input, env)?;
             if left.to_boolean() {
                 return Ok(Value::Bool(true));
             }
@@ -1600,8 +1771,6 @@ fn eval_binary(
             Ok(Value::Bool(right.to_boolean()))
         }
         "?:" => {
-            // Elvis / default: return left if ToBoolean(left) is true, else right.
-            let left = eval(arena, lhs, input, env)?;
             if left.to_boolean() {
                 Ok(left)
             } else {
@@ -1609,71 +1778,20 @@ fn eval_binary(
             }
         }
         "??" => {
-            // Null-coalescing: left if not undefined. null IS a value.
-            let left = eval(arena, lhs, input, env)?;
             if left.is_undefined() {
                 eval(arena, rhs, input, env)
             } else {
                 Ok(left)
             }
         }
-        "~>" => {
-            // Chain/pipe operator.
-            let piped = eval(arena, lhs, input, env)?;
-            eval_chain(arena, rhs, &piped, input, env)
-        }
-        "[" => {
-            // Subscript/filter — evaluate left, then apply right as index or predicate.
-            // Special case: when LHS is ** (Descendant), include the root (input) in the
-            // left side, matching Go's evalSubscriptLeft which prepends input for Descendant.
-            let left = if matches!(arena.get(lhs), Expr::Descendant { .. }) {
-                let descendants = descendant_lookup(input);
-                let mut seq = Sequence::new();
-                seq.append(input.clone());
-                match descendants {
-                    Value::Array(arr) => {
-                        for item in arr {
-                            seq.append(item);
-                        }
-                    }
-                    Value::Sequence(s) => {
-                        for item in s.values {
-                            seq.append(item);
-                        }
-                    }
-                    Value::Undefined => {}
-                    other => seq.append(other),
-                }
-                seq.collapse()
-            } else {
-                eval(arena, lhs, input, env)?
-            };
-            // Extract index variable from the LHS (e.g. $#$pos[...] → index_var="pos").
-            let index_var = match arena.get(lhs) {
-                Expr::Name { index, .. }
-                | Expr::Variable { index, .. }
-                | Expr::Binary { index, .. }
-                | Expr::Sort { index, .. } => index.clone(),
-                _ => None,
-            };
-            // Check keep_array: the [] suffix on this node or anywhere in the LHS chain.
-            let keep_array = has_keep_array(arena, node);
-            let result = eval_subscript(arena, rhs, &left, input, env, index_var.as_ref())?;
-            if keep_array {
-                match result {
-                    Value::Array(_) => Ok(result),
-                    Value::Undefined => Ok(Value::Array(vec![])),
-                    scalar => Ok(Value::Array(vec![scalar])),
-                }
-            } else {
-                Ok(result)
-            }
-        }
+        "~>" => eval_chain(arena, rhs, &left, input, env),
         // Arithmetic operators.
-        "+" | "-" | "*" | "/" | "%" | "**" => eval_arithmetic(arena, op, lhs, rhs, input, env),
+        "+" | "-" | "*" | "/" | "%" | "**" => {
+            let right = eval(arena, rhs, input, env)?;
+            apply_arithmetic(op, &left, &right)
+        }
         // String concatenation.
         "&" => {
-            let left = eval(arena, lhs, input, env)?;
             let right = eval(arena, rhs, input, env)?;
             let ls = if left.is_undefined() {
                 String::new()
@@ -1689,7 +1807,6 @@ fn eval_binary(
         }
         // Equality.
         "=" => {
-            let left = eval(arena, lhs, input, env)?;
             let right = eval(arena, rhs, input, env)?;
             if left.is_undefined() || right.is_undefined() {
                 return Ok(Value::Bool(false));
@@ -1697,7 +1814,6 @@ fn eval_binary(
             Ok(Value::Bool(left.deep_equal(&right)))
         }
         "!=" => {
-            let left = eval(arena, lhs, input, env)?;
             let right = eval(arena, rhs, input, env)?;
             if left.is_undefined() || right.is_undefined() {
                 return Ok(Value::Bool(false));
@@ -1706,18 +1822,19 @@ fn eval_binary(
         }
         // Comparison.
         "<" | "<=" | ">" | ">=" => {
-            let left = eval(arena, lhs, input, env)?;
             let right = eval(arena, rhs, input, env)?;
             left.compare(&right, op)
         }
         // Membership.
         "in" => {
-            let left = eval(arena, lhs, input, env)?;
             let right = eval(arena, rhs, input, env)?;
             Ok(Value::Bool(left.contained_in(&right)))
         }
         // Range.
-        ".." => eval_range(arena, lhs, rhs, input, env),
+        ".." => {
+            let right = eval(arena, rhs, input, env)?;
+            apply_range(op, &left, &right)
+        }
         _ => Err(JsonataError::new(
             "D3001",
             format!("unknown binary operator: {op}"),
@@ -1725,16 +1842,8 @@ fn eval_binary(
     }
 }
 
-fn eval_arithmetic(
-    arena: &AstArena,
-    op: &str,
-    lhs: NodeId,
-    rhs: NodeId,
-    input: &Value,
-    env: &Rc<Environment>,
-) -> JsonataResult {
-    let left = eval(arena, lhs, input, env)?;
-    let right = eval(arena, rhs, input, env)?;
+/// Apply arithmetic operator to pre-evaluated values.
+fn apply_arithmetic(op: &str, left: &Value, right: &Value) -> JsonataResult {
     // Type-check non-undefined operands BEFORE undefined propagation.
     if !left.is_undefined() && !left.is_number() {
         return Err(JsonataError::new(
@@ -1783,16 +1892,8 @@ fn eval_arithmetic(
     Ok(Value::Number(result))
 }
 
-fn eval_range(
-    arena: &AstArena,
-    lhs: NodeId,
-    rhs: NodeId,
-    input: &Value,
-    env: &Rc<Environment>,
-) -> JsonataResult {
-    let left = eval(arena, lhs, input, env)?;
-    let right = eval(arena, rhs, input, env)?;
-
+/// Apply range operator to pre-evaluated values.
+fn apply_range(_op: &str, left: &Value, right: &Value) -> JsonataResult {
     // Type-check non-undefined operands BEFORE undefined propagation.
     if !left.is_undefined() && left.as_f64().is_none() {
         return Err(JsonataError::new(
@@ -2282,50 +2383,7 @@ fn eval_unary(
 
 // ── Block, condition, bind ──────────────────────────────────────────
 
-fn eval_block(
-    arena: &AstArena,
-    node: NodeId,
-    input: &Value,
-    env: &Rc<Environment>,
-) -> JsonataResult {
-    let expressions = match arena.get(node) {
-        Expr::Block { expressions, .. } => expressions.clone(),
-        _ => unreachable!(),
-    };
-
-    let child_env = Rc::new(Environment::new_child(Rc::clone(env)));
-    let mut last = Value::Undefined;
-    for &expr in &expressions {
-        last = eval(arena, expr, input, &child_env)?;
-    }
-    Ok(last)
-}
-
-fn eval_condition(
-    arena: &AstArena,
-    node: NodeId,
-    input: &Value,
-    env: &Rc<Environment>,
-) -> JsonataResult {
-    let (condition, then, else_) = match arena.get(node) {
-        Expr::Condition {
-            condition,
-            then,
-            else_,
-            ..
-        } => (*condition, *then, *else_),
-        _ => unreachable!(),
-    };
-
-    let cond = eval(arena, condition, input, env)?;
-    if cond.to_boolean() {
-        eval(arena, then, input, env)
-    } else if let Some(e) = else_ {
-        eval(arena, e, input, env)
-    } else {
-        Ok(Value::Undefined)
-    }
-}
+// eval_block and eval_condition are handled inline in eval() loop for TCO.
 
 fn eval_bind(
     arena: &AstArena,
