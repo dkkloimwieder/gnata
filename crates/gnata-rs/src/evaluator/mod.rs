@@ -1665,50 +1665,17 @@ fn eval_binary(
         return eval_subscript_binary(arena, node, *lhs, *rhs, input, env);
     }
 
-    // Fast path: single binary operation (no left chain). Avoids Vec allocation.
+    // Evaluate lhs and rhs, apply operator. No chain flattening — just recurse.
+    // Stack safety for deep left-chains (a + b + c + ... × 1000) is handled by
+    // eval_with_stack_check which only allocates a new stack segment when needed
+    // (~1ns check, segment alloc only on deep recursion).
     let (op, lhs, rhs) = match arena.get(node) {
         Expr::Binary { op, lhs, rhs, .. } => (op.as_str(), *lhs, *rhs),
         _ => unreachable!(),
     };
 
-    // Check if lhs is itself a flattenable binary (i.e., this is a chain).
-    let is_chain = matches!(arena.get(lhs), Expr::Binary { op, .. }
-        if !matches!(op.as_str(), "[" | "~>" | "?:" | "??"));
-
-    if !is_chain {
-        // Single binary op — evaluate directly, no Vec allocation.
-        let left = eval_fast_inner(arena, lhs, input, env)?;
-        return apply_binary_op(arena, op, left, rhs, lhs, input, env);
-    }
-
-    // Flatten the left-associative chain. Walk the lhs spine collecting
-    // (operator, rhs) pairs until we hit a non-flattenable node.
-    let mut chain: Vec<(&str, NodeId)> = vec![(op, rhs)];
-    let mut leftmost = lhs;
-
-    loop {
-        match arena.get(leftmost) {
-            Expr::Binary { op, lhs, rhs, .. }
-                if !matches!(op.as_str(), "[" | "~>" | "?:" | "??") =>
-            {
-                chain.push((op.as_str(), *rhs));
-                leftmost = *lhs;
-            }
-            _ => break,
-        }
-    }
-
-    // chain is outermost-first. Reverse to get innermost-first (left-to-right eval order).
-    chain.reverse();
-
-    // Evaluate the leftmost (non-binary) node.
-    let mut result = eval_fast_inner(arena, leftmost, input, env)?;
-
-    // Apply each operator iteratively.
-    for &(op, rhs) in &chain {
-        result = apply_binary_op(arena, op, result, rhs, leftmost, input, env)?;
-    }
-    Ok(result)
+    let left = eval_with_stack_check(arena, lhs, input, env)?;
+    apply_binary_op(arena, op, left, rhs, lhs, input, env)
 }
 
 /// Subscript/filter binary `[` — needs AST-level access to lhs for
