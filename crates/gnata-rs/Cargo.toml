@@ -41,6 +41,9 @@ bumpalo = "3.17"
 # RNG
 fastrand = "2"
 
+# Fast hashing (replaces SipHash for IndexMap — 3-5x faster on short strings)
+rustc-hash = "2"
+
 # Stack growth (mirrors Go's auto-growing goroutine stacks)
 stacker = "0.1"
 

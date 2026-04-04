@@ -33,4 +33,4 @@ pub use expression::Expression;
 pub use fast_path::FastPath;
 pub use lexer::{Lexer, Token, TokenType};
 pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
-pub use value::Value;
+pub use value::{FxIndexMap, Value};

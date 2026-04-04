@@ -399,13 +399,13 @@ pub fn fn_single(
 
 /// Helper: sift a single object, passing (value, key, object) to the predicate.
 fn sift_object(
-    obj: &Rc<indexmap::IndexMap<String, Value>>,
+    obj: &Rc<crate::value::FxIndexMap<String, Value>>,
     func: &crate::evaluator::functions::FunctionValue,
     obj_val: &Value,
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
-    let mut result = indexmap::IndexMap::new();
+    let mut result = crate::value::FxIndexMap::default();
     for (key, val) in obj.iter() {
         let call_args = vec![val.clone(), Value::String(key.as_str().into()), obj_val.clone()];
         let keep = call_function(func, &call_args, val, env, arena)?;

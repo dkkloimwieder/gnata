@@ -7,9 +7,14 @@ pub use sequence::Sequence;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde_json::Number;
 
 use crate::error::{JsonataError, JsonataResult};
+
+/// Insertion-ordered map with FxHash for fast key lookup.
+/// FxHash is 3-5x faster than SipHash on short strings (typical JSON keys).
+pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// Core value type for JSONata evaluation.
 ///
@@ -30,7 +35,7 @@ pub enum Value {
     Number(f64),
     String(Rc<str>),
     Array(Rc<Vec<Value>>),
-    Object(Rc<IndexMap<String, Value>>),
+    Object(Rc<FxIndexMap<String, Value>>),
     /// Internal sequence used during evaluation. Never returned to users.
     Sequence(Sequence),
     /// Function value (built-in, lambda, partial application).
@@ -113,7 +118,7 @@ impl Value {
         }
     }
 
-    pub fn as_object(&self) -> Option<&IndexMap<String, Value>> {
+    pub fn as_object(&self) -> Option<&FxIndexMap<String, Value>> {
         match self {
             Value::Object(o) => Some(o),
             _ => None,
@@ -508,11 +513,11 @@ mod tests {
 
     #[test]
     fn deep_equal_objects() {
-        let mut a = IndexMap::new();
+        let mut a = crate::value::FxIndexMap::default();
         a.insert("x".into(), Value::Number(1.0));
         a.insert("y".into(), Value::Number(2.0));
 
-        let mut b = IndexMap::new();
+        let mut b = crate::value::FxIndexMap::default();
         b.insert("y".into(), Value::Number(2.0));
         b.insert("x".into(), Value::Number(1.0));
 

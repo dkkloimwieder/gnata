@@ -370,7 +370,7 @@ fn collect_descendants(input: &Value, seq: &mut Sequence) {
 fn eval_regex(pattern: &str, flags: &str) -> Value {
     // For now, return a map with pattern and flags for the regex.
     // Full regex evaluation will be implemented with the stdlib.
-    let mut obj = indexmap::IndexMap::new();
+    let mut obj = crate::value::FxIndexMap::default();
     obj.insert("pattern".into(), Value::String(pattern.into()));
     obj.insert("flags".into(), Value::String(flags.into()));
     Value::Object(Rc::new(obj))
@@ -1316,7 +1316,7 @@ fn eval_tuple_group(
     group: &crate::parser::GroupExpr,
     ctxs: &[(Value, Rc<Environment>)],
 ) -> JsonataResult {
-    let mut result_map = indexmap::IndexMap::<String, Value>::new();
+    let mut result_map = crate::value::FxIndexMap::<String, Value>::default();
 
     for pair in &group.pairs {
         let key_node = pair[0];
@@ -1324,8 +1324,8 @@ fn eval_tuple_group(
 
         // Phase 1: group ctxs by key.
         let mut key_order: Vec<String> = Vec::new();
-        let mut groups: indexmap::IndexMap<String, (Vec<Value>, Vec<Rc<Environment>>)> =
-            indexmap::IndexMap::new();
+        let mut groups: crate::value::FxIndexMap<String, (Vec<Value>, Vec<Rc<Environment>>)> =
+            crate::value::FxIndexMap::default();
 
         for (item, item_env) in ctxs {
             let key_val = eval_fast_inner(arena, key_node, item, item_env)?;
@@ -2240,7 +2240,7 @@ fn eval_chain_step(
 /// Returns the first match object if the regex matches, or Undefined if not.
 fn apply_regex_chain(
     piped: &Value,
-    regex_obj: &indexmap::IndexMap<String, Value>,
+    regex_obj: &crate::value::FxIndexMap<String, Value>,
 ) -> JsonataResult {
     let s = match piped {
         Value::String(s) => &**s,
@@ -2259,7 +2259,7 @@ fn apply_regex_chain(
     if let Some(caps) = re.captures(s) {
         let m = caps.get(0).ok_or_else(|| JsonataError::new("D0000", "capture group 0 always exists when captures succeed"))?;
         // Build match object similar to $match.
-        let mut obj = indexmap::IndexMap::new();
+        let mut obj = crate::value::FxIndexMap::default();
         obj.insert("match".into(), Value::String(m.as_str().into()));
         let start = s[..m.start()].chars().count();
         let end = s[..m.end()].chars().count();
@@ -2346,7 +2346,7 @@ fn eval_unary(
         }
         "{" => {
             // Object constructor.
-            let mut obj = indexmap::IndexMap::new();
+            let mut obj = crate::value::FxIndexMap::default();
             // lhs is flat [k0,v0,k1,v1,...]
             let mut i = 0;
             while i + 1 < lhs_nodes.len() {
@@ -2740,7 +2740,7 @@ fn eval_transform(
 fn deep_clone(v: &Value) -> Value {
     match v {
         Value::Object(obj) => {
-            let cloned: indexmap::IndexMap<String, Value> = obj
+            let cloned: crate::value::FxIndexMap<String, Value> = obj
                 .iter()
                 .map(|(k, v)| (k.clone(), deep_clone(v)))
                 .collect();
@@ -2978,7 +2978,7 @@ fn eval_group_by(
         other => vec![other],
     };
 
-    let mut out_obj = indexmap::IndexMap::new();
+    let mut out_obj = crate::value::FxIndexMap::default();
     let mut key_set = std::collections::HashSet::new();
 
     for pair in &group.pairs {
@@ -3820,7 +3820,7 @@ mod tests {
     fn group_by_variable() {
         // Test group-by on a $$ variable (case026)
         let result = eval_expr(r#"$${id: value}"#, &Value::from_json_str("[]").unwrap()).unwrap();
-        assert_eq!(result, Value::Object(Rc::new(indexmap::IndexMap::new())));
+        assert_eq!(result, Value::Object(Rc::new(crate::value::FxIndexMap::default())));
     }
 
     // ── Variable binding in blocks ──────────────────────────────
