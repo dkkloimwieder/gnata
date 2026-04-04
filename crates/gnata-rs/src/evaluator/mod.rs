@@ -324,7 +324,7 @@ fn descendant_lookup(input: &Value) -> Value {
     collect_descendants(input, &mut seq);
     // Return as Sequence (not collapsed) so that appendToSequence callers
     // can flatten properly. collapse() is called by the caller when needed.
-    Value::Sequence(seq)
+    Value::Sequence(Box::new(seq))
 }
 
 /// Recursively collect all values at all depths from objects and arrays.
@@ -1546,7 +1546,7 @@ fn eval_path_step(
             return if seq.values.is_empty() {
                 Ok(Value::Undefined)
             } else {
-                Ok(Value::Sequence(seq))
+                Ok(Value::Sequence(Box::new(seq)))
             };
         }
         Expr::Binary { op, lhs, .. } if op == "[" && !lhs.is_empty() && !prev_was_mapper => {
@@ -1642,7 +1642,7 @@ fn eval_path_function_step(
     }
 
     // For lambdas, prepend path element when fewer args than params.
-    if let FunctionValue::Lambda(ref lam) = func
+    if let FunctionValue::Lambda(ref lam) = *func
         && args.len() < lam.params.len()
     {
         args.insert(0, item.clone());
@@ -2234,7 +2234,7 @@ fn eval_chain_step(
                         call_function(&outer, &[intermediate], focus, &env_clone, arena)
                     },
                 );
-                return Ok(Value::Function(FunctionValue::EnvAwareBuiltin(composed)));
+                return Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(composed))));
             }
             {
                 let result = call_function(func, std::slice::from_ref(piped), input, env, arena)?;
@@ -2747,9 +2747,9 @@ fn eval_transform(
         },
     );
 
-    Ok(Value::Function(FunctionValue::EnvAwareBuiltin(
+    Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(
         transform_fn,
-    )))
+    ))))
 }
 
 fn deep_clone(v: &Value) -> Value {

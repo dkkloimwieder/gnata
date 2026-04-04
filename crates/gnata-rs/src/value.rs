@@ -37,9 +37,11 @@ pub enum Value {
     Array(Rc<Vec<Value>>),
     Object(Rc<FxIndexMap<String, Value>>),
     /// Internal sequence used during evaluation. Never returned to users.
-    Sequence(Sequence),
+    /// Boxed to keep Value at 16 bytes (same as Go's interface{}).
+    Sequence(Box<Sequence>),
     /// Function value (built-in, lambda, partial application).
-    Function(crate::evaluator::FunctionValue),
+    /// Boxed to keep Value at 16 bytes.
+    Function(Box<crate::evaluator::FunctionValue>),
     /// Tail-call sentinel for TCO trampoline. Internal only.
     TailCall(Box<crate::evaluator::TailCall>),
 }
@@ -445,6 +447,17 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Size validation ───────────────────────────────────────────────
+
+    #[test]
+    fn value_size_is_compact() {
+        let size = std::mem::size_of::<Value>();
+        assert!(
+            size <= 24,
+            "Value should be ~16-24 bytes after boxing, got {size}"
+        );
+    }
 
     // ── Undefined/Null distinction ───────────────────────────────────
 

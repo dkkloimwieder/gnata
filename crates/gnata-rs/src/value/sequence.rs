@@ -160,7 +160,7 @@ mod tests {
         let inner = Sequence::with_items(vec![Value::Number(1.0), Value::Number(2.0)]);
         let mut outer = Sequence::new();
         outer.append(Value::Number(0.0));
-        outer.append(Value::Sequence(inner));
+        outer.append(Value::Sequence(Box::new(inner)));
         outer.append(Value::Number(3.0));
         assert_eq!(outer.values.len(), 4);
     }

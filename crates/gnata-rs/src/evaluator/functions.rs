@@ -146,7 +146,7 @@ pub fn eval_function(
 
     // Signature validation for SignedBuiltins at direct call site.
     // HOF callbacks bypass this (they go through apply_function instead).
-    if let FunctionValue::SignedBuiltin { signature, .. } = &func {
+    if let FunctionValue::SignedBuiltin { signature, .. } = &*func {
         let specs = super::parse_signature(signature)?;
         let (coerced, return_undefined) = super::process_call_args(&specs, &args)?;
         if return_undefined {
@@ -157,8 +157,8 @@ pub fn eval_function(
 
     // Tail-call optimization: if this call is in tail position within a
     // lambda body, return a TailCall sentinel instead of recursing.
-    if thunk && let FunctionValue::Lambda(_) = &func {
-        return Ok(Value::TailCall(Box::new(TailCall { func, args })));
+    if thunk && let FunctionValue::Lambda(_) = &*func {
+        return Ok(Value::TailCall(Box::new(TailCall { func: *func, args })));
     }
 
     let result = call_function(&func, &args, input, env, arena)?;
@@ -215,14 +215,14 @@ pub fn eval_lambda(
         })
         .unwrap_or_default();
 
-    Ok(Value::Function(FunctionValue::Lambda(Rc::new(Lambda {
+    Ok(Value::Function(Box::new(FunctionValue::Lambda(Rc::new(Lambda {
         params: param_names,
         body,
         closure: Rc::clone(env),
         thunk,
         signature: sig,
         captured_focus: input.clone(),
-    }))))
+    })))))
 }
 
 /// Evaluate a partial application node.
@@ -306,7 +306,7 @@ pub fn eval_partial(
         },
     );
 
-    Ok(Value::Function(FunctionValue::EnvAwareBuiltin(partial_fn)))
+    Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(partial_fn))))
 }
 
 /// Call a function value with arguments. Contains the trampoline loop for TCO.

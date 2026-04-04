@@ -2,8 +2,6 @@
 
 use std::rc::Rc;
 
-use indexmap::IndexMap;
-
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
@@ -87,7 +85,7 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
     match &args[0] {
         Value::Object(obj) => {
             let items = spread_one(obj);
-            Ok(Value::Sequence(crate::value::Sequence::with_items(items)))
+            Ok(Value::Sequence(Box::new(crate::value::Sequence::with_items(items))))
         }
         Value::Array(arr) => {
             let mut result = Vec::new();

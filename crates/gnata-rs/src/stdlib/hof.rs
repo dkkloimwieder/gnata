@@ -45,7 +45,7 @@ pub fn fn_map(
         }
     }
     // Return as Sequence — caller handles collapse with keep_array support.
-    Ok(Value::Sequence(seq))
+    Ok(Value::Sequence(Box::new(seq)))
 }
 
 pub fn fn_filter(
@@ -120,7 +120,7 @@ pub fn fn_reduce(
         }
     };
     // Check that the function accepts at least 2 parameters.
-    if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &func
+    if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &*func
         && lambda.params.len() < 2 {
             return Err(JsonataError::new(
                 "D3050",
@@ -136,7 +136,7 @@ pub fn fn_reduce(
         None => (arr[0].clone(), 1),
     };
     // Determine arity for passing index/array like Go does.
-    let param_count = if let FunctionValue::Lambda(ref lam) = func {
+    let param_count = if let FunctionValue::Lambda(ref lam) = *func {
         lam.params.len()
     } else {
         2 // default: (acc, item)
@@ -201,7 +201,7 @@ pub fn fn_each(
             seq.values.push(r);
         }
     }
-    Ok(Value::Sequence(seq))
+    Ok(Value::Sequence(Box::new(seq)))
 }
 
 pub fn fn_sift(

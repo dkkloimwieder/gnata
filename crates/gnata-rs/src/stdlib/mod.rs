@@ -158,14 +158,14 @@ pub fn register_all_on_rc(env: &Rc<Environment>) {
 }
 
 fn _mk_b(f: fn(&[Value], &Value) -> crate::error::JsonataResult) -> Value {
-    Value::Function(FunctionValue::Builtin(Rc::new(f)))
+    Value::Function(Box::new(FunctionValue::Builtin(Rc::new(f))))
 }
 
 fn _mk_sb(f: fn(&[Value], &Value) -> crate::error::JsonataResult, sig: &str) -> Value {
-    Value::Function(FunctionValue::SignedBuiltin {
+    Value::Function(Box::new(FunctionValue::SignedBuiltin {
         func: Rc::new(f),
         signature: sig.into(),
-    })
+    }))
 }
 
 fn _mk_e(
@@ -176,7 +176,7 @@ fn _mk_e(
         &crate::parser::AstArena,
     ) -> crate::error::JsonataResult,
 ) -> Value {
-    Value::Function(FunctionValue::EnvAwareBuiltin(Rc::new(f)))
+    Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(Rc::new(f))))
 }
 
 fn bind_builtin(
@@ -185,7 +185,7 @@ fn bind_builtin(
     f: fn(&[Value], &Value) -> crate::error::JsonataResult,
 ) {
     let func: Rc<BuiltinFn> = Rc::new(f);
-    env.bind(name.into(), Value::Function(FunctionValue::Builtin(func)));
+    env.bind(name.into(), Value::Function(Box::new(FunctionValue::Builtin(func))));
 }
 
 fn bind_signed_builtin(
@@ -197,10 +197,10 @@ fn bind_signed_builtin(
     let func: Rc<BuiltinFn> = Rc::new(f);
     env.bind(
         name.into(),
-        Value::Function(FunctionValue::SignedBuiltin {
+        Value::Function(Box::new(FunctionValue::SignedBuiltin {
             func,
             signature: signature.into(),
-        }),
+        })),
     );
 }
 
@@ -217,6 +217,6 @@ fn bind_env_builtin(
     let func: Rc<crate::evaluator::EnvAwareBuiltinFn> = Rc::new(f);
     env.bind(
         name.into(),
-        Value::Function(FunctionValue::EnvAwareBuiltin(func)),
+        Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(func))),
     );
 }
