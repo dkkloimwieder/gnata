@@ -44,10 +44,17 @@ impl CallCounter {
 /// Forms a linked chain via `parent`. All environments in a chain share
 /// the same `CallCounter` (via Rc) and cancellation token (via Arc).
 /// Bindings use `RefCell` for interior mutability, allowing `bind()` through `Rc`.
+///
+/// Non-local lookups are memoized in a per-environment cache so that
+/// repeated references to the same variable (e.g. a builtin like `$sum`
+/// inside a HOF callback) only walk the parent chain once.
 #[derive(Debug)]
 pub struct Environment {
     parent: Option<Rc<Environment>>,
     bindings: RefCell<HashMap<String, Value>>,
+    /// Lazy cache of non-local lookups. Populated on first parent-chain hit.
+    /// Vec-based for cache-line friendliness at typical sizes (0-5 entries).
+    cache: RefCell<Vec<(String, Value)>>,
     calls: Rc<CallCounter>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -58,6 +65,7 @@ impl Environment {
         Self {
             parent: None,
             bindings: RefCell::new(HashMap::new()),
+            cache: RefCell::new(Vec::new()),
             calls: Rc::new(CallCounter::new()),
             cancel: None,
         }
@@ -70,6 +78,7 @@ impl Environment {
         Self {
             parent: Some(parent),
             bindings: RefCell::new(HashMap::new()),
+            cache: RefCell::new(Vec::new()),
             calls,
             cancel,
         }
@@ -81,14 +90,29 @@ impl Environment {
         self.bindings.borrow_mut().insert(name, value);
     }
 
-    /// Look up a variable, walking the parent chain.
-    /// Returns a cloned value since bindings use RefCell.
+    /// Look up a variable, walking the parent chain iteratively.
+    /// Non-local results are cached so repeated lookups of the same name
+    /// from this environment are O(1) after the first hit.
     pub fn lookup(&self, name: &str) -> Option<Value> {
+        // 1. Check local bindings
         if let Some(v) = self.bindings.borrow().get(name) {
             return Some(v.clone());
         }
-        if let Some(ref parent) = self.parent {
-            return parent.lookup(name);
+        // 2. Check cache (only for non-local lookups)
+        for (k, v) in &*self.cache.borrow() {
+            if k == name {
+                return Some(v.clone());
+            }
+        }
+        // 3. Walk parent chain iteratively
+        let mut current = self.parent.as_ref();
+        while let Some(env) = current {
+            if let Some(v) = env.bindings.borrow().get(name) {
+                let result = v.clone();
+                self.cache.borrow_mut().push((name.to_string(), result.clone()));
+                return Some(result);
+            }
+            current = env.parent.as_ref();
         }
         None
     }
@@ -100,13 +124,16 @@ impl Environment {
         self_rc: &Rc<Environment>,
         name: &str,
     ) -> Option<(Value, Rc<Environment>)> {
-        if let Some(v) = self_rc.bindings.borrow().get(name) {
-            return Some((v.clone(), Rc::clone(self_rc)));
+        let mut current = self_rc;
+        loop {
+            if let Some(v) = current.bindings.borrow().get(name) {
+                return Some((v.clone(), Rc::clone(current)));
+            }
+            match &current.parent {
+                Some(parent) => current = parent,
+                None => return None,
+            }
         }
-        if let Some(ref parent) = self_rc.parent {
-            return Environment::lookup_with_env(parent, name);
-        }
-        None
     }
 
     /// Check only the direct bindings (no parent chain walk).
@@ -185,6 +212,7 @@ impl Environment {
         Self {
             parent: self.parent.clone(),
             bindings: RefCell::new(self.bindings.borrow().clone()),
+            cache: RefCell::new(Vec::new()),
             calls: Rc::clone(&self.calls),
             cancel: self.cancel.clone(),
         }
@@ -266,5 +294,50 @@ mod tests {
         let env = Rc::new(Environment::new());
         env.bind("x".into(), Value::Number(42.0));
         assert_eq!(env.lookup("x"), Some(Value::Number(42.0)));
+    }
+
+    #[test]
+    fn lookup_cache_populated_on_parent_hit() {
+        let root = Environment::new();
+        root.bind("builtin".into(), Value::Number(99.0));
+        let e1 = Rc::new(root);
+        let e2 = Rc::new(Environment::new_child(Rc::clone(&e1)));
+        let child = Environment::new_child(Rc::clone(&e2));
+
+        // First lookup walks the chain (depth 2)
+        assert_eq!(child.lookup("builtin"), Some(Value::Number(99.0)));
+        // Cache should now have the entry
+        assert_eq!(child.cache.borrow().len(), 1);
+        assert_eq!(child.cache.borrow()[0].0, "builtin");
+        // Second lookup hits the cache (no chain walk)
+        assert_eq!(child.lookup("builtin"), Some(Value::Number(99.0)));
+    }
+
+    #[test]
+    fn lookup_cache_not_used_for_local() {
+        let root = Environment::new();
+        root.bind("x".into(), Value::Number(1.0));
+        let env = Rc::new(root);
+        let child = Environment::new_child(env);
+        child.bind("x".into(), Value::Number(2.0));
+
+        // Local binding should be returned, not cached parent value
+        assert_eq!(child.lookup("x"), Some(Value::Number(2.0)));
+        // Cache should be empty (local hit doesn't populate cache)
+        assert!(child.cache.borrow().is_empty());
+    }
+
+    #[test]
+    fn lookup_with_env_iterative() {
+        let root = Environment::new();
+        root.bind("x".into(), Value::Number(1.0));
+        let e1 = Rc::new(root);
+        let e2 = Rc::new(Environment::new_child(Rc::clone(&e1)));
+        let e3 = Rc::new(Environment::new_child(Rc::clone(&e2)));
+
+        let (val, env) = Environment::lookup_with_env(&e3, "x").unwrap();
+        assert_eq!(val, Value::Number(1.0));
+        // Should find it in e1 (root)
+        assert!(Rc::ptr_eq(&env, &e1));
     }
 }
