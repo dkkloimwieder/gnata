@@ -1292,9 +1292,12 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
 /// Shallow equality check for Values (used for join flag parent comparison).
 /// This approximates Go's pointer equality by checking structural equality.
 fn value_ptr_eq(a: &Value, b: &Value) -> bool {
-    // In Go, this is a pointer comparison. We use structural equality
-    // as an approximation which is correct for the parent chain use case.
-    a == b
+    match (a, b) {
+        (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+        (Value::Array(a), Value::Array(b)) => Rc::ptr_eq(a, b),
+        (Value::String(a), Value::String(b)) => Rc::ptr_eq(a, b),
+        _ => a == b,
+    }
 }
 
 /// Apply a group-by expression to tuple contexts, using per-element environments.
@@ -2738,20 +2741,6 @@ fn eval_transform(
     ))))
 }
 
-fn deep_clone(v: &Value) -> Value {
-    match v {
-        Value::Object(obj) => {
-            let cloned: crate::value::FxIndexMap<String, Value> = obj
-                .iter()
-                .map(|(k, v)| (k.clone(), deep_clone(v)))
-                .collect();
-            Value::Object(Rc::new(cloned))
-        }
-        Value::Array(arr) => Value::Array(Rc::new(arr.iter().map(deep_clone).collect())),
-        other => other.clone(),
-    }
-}
-
 fn apply_transform(
     arena: &AstArena,
     pattern: NodeId,
@@ -2763,7 +2752,9 @@ fn apply_transform(
     if input.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let cloned = deep_clone(input);
+    // Shallow clone: Rc refcount bumps only. Rc::make_mut in replace_in_value
+    // handles copy-on-write — only containers along the mutation path are cloned.
+    let cloned = input.clone();
 
     let matched = eval_fast_inner(arena, pattern, &cloned, env)?;
 
@@ -2877,12 +2868,11 @@ fn compute_updated_object(
     Ok(result)
 }
 
-/// Recursively walk `value` and replace every occurrence of `original` (by value equality)
-/// with `replacement`. This is how we apply mutations from Go's pointer-based approach
-/// in Rust's owned-value model.
+/// Recursively walk `value` and replace every occurrence of `original` (by Rc pointer
+/// identity) with `replacement`. Since apply_transform uses shallow clone, targets
+/// share Rc pointers with the clone — pointer equality is both correct and O(1).
 fn replace_in_value(value: &mut Value, original: &Value, replacement: &Value) {
-    // Check if the current value itself matches the original (before borrowing internals).
-    if value == original {
+    if value_ptr_eq(value, original) {
         *value = replacement.clone();
         return;
     }
