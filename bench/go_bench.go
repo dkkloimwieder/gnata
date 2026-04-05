@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/recolabs/gnata"
 )
@@ -18,7 +19,9 @@ func main() {
 	datafile := flag.String("datafile", "", "JSON input file (overrides -data)")
 	n := flag.Int("n", 1, "iterations (for hot-loop benchmarking)")
 	stream := flag.Bool("stream", false, "stream mode: evaluate 4 expressions per iteration")
+	memstats := flag.Bool("memstats", false, "print runtime.MemStats to stderr after eval")
 	flag.Parse()
+	_ = memstats
 
 	jsonStr := *data
 	if *datafile != "" {
@@ -64,6 +67,14 @@ func main() {
 
 	out, _ := json.Marshal(result)
 	fmt.Println(string(out))
+
+	if *memstats {
+		runtime.GC()
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		fmt.Fprintf(os.Stderr, "MEMSTATS: alloc=%d total_alloc=%d sys=%d heap_inuse=%d heap_objects=%d num_gc=%d\n",
+			ms.Alloc, ms.TotalAlloc, ms.Sys, ms.HeapInuse, ms.HeapObjects, ms.NumGC)
+	}
 }
 
 func runStreamBench(jsonStr string, n int) {
