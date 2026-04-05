@@ -14,6 +14,17 @@ use std::rc::Rc;
 use crate::parser::{AstArena, Expr, NodeId};
 use crate::value::Value;
 
+/// A literal value that is `Send + Sync` — used by `ComparisonFastPath`
+/// so that `FastPath` (and thus `Expression`) can be shared across threads.
+/// Comparison RHS values are always JSON scalars.
+#[derive(Debug, Clone)]
+pub enum Literal {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+}
+
 /// Result of fast-path analysis on a compiled expression.
 #[derive(Debug, Clone)]
 pub enum FastPath {
@@ -32,7 +43,7 @@ pub enum FastPath {
 pub struct ComparisonFastPath {
     pub path: Vec<String>,
     pub op: ComparisonOp,
-    pub rhs: Value,
+    pub rhs: Literal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,14 +256,14 @@ fn try_function(arena: &AstArena, node: NodeId) -> Option<FuncFastPath> {
 }
 
 /// Extract a literal value from an AST node.
-fn extract_literal(arena: &AstArena, node: NodeId) -> Option<Value> {
+fn extract_literal(arena: &AstArena, node: NodeId) -> Option<Literal> {
     match arena.get(node) {
-        Expr::StringLit { value, .. } => Some(Value::String(value.as_str().into())),
-        Expr::NumberLit { value, .. } => Some(Value::Number(*value)),
+        Expr::StringLit { value, .. } => Some(Literal::String(value.clone())),
+        Expr::NumberLit { value, .. } => Some(Literal::Number(*value)),
         Expr::ValueLit { value, .. } => match value.as_str() {
-            "true" => Some(Value::Bool(true)),
-            "false" => Some(Value::Bool(false)),
-            "null" => Some(Value::Null),
+            "true" => Some(Literal::Bool(true)),
+            "false" => Some(Literal::Bool(false)),
+            "null" => Some(Literal::Null),
             _ => None,
         },
         _ => None,
@@ -324,7 +335,13 @@ fn eval_comparison(cmp: &ComparisonFastPath, input: &Value) -> Option<Value> {
         return None;
     }
 
-    let matches = lhs.deep_equal(&cmp.rhs);
+    let rhs_val = match &cmp.rhs {
+        Literal::Null => Value::Null,
+        Literal::Bool(b) => Value::Bool(*b),
+        Literal::Number(n) => Value::Number(*n),
+        Literal::String(s) => Value::String(s.as_str().into()),
+    };
+    let matches = lhs.deep_equal(&rhs_val);
     let result = match cmp.op {
         ComparisonOp::Equal => matches,
         ComparisonOp::NotEqual => !matches,

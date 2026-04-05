@@ -5,6 +5,7 @@
 //! recommended public API for evaluating JSONata expressions.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::error::JsonataResult;
 use crate::evaluator::Environment;
@@ -16,12 +17,22 @@ use crate::value::Value;
 ///
 /// Use [`Expression::compile`] to parse and optimize, then [`Expression::evaluate`]
 /// to run against input data. The compiled form can be reused across multiple inputs.
+///
+/// `Expression` is `Send + Sync`: the AST is wrapped in `Arc` so the same
+/// compiled expression can be shared across threads. Per-evaluation state
+/// (`Environment`, `Value`) is created on the calling thread and never escapes.
 pub struct Expression {
-    arena: AstArena,
+    arena: Arc<AstArena>,
     root: NodeId,
     fast_path: FastPath,
     source: String,
 }
+
+// Compile-time assertion: Expression must be Send + Sync.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Expression>();
+};
 
 impl Expression {
     /// Compile a JSONata expression string.
@@ -36,7 +47,7 @@ impl Expression {
         let fast_path = fast_path::analyze(&arena, root);
 
         Ok(Self {
-            arena,
+            arena: Arc::new(arena),
             root,
             fast_path,
             source: expr.to_string(),

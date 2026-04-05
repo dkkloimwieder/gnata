@@ -25,6 +25,7 @@ pub mod fast_path;
 pub mod lexer;
 pub mod parser;
 pub mod stdlib;
+pub mod stream;
 pub mod value;
 
 pub use error::JsonataError;
@@ -33,4 +34,5 @@ pub use expression::Expression;
 pub use fast_path::FastPath;
 pub use lexer::{Lexer, Token, TokenType};
 pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
+pub use stream::{MetricsHook, StreamEvaluator, StreamStats};
 pub use value::{FxIndexMap, Value};
