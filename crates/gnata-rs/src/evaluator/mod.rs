@@ -2797,9 +2797,7 @@ fn apply_transform(
     }
 
     let mut result = cloned;
-    for (original, updated) in &replacements {
-        replace_in_value(&mut result, original, updated);
-    }
+    replace_all_in_value(&mut result, &replacements);
     Ok(result)
 }
 
@@ -2869,23 +2867,27 @@ fn compute_updated_object(
     Ok(result)
 }
 
-/// Recursively walk `value` and replace every occurrence of `original` (by Rc pointer
-/// identity) with `replacement`. Since apply_transform uses shallow clone, targets
-/// share Rc pointers with the clone — pointer equality is both correct and O(1).
-fn replace_in_value(value: &mut Value, original: &Value, replacement: &Value) {
-    if value_ptr_eq(value, original) {
-        *value = replacement.clone();
-        return;
+/// Single-pass replacement: walk `value` once and replace every occurrence of any
+/// target in `replacements` (matched by Rc pointer identity). A single walk is
+/// required because `Rc::make_mut` on non-target containers during the walk would
+/// COW-copy their children, destroying the Rc identity that later per-target walks
+/// would need.
+fn replace_all_in_value(value: &mut Value, replacements: &[(Value, Value)]) {
+    for (original, replacement) in replacements {
+        if value_ptr_eq(value, original) {
+            *value = replacement.clone();
+            return;
+        }
     }
     match value {
         Value::Array(arr) => {
             for item in Rc::make_mut(arr).iter_mut() {
-                replace_in_value(item, original, replacement);
+                replace_all_in_value(item, replacements);
             }
         }
         Value::Object(obj) => {
             for v in Rc::make_mut(obj).values_mut() {
-                replace_in_value(v, original, replacement);
+                replace_all_in_value(v, replacements);
             }
         }
         _ => {}

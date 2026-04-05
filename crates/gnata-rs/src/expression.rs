@@ -8,10 +8,39 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::error::JsonataResult;
-use crate::evaluator::Environment;
+use crate::evaluator::{Environment, FunctionValue};
 use crate::fast_path::{self, FastPath};
 use crate::parser::{AstArena, NodeId, Parser, process_ast};
 use crate::value::Value;
+
+/// A user-defined function that extends the standard JSONata library.
+///
+/// Receives evaluated arguments and the current context value (focus).
+/// Must be `Send + Sync` for use with thread-safe `Expression` and `StreamEvaluator`.
+///
+/// Function names are registered without the leading `$` — users call them as
+/// `$functionName()` in expressions.
+pub type CustomFunc = Arc<dyn Fn(&[Value], &Value) -> JsonataResult + Send + Sync>;
+
+/// Create a root environment with all standard library functions plus custom functions.
+///
+/// The returned environment can be reused across multiple evaluations via
+/// [`Expression::evaluate_with_env`]. Reusing the environment avoids re-registering
+/// stdlib on every call.
+pub fn new_custom_env(custom_funcs: &[(String, CustomFunc)]) -> Rc<Environment> {
+    let mut env = Environment::new();
+    crate::stdlib::register_all(&mut env);
+    for (name, func) in custom_funcs {
+        let arc_fn = Arc::clone(func);
+        let builtin: Rc<crate::evaluator::BuiltinFn> =
+            Rc::new(move |args: &[Value], focus: &Value| arc_fn(args, focus));
+        env.bind(
+            name.clone(),
+            Value::Function(Box::new(FunctionValue::Builtin(builtin))),
+        );
+    }
+    Rc::new(env)
+}
 
 /// A compiled JSONata expression, ready for evaluation.
 ///
@@ -77,6 +106,30 @@ impl Expression {
         crate::eval(&self.arena, self.root, input, &env)
     }
 
+    /// Evaluate with user-defined custom functions.
+    ///
+    /// Creates a fresh environment with stdlib + the provided custom functions,
+    /// then evaluates. For repeated evaluations with the same custom functions,
+    /// prefer [`new_custom_env`] + [`Expression::evaluate_with_env`] to avoid
+    /// re-registering on every call.
+    ///
+    /// # Errors
+    /// Returns JSONata evaluation errors.
+    pub fn evaluate_with_custom_funcs(
+        &self,
+        input: &Value,
+        custom_funcs: &[(String, CustomFunc)],
+    ) -> JsonataResult {
+        if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
+            return Ok(result);
+        }
+        let env = new_custom_env(custom_funcs);
+        if !input.is_undefined() {
+            env.bind("$".into(), input.clone());
+        }
+        crate::eval(&self.arena, self.root, input, &env)
+    }
+
     /// Evaluate with a pre-configured environment.
     ///
     /// # Errors
@@ -122,5 +175,112 @@ impl std::fmt::Debug for Expression {
             .field("root", &self.root)
             .field("arena_size", &self.arena.len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_func_basic() {
+        let double: CustomFunc = Arc::new(|args: &[Value], _focus: &Value| {
+            let n = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(n * 2.0))
+        });
+        let expr = Expression::compile("$double(21)").unwrap();
+        let result = expr
+            .evaluate_with_custom_funcs(&Value::Undefined, &[("double".into(), double)])
+            .unwrap();
+        assert_eq!(result.as_f64(), Some(42.0));
+    }
+
+    #[test]
+    fn custom_func_with_focus() {
+        let get_type: CustomFunc = Arc::new(|_args: &[Value], focus: &Value| {
+            let t = if focus.is_object() { "object" } else { "other" };
+            Ok(Value::String(t.into()))
+        });
+        let expr = Expression::compile("$getType()").unwrap();
+        let input = Value::from_json_str(r#"{"a":1}"#).unwrap();
+        let result = expr
+            .evaluate_with_custom_funcs(&input, &[("getType".into(), get_type)])
+            .unwrap();
+        assert_eq!(result.as_str(), Some("object"));
+    }
+
+    #[test]
+    fn custom_func_alongside_stdlib() {
+        let greet: CustomFunc = Arc::new(|args: &[Value], _focus: &Value| {
+            let name = args.first().and_then(Value::as_str).unwrap_or("world");
+            Ok(Value::String(format!("hello {name}").into()))
+        });
+        let expr = Expression::compile("$uppercase($greet(name))").unwrap();
+        let input = Value::from_json_str(r#"{"name":"alice"}"#).unwrap();
+        let result = expr
+            .evaluate_with_custom_funcs(&input, &[("greet".into(), greet)])
+            .unwrap();
+        assert_eq!(result.as_str(), Some("HELLO ALICE"));
+    }
+
+    #[test]
+    fn custom_func_error_propagation() {
+        let fail: CustomFunc = Arc::new(|_args: &[Value], _focus: &Value| {
+            Err(crate::error::JsonataError::new("D3030", "custom error"))
+        });
+        let expr = Expression::compile("$fail()").unwrap();
+        let err = expr
+            .evaluate_with_custom_funcs(&Value::Undefined, &[("fail".into(), fail)])
+            .unwrap_err();
+        assert_eq!(err.code, "D3030");
+    }
+
+    #[test]
+    fn new_custom_env_reusable() {
+        let add_one: CustomFunc = Arc::new(|args: &[Value], _focus: &Value| {
+            let n = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(n + 1.0))
+        });
+        let env = new_custom_env(&[("addOne".into(), add_one)]);
+
+        let expr1 = Expression::compile("$addOne(10)").unwrap();
+        let expr2 = Expression::compile("$addOne(20)").unwrap();
+
+        // Bind $ for each eval
+        env.bind("$".into(), Value::Undefined);
+        let r1 = expr1.evaluate_with_env(&Value::Undefined, &env).unwrap();
+        let r2 = expr2.evaluate_with_env(&Value::Undefined, &env).unwrap();
+
+        assert_eq!(r1.as_f64(), Some(11.0));
+        assert_eq!(r2.as_f64(), Some(21.0));
+    }
+
+    #[test]
+    fn custom_func_multiple() {
+        let add: CustomFunc = Arc::new(|args: &[Value], _focus: &Value| {
+            let a = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            let b = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(a + b))
+        });
+        let mul: CustomFunc = Arc::new(|args: &[Value], _focus: &Value| {
+            let a = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            let b = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(a * b))
+        });
+        let expr = Expression::compile("$mul($add(2, 3), 4)").unwrap();
+        let result = expr
+            .evaluate_with_custom_funcs(
+                &Value::Undefined,
+                &[("add".into(), add), ("mul".into(), mul)],
+            )
+            .unwrap();
+        assert_eq!(result.as_f64(), Some(20.0));
+    }
+
+    #[test]
+    fn custom_func_is_send_sync() {
+        // Compile-time check that CustomFunc is Send + Sync
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<CustomFunc>();
     }
 }

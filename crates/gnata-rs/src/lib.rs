@@ -30,7 +30,7 @@ pub mod value;
 
 pub use error::JsonataError;
 pub use evaluator::{Environment, FunctionValue, eval};
-pub use expression::Expression;
+pub use expression::{CustomFunc, Expression, new_custom_env};
 pub use fast_path::FastPath;
 pub use lexer::{Lexer, Token, TokenType};
 pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
