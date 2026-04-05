@@ -9,7 +9,7 @@
 //!
 //! Direct port of Go `internal/parser/process.go` and `internal/parser/tailcall.go`.
 
-use super::ast::{AstArena, Expr, NodeId};
+use super::ast::{AstArena, BinaryOp, Expr, NodeId};
 use crate::error::JsonataError;
 
 /// Check if a path step (or any node in its LHS chain) has keep_array set.
@@ -61,7 +61,7 @@ pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsonata
     }
 
     match arena.get(node).clone() {
-        Expr::Binary { ref op, .. } if op == "." => process_dot_binary(arena, node),
+        Expr::Binary { ref op, .. } if *op == BinaryOp::Dot => process_dot_binary(arena, node),
         Expr::Binary { lhs, rhs, .. } => {
             let new_lhs = process_ast(arena, lhs)?;
             let new_rhs = process_ast(arena, rhs)?;
@@ -362,7 +362,7 @@ fn collect_path_steps(
     match expr {
         Expr::Binary {
             ref op, lhs, rhs, ..
-        } if op == "." => {
+        } if *op == BinaryOp::Dot => {
             // In our Rust AST, Focus/Index live on Name nodes directly
             // (set by the parser's @ and # LED handlers), not on Binary "."
             // nodes. No propagation needed here.
@@ -552,7 +552,7 @@ mod tests {
         let (arena, root) = parse_and_process("a.b + c.d");
         match arena.get(root) {
             Expr::Binary { op, lhs, rhs, .. } => {
-                assert_eq!(op, "+");
+                assert_eq!(*op, BinaryOp::Add);
                 assert!(matches!(arena.get(*lhs), Expr::Path { .. }));
                 assert!(matches!(arena.get(*rhs), Expr::Path { .. }));
             }

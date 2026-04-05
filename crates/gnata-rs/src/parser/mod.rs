@@ -1,7 +1,10 @@
 pub mod ast;
 pub mod process;
 
-pub use ast::{AstArena, Expr, GroupExpr, NodeId, Signature, Slot, SortTerm, Stage, StageKind};
+pub use ast::{
+    AstArena, BinaryOp, Expr, GroupExpr, NodeId, Signature, Slot, SortTerm, Stage, StageKind,
+    UnaryOp,
+};
 pub use process::process_ast;
 
 use crate::error::JsonataError;
@@ -214,7 +217,7 @@ impl Parser {
                     Ok(rhs)
                 } else {
                     Ok(self.arena.alloc(Expr::Unary {
-                        op: "-".into(),
+                        op: UnaryOp::Negate,
                         operand: rhs,
                         expressions: Vec::new(),
                         lhs: Vec::new(),
@@ -283,7 +286,7 @@ impl Parser {
                 self.infix = true;
                 self.advance()?; // consume ]
                 Ok(self.arena.alloc(Expr::Unary {
-                    op: "[".into(),
+                    op: UnaryOp::ArrayCons,
                     operand: NodeId::EMPTY,
                     expressions: exprs,
                     lhs: Vec::new(),
@@ -297,7 +300,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let pairs = self.parse_object_pairs()?;
                 Ok(self.arena.alloc(Expr::Unary {
-                    op: "{".into(),
+                    op: UnaryOp::ObjCons,
                     operand: NodeId::EMPTY,
                     expressions: Vec::new(),
                     lhs: pairs,
@@ -364,7 +367,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(74)?; // right-associative
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: ".".into(),
+                    op: BinaryOp::Dot,
                     lhs: left,
                     rhs,
                     group: None,
@@ -450,7 +453,7 @@ impl Parser {
                     self.infix = true;
                     self.consume(TokenType::RBracket)?;
                     Ok(self.arena.alloc(Expr::Binary {
-                        op: "[".into(),
+                        op: BinaryOp::Subscript,
                         lhs: left,
                         rhs,
                         group: None,
@@ -487,7 +490,7 @@ impl Parser {
             }
             TokenType::At => {
                 // S0215: @ cannot follow a predicate (subscript) expression.
-                if matches!(self.arena.get(left), Expr::Binary { op, .. } if op == "[") {
+                if matches!(self.arena.get(left), Expr::Binary { op, .. } if *op == BinaryOp::Subscript) {
                     return Err(parse_error(
                         "S0215",
                         "the @ operator cannot follow a predicate expression",
@@ -591,7 +594,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(44)?; // bp-1 for right-associativity
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "~>".into(),
+                    op: BinaryOp::Chain,
                     lhs: left,
                     rhs,
                     group: None,
@@ -605,7 +608,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(19)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "?:".into(),
+                    op: BinaryOp::CondTern,
                     lhs: left,
                     rhs,
                     group: None,
@@ -619,7 +622,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(19)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "??".into(),
+                    op: BinaryOp::NullCoal,
                     lhs: left,
                     rhs,
                     group: None,
@@ -633,7 +636,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(19)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "..".into(),
+                    op: BinaryOp::Range,
                     lhs: left,
                     rhs,
                     group: None,
@@ -647,7 +650,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(30)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "and".into(),
+                    op: BinaryOp::And,
                     lhs: left,
                     rhs,
                     group: None,
@@ -661,7 +664,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(25)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "or".into(),
+                    op: BinaryOp::Or,
                     lhs: left,
                     rhs,
                     group: None,
@@ -675,7 +678,7 @@ impl Parser {
                 self.advance_prefix()?;
                 let rhs = self.expression(40)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "in".into(),
+                    op: BinaryOp::In,
                     lhs: left,
                     rhs,
                     group: None,
@@ -685,21 +688,21 @@ impl Parser {
                     pos: tok.pos,
                 }))
             }
-            TokenType::Equals => self.binary_op(left, "=", 40, tok.pos),
-            TokenType::NE => self.binary_op(left, "!=", 40, tok.pos),
-            TokenType::LT => self.binary_op(left, "<", 40, tok.pos),
-            TokenType::GT => self.binary_op(left, ">", 40, tok.pos),
-            TokenType::LE => self.binary_op(left, "<=", 40, tok.pos),
-            TokenType::GE => self.binary_op(left, ">=", 40, tok.pos),
-            TokenType::Plus => self.binary_op(left, "+", 50, tok.pos),
-            TokenType::Minus => self.binary_op(left, "-", 50, tok.pos),
-            TokenType::Star => self.binary_op(left, "*", 60, tok.pos),
-            TokenType::Slash => self.binary_op(left, "/", 60, tok.pos),
+            TokenType::Equals => self.binary_op(left, BinaryOp::Eq, "=", 40, tok.pos),
+            TokenType::NE => self.binary_op(left, BinaryOp::Ne, "!=", 40, tok.pos),
+            TokenType::LT => self.binary_op(left, BinaryOp::Lt, "<", 40, tok.pos),
+            TokenType::GT => self.binary_op(left, BinaryOp::Gt, ">", 40, tok.pos),
+            TokenType::LE => self.binary_op(left, BinaryOp::Le, "<=", 40, tok.pos),
+            TokenType::GE => self.binary_op(left, BinaryOp::Ge, ">=", 40, tok.pos),
+            TokenType::Plus => self.binary_op(left, BinaryOp::Add, "+", 50, tok.pos),
+            TokenType::Minus => self.binary_op(left, BinaryOp::Sub, "-", 50, tok.pos),
+            TokenType::Star => self.binary_op(left, BinaryOp::Mul, "*", 60, tok.pos),
+            TokenType::Slash => self.binary_op(left, BinaryOp::Div, "/", 60, tok.pos),
             TokenType::Percent => {
                 self.advance_prefix()?;
                 let rhs = self.binary_rhs(60, "%")?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "%".into(),
+                    op: BinaryOp::Mod,
                     lhs: left,
                     rhs,
                     group: None,
@@ -709,13 +712,13 @@ impl Parser {
                     pos: tok.pos,
                 }))
             }
-            TokenType::StarStar => self.binary_op(left, "**", 60, tok.pos),
-            TokenType::Amp => self.binary_op(left, "&", 50, tok.pos),
+            TokenType::StarStar => self.binary_op(left, BinaryOp::Pow, "**", 60, tok.pos),
+            TokenType::Amp => self.binary_op(left, BinaryOp::Concat, "&", 50, tok.pos),
             TokenType::Pipe => {
                 self.advance_prefix()?;
                 let rhs = self.expression(19)?;
                 Ok(self.arena.alloc(Expr::Binary {
-                    op: "|".into(),
+                    op: BinaryOp::Pipe,
                     lhs: left,
                     rhs,
                     group: None,
@@ -737,14 +740,15 @@ impl Parser {
     fn binary_op(
         &mut self,
         left: NodeId,
-        op: &str,
+        op: BinaryOp,
+        op_str: &str,
         bp: i32,
         pos: usize,
     ) -> Result<NodeId, JsonataError> {
         self.advance_prefix()?;
-        let rhs = self.binary_rhs(bp, op)?;
+        let rhs = self.binary_rhs(bp, op_str)?;
         Ok(self.arena.alloc(Expr::Binary {
-            op: op.into(),
+            op,
             lhs: left,
             rhs,
             group: None,
@@ -1154,7 +1158,7 @@ mod tests {
         // Should be Binary { ".", Binary { ".", a, b }, c } (left-assoc via bp)
         // Actually with bp=74 for RHS, it's right-associative:
         // Binary { ".", a, Binary { ".", b, c } }
-        assert!(matches!(arena.get(root), Expr::Binary { op, .. } if op == "."));
+        assert!(matches!(arena.get(root), Expr::Binary { op, .. } if *op == BinaryOp::Dot));
     }
 
     #[test]
@@ -1187,7 +1191,7 @@ mod tests {
         let (arena, root) = parse("1 + 2");
         match arena.get(root) {
             Expr::Binary { op, lhs, rhs, .. } => {
-                assert_eq!(op, "+");
+                assert_eq!(*op, BinaryOp::Add);
                 assert!(matches!(arena.get(*lhs), Expr::NumberLit { value, .. } if *value == 1.0));
                 assert!(matches!(arena.get(*rhs), Expr::NumberLit { value, .. } if *value == 2.0));
             }
@@ -1201,8 +1205,8 @@ mod tests {
         let (arena, root) = parse("1 + 2 * 3");
         match arena.get(root) {
             Expr::Binary { op, rhs, .. } => {
-                assert_eq!(op, "+");
-                assert!(matches!(arena.get(*rhs), Expr::Binary { op, .. } if op == "*"));
+                assert_eq!(*op, BinaryOp::Add);
+                assert!(matches!(arena.get(*rhs), Expr::Binary { op, .. } if *op == BinaryOp::Mul));
             }
             other => panic!("expected Binary, got {:?}", other),
         }
@@ -1232,7 +1236,7 @@ mod tests {
             Expr::Unary {
                 op, expressions, ..
             } => {
-                assert_eq!(op, "[");
+                assert_eq!(*op, UnaryOp::ArrayCons);
                 assert_eq!(expressions.len(), 3);
             }
             other => panic!("expected Unary array, got {:?}", other),
@@ -1244,7 +1248,7 @@ mod tests {
         let (arena, root) = parse(r#"{"a": 1, "b": 2}"#);
         match arena.get(root) {
             Expr::Unary { op, lhs, .. } => {
-                assert_eq!(op, "{");
+                assert_eq!(*op, UnaryOp::ObjCons);
                 assert_eq!(lhs.len(), 4); // flat [k0, v0, k1, v1]
             }
             other => panic!("expected Unary object, got {:?}", other),
@@ -1307,7 +1311,7 @@ mod tests {
     #[test]
     fn parse_subscript() {
         let (arena, root) = parse("a[0]");
-        assert!(matches!(arena.get(root), Expr::Binary { op, .. } if op == "["));
+        assert!(matches!(arena.get(root), Expr::Binary { op, .. } if *op == BinaryOp::Subscript));
     }
 
     #[test]
@@ -1364,7 +1368,7 @@ mod tests {
     #[test]
     fn parse_chain() {
         let (arena, root) = parse("a ~> b");
-        assert!(matches!(arena.get(root), Expr::Binary { op, .. } if op == "~>"));
+        assert!(matches!(arena.get(root), Expr::Binary { op, .. } if *op == BinaryOp::Chain));
     }
 
     #[test]
@@ -1373,7 +1377,7 @@ mod tests {
         match arena.get(root) {
             Expr::Unary { expressions, .. } => {
                 assert_eq!(expressions.len(), 1);
-                assert!(matches!(arena.get(expressions[0]), Expr::Binary { op, .. } if op == ".."));
+                assert!(matches!(arena.get(expressions[0]), Expr::Binary { op, .. } if *op == BinaryOp::Range));
             }
             other => panic!("expected array with range, got {:?}", other),
         }

@@ -1,3 +1,140 @@
+/// Binary operator tag — replaces String for zero-cost match dispatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BinaryOp {
+    Add,        // +
+    Sub,        // -
+    Mul,        // *
+    Div,        // /
+    Mod,        // %
+    Pow,        // **
+    Concat,     // &
+    Eq,         // =
+    Ne,         // !=
+    Lt,         // <
+    Le,         // <=
+    Gt,         // >
+    Ge,         // >=
+    And,        // and
+    Or,         // or
+    In,         // in
+    Chain,      // ~>
+    NullCoal,   // ??
+    CondTern,   // ?:
+    Subscript,  // [
+    Range,      // ..
+    ObjConst,   // {
+    Dot,        // . (before process_ast flattens to Path)
+    Sort,       // ^  (before process_ast converts)
+    Assign,     // :=
+    Pipe,       // | (transform)
+}
+
+impl BinaryOp {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "+" => Some(Self::Add),
+            "-" => Some(Self::Sub),
+            "*" => Some(Self::Mul),
+            "/" => Some(Self::Div),
+            "%" => Some(Self::Mod),
+            "**" => Some(Self::Pow),
+            "&" => Some(Self::Concat),
+            "=" => Some(Self::Eq),
+            "!=" => Some(Self::Ne),
+            "<" => Some(Self::Lt),
+            "<=" => Some(Self::Le),
+            ">" => Some(Self::Gt),
+            ">=" => Some(Self::Ge),
+            "and" => Some(Self::And),
+            "or" => Some(Self::Or),
+            "in" => Some(Self::In),
+            "~>" => Some(Self::Chain),
+            "??" => Some(Self::NullCoal),
+            "?:" => Some(Self::CondTern),
+            "[" => Some(Self::Subscript),
+            ".." => Some(Self::Range),
+            "{" => Some(Self::ObjConst),
+            "." => Some(Self::Dot),
+            "^" => Some(Self::Sort),
+            ":=" => Some(Self::Assign),
+            "|" => Some(Self::Pipe),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical string representation of this operator.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::Mod => "%",
+            Self::Pow => "**",
+            Self::Concat => "&",
+            Self::Eq => "=",
+            Self::Ne => "!=",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::In => "in",
+            Self::Chain => "~>",
+            Self::NullCoal => "??",
+            Self::CondTern => "?:",
+            Self::Subscript => "[",
+            Self::Range => "..",
+            Self::ObjConst => "{",
+            Self::Dot => ".",
+            Self::Sort => "^",
+            Self::Assign => ":=",
+            Self::Pipe => "|",
+        }
+    }
+}
+
+impl std::fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Unary operator tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum UnaryOp {
+    Negate,     // -
+    ArrayCons,  // [
+    ObjCons,    // {
+}
+
+impl UnaryOp {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "-" => Some(Self::Negate),
+            "[" => Some(Self::ArrayCons),
+            "{" => Some(Self::ObjCons),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical string representation of this operator.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Negate => "-",
+            Self::ArrayCons => "[",
+            Self::ObjCons => "{",
+        }
+    }
+}
+
+impl std::fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Index into the AST arena. Lightweight, Copy, no lifetimes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NodeId(pub u32);
@@ -104,7 +241,7 @@ pub enum Expr {
 
     /// Binary operator.
     Binary {
-        op: String,
+        op: BinaryOp,
         lhs: NodeId,
         rhs: NodeId,
         group: Option<GroupExpr>,
@@ -116,7 +253,7 @@ pub enum Expr {
 
     /// Unary operator (negation, array constructor, object constructor).
     Unary {
-        op: String,
+        op: UnaryOp,
         operand: NodeId,          // for negation
         expressions: Vec<NodeId>, // for array constructor [...]
         lhs: Vec<NodeId>,         // for object constructor {...} — flat [k0,v0,k1,v1,...]

@@ -16,7 +16,7 @@ pub use signature::{ParamSpec, parse_signature, process_call_args};
 use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
-use crate::parser::{AstArena, Expr, NodeId};
+use crate::parser::{AstArena, BinaryOp, Expr, NodeId, UnaryOp};
 use crate::value::{Sequence, Value};
 
 /// Evaluate an AST node against input data in the given environment.
@@ -137,10 +137,10 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             }
 
             // ── Tail-call optimized: Binary ?:, ??, ~> ──
-            Expr::Binary { op, lhs, rhs, .. } if op == "?:" || op == "??" || op == "~>" => {
-                let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
-                match op.as_str() {
-                    "?:" => {
+            Expr::Binary { op, lhs, rhs, .. } if matches!(op, BinaryOp::CondTern | BinaryOp::NullCoal | BinaryOp::Chain) => {
+                let (op, lhs, rhs) = (*op, *lhs, *rhs);
+                match op {
+                    BinaryOp::CondTern => {
                         let left = eval_fast_inner(arena, lhs, input, cur_env)?;
                         if left.to_boolean() {
                             return Ok(left);
@@ -148,7 +148,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                         cur_node = rhs;
                         continue;
                     }
-                    "??" => {
+                    BinaryOp::NullCoal => {
                         let left = eval_fast_inner(arena, lhs, input, cur_env)?;
                         if left.is_undefined() {
                             cur_node = rhs;
@@ -156,7 +156,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                         }
                         return Ok(left);
                     }
-                    "~>" => {
+                    BinaryOp::Chain => {
                         let piped = eval_fast_inner(arena, lhs, input, cur_env)?;
                         return eval_chain(arena, rhs, &piped, input, cur_env);
                     }
@@ -417,7 +417,7 @@ fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
             }
             // A subscript step whose left child has an Index or Focus binding also requires
             // tuple-aware path evaluation so each element gets its own env for $pos/$var.
-            Expr::Binary { op, lhs, .. } if op == "[" && !lhs.is_empty() => {
+            Expr::Binary { op, lhs, .. } if *op == BinaryOp::Subscript && !lhs.is_empty() => {
                 let lhs = *lhs;
                 match arena.get(lhs) {
                     Expr::Name { index: Some(_), .. }
@@ -433,7 +433,7 @@ fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
                         op: inner_op,
                         lhs: inner_lhs,
                         ..
-                    } if inner_op == "[" && !inner_lhs.is_empty() => {
+                    } if *inner_op == BinaryOp::Subscript && !inner_lhs.is_empty() => {
                         let inner_lhs = *inner_lhs;
                         if matches!(
                             arena.get(inner_lhs),
@@ -469,7 +469,7 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
         Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => true,
         Expr::Binary { index: Some(_), .. } | Expr::Binary { focus: Some(_), .. } => true,
         Expr::Sort { index: Some(_), .. } | Expr::Sort { focus: Some(_), .. } => true,
-        Expr::Binary { op, lhs, rhs, .. } if op == "[" => {
+        Expr::Binary { op, lhs, rhs, .. } if *op == BinaryOp::Subscript => {
             let lhs = *lhs;
             let rhs = *rhs;
             node_has_index_binding(arena, lhs) || node_has_index_binding(arena, rhs)
@@ -825,8 +825,8 @@ fn eval_path_tuple(
         // the parent's own env (so that nested % inside the predicate refers to
         // the grandparent correctly).
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
-            let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
-            if op == "[" && !lhs.is_empty() && matches!(arena.get(lhs), Expr::Parent { .. }) {
+            let (op, lhs, rhs) = (*op, *lhs, *rhs);
+            if op == BinaryOp::Subscript && !lhs.is_empty() && matches!(arena.get(lhs), Expr::Parent { .. }) {
                 for (_, ctx_env) in &ctxs {
                     if let Some((parent_val, binding_env)) =
                         Environment::lookup_with_env(ctx_env, "%%")
@@ -866,8 +866,8 @@ fn eval_path_tuple(
         // tuple mode to preserve parent bindings, then apply the predicate per-tuple.
         // Example: (Account.Order.Product)[%.OrderID='order104'].SKU
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
-            let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
-            if op == "["
+            let (op, lhs, rhs) = (*op, *lhs, *rhs);
+            if op == BinaryOp::Subscript
                 && !lhs.is_empty()
                 && matches!(arena.get(lhs), Expr::Block { .. })
                 && node_has_parent_ref(arena, rhs)
@@ -949,9 +949,9 @@ fn eval_path_tuple(
             ..
         } = arena.get(step)
         {
-            let (op, lhs, rhs) = (op.clone(), *lhs, *rhs);
+            let (op, lhs, rhs) = (*op, *lhs, *rhs);
             let post_filter_index = post_filter_index.clone();
-            if op == "["
+            if op == BinaryOp::Subscript
                 && !lhs.is_empty()
                 && matches!(arena.get(lhs), Expr::Name { focus: Some(_), .. })
             {
@@ -983,8 +983,8 @@ fn eval_path_tuple(
         // books@$b[pred][]. Process the inner join-filter first to collect
         // tuples, then apply the outer subscript to the entire tuple collection.
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
-            let (op, outer_lhs, outer_rhs) = (op.clone(), *lhs, *rhs);
-            if op == "[" && !outer_lhs.is_empty()
+            let (op, outer_lhs, outer_rhs) = (*op, *lhs, *rhs);
+            if op == BinaryOp::Subscript && !outer_lhs.is_empty()
                 && let Expr::Binary {
                     op: inner_op,
                     lhs: inner_lhs,
@@ -993,8 +993,8 @@ fn eval_path_tuple(
                 } = arena.get(outer_lhs)
                 {
                     let (inner_op, inner_lhs, inner_rhs) =
-                        (inner_op.clone(), *inner_lhs, *inner_rhs);
-                    if inner_op == "["
+                        (*inner_op, *inner_lhs, *inner_rhs);
+                    if inner_op == BinaryOp::Subscript
                         && !inner_lhs.is_empty()
                         && matches!(arena.get(inner_lhs), Expr::Name { focus: Some(_), .. })
                     {
@@ -1238,7 +1238,7 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
             index,
             focus,
             ..
-        } if op == "[" => {
+        } if *op == BinaryOp::Subscript => {
             // If the Binary node itself has index/focus (e.g. from `#$var` after `]`), use those.
             // Otherwise look at the lhs.
             let mut idx = index.clone();
@@ -1547,7 +1547,7 @@ fn eval_path_step(
                 Ok(Value::Sequence(Box::new(seq)))
             };
         }
-        Expr::Binary { op, lhs, .. } if op == "[" && !lhs.is_empty() && !prev_was_mapper => {
+        Expr::Binary { op, lhs, .. } if *op == BinaryOp::Subscript && !lhs.is_empty() && !prev_was_mapper => {
             return eval_fast_inner(arena, step, input, env);
         }
         _ => {}
@@ -1555,7 +1555,7 @@ fn eval_path_step(
 
     // Array constructor steps not preceded by mapper are literal expressions.
     if let Expr::Unary { op, .. } = expr
-        && op == "["
+        && *op == UnaryOp::ArrayCons
         && !prev_was_mapper
     {
         return eval_fast_inner(arena, step, input, env);
@@ -1570,7 +1570,7 @@ fn eval_path_step(
         return eval_fast_inner(arena, step, input, env);
     };
 
-    let is_group_step = matches!(expr, Expr::Unary { op, .. } if op == "[");
+    let is_group_step = matches!(expr, Expr::Unary { op, .. } if *op == UnaryOp::ArrayCons);
     let mut seq = Sequence::with_capacity(arr.len());
 
     for item in arr.iter() {
@@ -1663,13 +1663,13 @@ fn eval_binary(
     // Handle subscript `[` separately — it needs AST-level lhs access
     // for Descendant checks, index_var extraction, and keep_array.
     if let Expr::Binary { op, lhs, rhs, .. } = arena.get(node)
-        && op == "["
+        && *op == BinaryOp::Subscript
     {
         return eval_subscript_binary(arena, node, *lhs, *rhs, input, env);
     }
 
     let (op, lhs, rhs) = match arena.get(node) {
-        Expr::Binary { op, lhs, rhs, .. } => (op.as_str(), *lhs, *rhs),
+        Expr::Binary { op, lhs, rhs, .. } => (*op, *lhs, *rhs),
         _ => unreachable!(),
     };
 
@@ -1743,7 +1743,7 @@ fn eval_subscript_binary(
 #[allow(clippy::too_many_lines)]
 fn apply_binary_op(
     arena: &AstArena,
-    op: &str,
+    op: BinaryOp,
     left: Value,
     rhs: NodeId,
     _lhs_node: NodeId,
@@ -1752,42 +1752,42 @@ fn apply_binary_op(
 ) -> JsonataResult {
     match op {
         // Short-circuit operators.
-        "and" => {
+        BinaryOp::And => {
             if !left.to_boolean() {
                 return Ok(Value::Bool(false));
             }
             let right = eval_fast_inner(arena, rhs, input, env)?;
             Ok(Value::Bool(right.to_boolean()))
         }
-        "or" => {
+        BinaryOp::Or => {
             if left.to_boolean() {
                 return Ok(Value::Bool(true));
             }
             let right = eval_fast_inner(arena, rhs, input, env)?;
             Ok(Value::Bool(right.to_boolean()))
         }
-        "?:" => {
+        BinaryOp::CondTern => {
             if left.to_boolean() {
                 Ok(left)
             } else {
                 eval_fast_inner(arena, rhs, input, env)
             }
         }
-        "??" => {
+        BinaryOp::NullCoal => {
             if left.is_undefined() {
                 eval_fast_inner(arena, rhs, input, env)
             } else {
                 Ok(left)
             }
         }
-        "~>" => eval_chain(arena, rhs, &left, input, env),
+        BinaryOp::Chain => eval_chain(arena, rhs, &left, input, env),
         // Arithmetic operators.
-        "+" | "-" | "*" | "/" | "%" | "**" => {
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
             apply_arithmetic(op, &left, &right)
         }
         // String concatenation.
-        "&" => {
+        BinaryOp::Concat => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
             let ls = if left.is_undefined() {
                 String::new()
@@ -1802,14 +1802,14 @@ fn apply_binary_op(
             Ok(Value::String(format!("{ls}{rs}").into()))
         }
         // Equality.
-        "=" => {
+        BinaryOp::Eq => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
             if left.is_undefined() || right.is_undefined() {
                 return Ok(Value::Bool(false));
             }
             Ok(Value::Bool(left.deep_equal(&right)))
         }
-        "!=" => {
+        BinaryOp::Ne => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
             if left.is_undefined() || right.is_undefined() {
                 return Ok(Value::Bool(false));
@@ -1817,19 +1817,19 @@ fn apply_binary_op(
             Ok(Value::Bool(!left.deep_equal(&right)))
         }
         // Comparison.
-        "<" | "<=" | ">" | ">=" => {
+        BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
-            left.compare(&right, op)
+            left.compare(&right, op.as_str())
         }
         // Membership.
-        "in" => {
+        BinaryOp::In => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
             Ok(Value::Bool(left.contained_in(&right)))
         }
         // Range.
-        ".." => {
+        BinaryOp::Range => {
             let right = eval_fast_inner(arena, rhs, input, env)?;
-            apply_range(op, &left, &right)
+            apply_range(&left, &right)
         }
         _ => Err(JsonataError::new(
             "D3001",
@@ -1839,7 +1839,7 @@ fn apply_binary_op(
 }
 
 /// Apply arithmetic operator to pre-evaluated values.
-fn apply_arithmetic(op: &str, left: &Value, right: &Value) -> JsonataResult {
+fn apply_arithmetic(op: BinaryOp, left: &Value, right: &Value) -> JsonataResult {
     // Type-check non-undefined operands BEFORE undefined propagation.
     if !left.is_undefined() && !left.is_number() {
         return Err(JsonataError::new(
@@ -1859,21 +1859,21 @@ fn apply_arithmetic(op: &str, left: &Value, right: &Value) -> JsonataResult {
     let ln = left.as_f64().ok_or_else(|| JsonataError::new("D0000", "left verified as number above"))?;
     let rn = right.as_f64().ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
     // Modulo by zero → D3001 immediately (matches Go).
-    if op == "%" && rn == 0.0 {
+    if op == BinaryOp::Mod && rn == 0.0 {
         return Err(JsonataError::new("D3001", "modulo by zero"));
     }
     let result = match op {
-        "+" => ln + rn,
-        "-" => ln - rn,
-        "*" => ln * rn,
-        "/" => ln / rn,
-        "%" => ln % rn,
-        "**" => ln.powf(rn),
+        BinaryOp::Add => ln + rn,
+        BinaryOp::Sub => ln - rn,
+        BinaryOp::Mul => ln * rn,
+        BinaryOp::Div => ln / rn,
+        BinaryOp::Mod => ln % rn,
+        BinaryOp::Pow => ln.powf(rn),
         _ => unreachable!(),
     };
     // Division by zero → let Inf propagate (error comes from downstream use).
     // Other non-finite results → D1001 "number out of range".
-    if op == "/" {
+    if op == BinaryOp::Div {
         return Ok(Value::Number(result));
     }
     if !result.is_finite() {
@@ -1889,7 +1889,7 @@ fn apply_arithmetic(op: &str, left: &Value, right: &Value) -> JsonataResult {
 }
 
 /// Apply range operator to pre-evaluated values.
-fn apply_range(_op: &str, left: &Value, right: &Value) -> JsonataResult {
+fn apply_range(left: &Value, right: &Value) -> JsonataResult {
     // Type-check non-undefined operands BEFORE undefined propagation.
     if !left.is_undefined() && left.as_f64().is_none() {
         return Err(JsonataError::new(
@@ -2026,7 +2026,7 @@ fn eval_subscript(
     // Optimization: skip the probe for comparison/boolean predicates — they can't
     // be numeric indices. Only probe when RHS could plausibly produce a number.
     let rhs_could_be_numeric = !matches!(arena.get(rhs),
-        Expr::Binary { op, .. } if matches!(op.as_str(), "=" | "!=" | "<" | "<=" | ">" | ">=" | "and" | "or" | "in")
+        Expr::Binary { op, .. } if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::And | BinaryOp::Or | BinaryOp::In)
     );
     if rhs_could_be_numeric && let Ok(index) = eval_fast_inner(arena, rhs, left, env) {
         // Array of all-numeric values → select those indices (e.g. [[1..4]]).
@@ -2126,7 +2126,7 @@ fn eval_chain(
     while let Expr::Binary {
         op, lhs, rhs: rr, ..
     } = arena.get(current)
-        && op == "~>"
+        && *op == BinaryOp::Chain
     {
         steps.push(*lhs);
         current = *rr;
@@ -2300,12 +2300,12 @@ fn eval_unary(
             expressions,
             lhs,
             ..
-        } => (op.clone(), *operand, expressions.clone(), lhs.clone()),
+        } => (*op, *operand, expressions.clone(), lhs.clone()),
         _ => unreachable!(),
     };
 
-    match op.as_str() {
-        "-" => {
+    match op {
+        UnaryOp::Negate => {
             let val = eval_fast_inner(arena, operand, input, env)?;
             if val.is_undefined() {
                 return Ok(Value::Undefined);
@@ -2315,7 +2315,7 @@ fn eval_unary(
                 .ok_or_else(|| JsonataError::new("D1002", "cannot negate a non-numeric value"))?;
             Ok(Value::Number(-n))
         }
-        "[" => {
+        UnaryOp::ArrayCons => {
             // Array constructor.
             let mut result = Vec::new();
             for &expr in &expressions {
@@ -2327,7 +2327,7 @@ fn eval_unary(
                 // All other arrays/sequences are spread (flattened).
                 let is_explicit_array = matches!(
                     arena.get(expr),
-                    Expr::Unary { op, .. } if op == "["
+                    Expr::Unary { op, .. } if *op == UnaryOp::ArrayCons
                 );
                 match val {
                     Value::Sequence(seq) => {
@@ -2349,7 +2349,7 @@ fn eval_unary(
             }
             Ok(Value::Array(Rc::new(result)))
         }
-        "{" => {
+        UnaryOp::ObjCons => {
             // Object constructor.
             let mut obj = crate::value::ObjectMap::new();
             // lhs is flat [k0,v0,k1,v1,...]
@@ -2394,10 +2394,6 @@ fn eval_unary(
             }
             Ok(Value::Object(Rc::new(obj)))
         }
-        _ => Err(JsonataError::new(
-            "D3001",
-            format!("unknown unary operator: {op}"),
-        )),
     }
 }
 

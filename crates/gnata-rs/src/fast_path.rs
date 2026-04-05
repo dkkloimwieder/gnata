@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use crate::parser::{AstArena, Expr, NodeId};
+use crate::parser::{AstArena, BinaryOp, Expr, NodeId};
 use crate::value::Value;
 
 /// A literal value that is `Send + Sync` — used by `ComparisonFastPath`
@@ -158,16 +158,16 @@ fn collect_pure_path(arena: &AstArena, node: NodeId) -> Option<Vec<String>> {
 
 /// Try to classify as a comparison fast path: `path = literal` or `path != literal`.
 fn try_comparison(arena: &AstArena, node: NodeId) -> Option<ComparisonFastPath> {
-    let (op_str, lhs, rhs) = match arena.get(node) {
-        Expr::Binary { op, lhs, rhs, .. } if op == "=" || op == "!=" => {
-            (op.as_str(), *lhs, *rhs)
+    let (bin_op, lhs, rhs) = match arena.get(node) {
+        Expr::Binary { op, lhs, rhs, .. } if *op == BinaryOp::Eq || *op == BinaryOp::Ne => {
+            (*op, *lhs, *rhs)
         }
         _ => return None,
     };
 
     let path = collect_pure_path(arena, lhs)?;
     let rhs_val = extract_literal(arena, rhs)?;
-    let op = if op_str == "=" {
+    let op = if bin_op == BinaryOp::Eq {
         ComparisonOp::Equal
     } else {
         ComparisonOp::NotEqual
