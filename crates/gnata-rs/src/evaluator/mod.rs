@@ -1319,9 +1319,10 @@ fn eval_tuple_group(
         let val_node = pair[1];
 
         // Phase 1: group ctxs by key. Use Rc<str> to avoid cloning key strings.
-        let mut key_order: Vec<Rc<str>> = Vec::new();
+        #[allow(clippy::type_complexity)]
         let mut groups: crate::value::FxIndexMap<Rc<str>, (Vec<Value>, Vec<Rc<Environment>>)> =
             crate::value::FxIndexMap::default();
+        let mut key_order: Vec<Rc<str>> = Vec::new();
 
         for (item, item_env) in ctxs {
             let key_val = eval_fast_inner(arena, key_node, item, item_env)?;

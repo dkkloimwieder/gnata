@@ -61,6 +61,7 @@ impl StreamEvaluator {
     }
 
     /// Attach a metrics hook for evaluation telemetry.
+    #[must_use]
     pub fn with_metrics(mut self, hook: Arc<dyn MetricsHook>) -> Self {
         self.metrics = Some(hook);
         self
