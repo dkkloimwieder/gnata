@@ -383,22 +383,117 @@ impl Value {
         }
     }
 
-    /// Decode a JSON byte slice into a Value, preserving object key order.
+    /// Decode a JSON string into a Value, preserving object key order.
+    ///
+    /// Uses simd-json for SIMD-accelerated tokenization with a direct serde
+    /// Visitor — no intermediate value tree.
+    ///
+    /// # Errors
+    /// Returns an error if the input is not valid JSON.
+    pub fn from_json_str(s: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut buf = s.as_bytes().to_vec();
+        simd_json::serde::from_slice(&mut buf).map_err(Into::into)
+    }
+
+    /// Decode a JSON byte slice into a Value (direct deserialization).
     ///
     /// # Errors
     /// Returns a `serde_json::Error` if the input is not valid JSON.
     pub fn from_json_bytes(b: &[u8]) -> Result<Self, serde_json::Error> {
-        let v: serde_json::Value = serde_json::from_slice(b)?;
-        Ok(Value::from_json(v))
+        serde_json::from_slice(b)
     }
 
-    /// Decode a JSON string into a Value, preserving object key order.
+    /// Decode a mutable byte slice using SIMD-accelerated parsing.
+    ///
+    /// This is the fastest path — no copy needed. The buffer is modified
+    /// in-place by simd-json for SIMD alignment.
     ///
     /// # Errors
-    /// Returns a `serde_json::Error` if the input is not valid JSON.
-    pub fn from_json_str(s: &str) -> Result<Self, serde_json::Error> {
-        let v: serde_json::Value = serde_json::from_str(s)?;
-        Ok(Value::from_json(v))
+    /// Returns an error if the input is not valid JSON.
+    pub fn from_json_bytes_mut(b: &mut [u8]) -> Result<Self, simd_json::Error> {
+        simd_json::serde::from_slice(b)
+    }
+}
+
+// ── Direct serde::Deserialize for Value ─────────────────────────────
+//
+// Produces gnata::Value in a single pass, avoiding the intermediate
+// serde_json::Value tree + conversion walk.
+
+impl<'de> serde::Deserialize<'de> for Value {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ValueVisitor)
+    }
+}
+
+struct ValueVisitor;
+
+impl<'de> serde::de::Visitor<'de> for ValueVisitor {
+    type Value = Value;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("any valid JSON value")
+    }
+
+    fn visit_bool<E>(self, v: bool) -> Result<Value, E> {
+        Ok(Value::Bool(v))
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Value, E> {
+        Ok(Value::Number(v as f64))
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Value, E> {
+        Ok(Value::Number(v as f64))
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Value, E> {
+        Ok(Value::Number(v))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Value, E> {
+        Ok(Value::String(v.into()))
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Value, E> {
+        Ok(Value::String(v.into()))
+    }
+
+    fn visit_none<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut vec = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(elem) = seq.next_element()? {
+            vec.push(elem);
+        }
+        Ok(Value::Array(Rc::new(vec)))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut obj = FxIndexMap::with_capacity_and_hasher(
+            map.size_hint().unwrap_or(0),
+            FxBuildHasher,
+        );
+        while let Some(key) = map.next_key::<String>()? {
+            let val: Value = map.next_value()?;
+            obj.insert(key, val);
+        }
+        Ok(Value::Object(Rc::new(obj)))
     }
 }
 

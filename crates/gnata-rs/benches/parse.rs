@@ -1,7 +1,11 @@
 //! Benchmark: JSON parsing into gnata::Value at different payload sizes.
 //!
-//! Measures the cost of serde_json → Value conversion, which dominates
-//! wall-clock time for large payloads. Fixtures live in bench/data*.json.
+//! Compares three parsers:
+//!   1. simd-json → Value (current default via from_json_str)
+//!   2. serde_json → Value (direct Visitor, no intermediate tree)
+//!   3. serde_json → serde_json::Value (baseline)
+//!
+//! Fixtures live in bench/data*.json.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use gnata::value::Value;
@@ -23,8 +27,9 @@ fn bench_parse(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(bytes));
 
+        // 1. simd-json → gnata::Value (current default)
         group.bench_with_input(
-            BenchmarkId::new("json_to_value", format!("{name}_{bytes}B")),
+            BenchmarkId::new("simd_to_value", format!("{name}_{bytes}B")),
             &json_str,
             |b, data| {
                 b.iter(|| {
@@ -34,9 +39,21 @@ fn bench_parse(c: &mut Criterion) {
             },
         );
 
-        // Raw serde_json::Value as baseline to isolate our Value conversion cost
+        // 2. serde_json → gnata::Value (direct Visitor, no intermediate tree)
         group.bench_with_input(
-            BenchmarkId::new("json_to_serde", format!("{name}_{bytes}B")),
+            BenchmarkId::new("serde_to_value", format!("{name}_{bytes}B")),
+            &json_str,
+            |b, data| {
+                b.iter(|| {
+                    let v: Value = serde_json::from_str(data).unwrap();
+                    criterion::black_box(v);
+                });
+            },
+        );
+
+        // 3. serde_json → serde_json::Value (baseline)
+        group.bench_with_input(
+            BenchmarkId::new("serde_to_serde", format!("{name}_{bytes}B")),
             &json_str,
             |b, data| {
                 b.iter(|| {
