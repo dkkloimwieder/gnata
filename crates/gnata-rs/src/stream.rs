@@ -4,13 +4,14 @@
 //! reads and serialized writes. Thread-safe for concurrent evaluation.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use crate::error::{JsonataError, JsonataResult};
-use crate::expression::{CustomFunc, Expression, new_custom_env};
+use crate::expression::{CustomFunc, Expression};
 use crate::value::Value;
 
 /// Telemetry hook for [`StreamEvaluator`]. Must be thread-safe.
@@ -169,21 +170,61 @@ impl StreamEvaluator {
         input: &Value,
         expr_indices: &[usize],
     ) -> Result<Vec<Option<Value>>, JsonataError> {
+        self.eval_many_inner(input, expr_indices, None)
+    }
+
+    /// Evaluate multiple expressions with a cancellation token.
+    ///
+    /// Setting the `AtomicBool` to `true` from another thread causes subsequent
+    /// expression evaluations to return `D3001`. Already-completed results are
+    /// discarded on cancellation (short-circuit).
+    ///
+    /// # Errors
+    /// Returns `D3001` if cancelled, or the first evaluation error.
+    pub fn eval_many_with_cancel(
+        &self,
+        input: &Value,
+        expr_indices: &[usize],
+        cancel: Arc<AtomicBool>,
+    ) -> Result<Vec<Option<Value>>, JsonataError> {
+        self.eval_many_inner(input, expr_indices, Some(cancel))
+    }
+
+    fn eval_many_inner(
+        &self,
+        input: &Value,
+        expr_indices: &[usize],
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Result<Vec<Option<Value>>, JsonataError> {
         if expr_indices.is_empty() {
             return Ok(Vec::new());
         }
         // Load expression snapshot once — lock-free.
         let exprs = self.exprs.load();
 
-        // Build shared env once per call if custom functions are registered.
-        let custom_env = if self.custom_funcs.is_empty() {
-            None
-        } else {
-            let env = new_custom_env(&self.custom_funcs);
+        // Build shared env once per call if custom functions or cancel are set.
+        let needs_env = !self.custom_funcs.is_empty() || cancel.is_some();
+        let custom_env = if needs_env {
+            let mut env = crate::evaluator::Environment::new();
+            crate::stdlib::register_all(&mut env);
+            for (name, func) in self.custom_funcs.iter() {
+                let arc_fn = Arc::clone(func);
+                let builtin: std::rc::Rc<crate::evaluator::BuiltinFn> =
+                    std::rc::Rc::new(move |args: &[Value], focus: &Value| arc_fn(args, focus));
+                env.bind(
+                    name.clone(),
+                    Value::Function(Box::new(crate::evaluator::FunctionValue::Builtin(builtin))),
+                );
+            }
+            if let Some(cancel) = cancel {
+                env.set_cancel(cancel);
+            }
             if !input.is_undefined() {
                 env.bind("$".into(), input.clone());
             }
-            Some(env)
+            Some(std::rc::Rc::new(env))
+        } else {
+            None
         };
 
         let mut results = Vec::with_capacity(expr_indices.len());
@@ -227,6 +268,24 @@ impl StreamEvaluator {
     /// Returns evaluation errors, or `Value::Undefined` for removed/out-of-range indices.
     pub fn eval_one(&self, input: &Value, expr_index: usize) -> JsonataResult {
         let results = self.eval_many(input, &[expr_index])?;
+        Ok(results
+            .into_iter()
+            .next()
+            .flatten()
+            .unwrap_or(Value::Undefined))
+    }
+
+    /// Evaluate a single expression with cancellation support.
+    ///
+    /// # Errors
+    /// Returns `D3001` if cancelled, or other evaluation errors.
+    pub fn eval_one_with_cancel(
+        &self,
+        input: &Value,
+        expr_index: usize,
+        cancel: Arc<AtomicBool>,
+    ) -> JsonataResult {
+        let results = self.eval_many_with_cancel(input, &[expr_index], cancel)?;
         Ok(results
             .into_iter()
             .next()
@@ -558,6 +617,47 @@ mod tests {
         let se = StreamEvaluator::new(Vec::new());
         let idx = se.compile("data.user_type + 1").unwrap();
         let result = se.eval_one(&test_input(), idx).unwrap();
+        assert_eq!(result, Value::Number(3.0));
+    }
+
+    // ── Cancellation tests ──────────────────────────────────────────
+
+    #[test]
+    fn expression_cancel_returns_d3001() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cancel = Arc::new(AtomicBool::new(true)); // pre-cancelled
+        // Use a recursive expression that will hit call_function's cancel check
+        let expr = crate::expression::Expression::compile(
+            "$reduce([1,2,3], function($a,$b){$a+$b}, 0)",
+        )
+        .unwrap();
+        let err = expr
+            .evaluate_with_cancel(&Value::Undefined, cancel)
+            .unwrap_err();
+        assert_eq!(err.code, "D3001");
+    }
+
+    #[test]
+    fn stream_cancel_returns_d3001() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cancel = Arc::new(AtomicBool::new(true));
+        let se = StreamEvaluator::new(Vec::new());
+        let idx = se.compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)").unwrap();
+        let err = se
+            .eval_many_with_cancel(&test_input(), &[idx], cancel)
+            .unwrap_err();
+        assert_eq!(err.code, "D3001");
+    }
+
+    #[test]
+    fn stream_cancel_not_set_works_normally() {
+        use std::sync::atomic::AtomicBool;
+        let cancel = Arc::new(AtomicBool::new(false)); // not cancelled
+        let se = StreamEvaluator::new(Vec::new());
+        let idx = se.compile("data.user_type + 1").unwrap();
+        let result = se
+            .eval_one_with_cancel(&test_input(), idx, cancel)
+            .unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
 }

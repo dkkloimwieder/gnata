@@ -6,6 +6,7 @@
 
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::error::JsonataResult;
 use crate::evaluator::{Environment, FunctionValue};
@@ -127,6 +128,32 @@ impl Expression {
         if !input.is_undefined() {
             env.bind("$".into(), input.clone());
         }
+        crate::eval(&self.arena, self.root, input, &env)
+    }
+
+    /// Evaluate with a cancellation token.
+    ///
+    /// Setting the `AtomicBool` to `true` from another thread will cause the
+    /// evaluator to return error code `D3001` at the next function call boundary.
+    /// Fast-path expressions complete without checking cancellation.
+    ///
+    /// # Errors
+    /// Returns `D3001` if cancelled, or other JSONata evaluation errors.
+    pub fn evaluate_with_cancel(
+        &self,
+        input: &Value,
+        cancel: Arc<AtomicBool>,
+    ) -> JsonataResult {
+        if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
+            return Ok(result);
+        }
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        env.set_cancel(cancel);
+        if !input.is_undefined() {
+            env.bind("$".into(), input.clone());
+        }
+        let env = Rc::new(env);
         crate::eval(&self.arena, self.root, input, &env)
     }
 
@@ -282,5 +309,26 @@ mod tests {
         // Compile-time check that CustomFunc is Send + Sync
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<CustomFunc>();
+    }
+
+    #[test]
+    fn cancel_stops_evaluation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cancel = Arc::new(AtomicBool::new(true)); // pre-cancelled
+        let expr = Expression::compile(
+            "$reduce([1,2,3], function($a,$b){$a+$b}, 0)",
+        )
+        .unwrap();
+        let err = expr.evaluate_with_cancel(&Value::Undefined, cancel).unwrap_err();
+        assert_eq!(err.code, "D3001");
+    }
+
+    #[test]
+    fn cancel_not_set_works_normally() {
+        use std::sync::atomic::AtomicBool;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let expr = Expression::compile("1 + 2").unwrap();
+        let result = expr.evaluate_with_cancel(&Value::Undefined, cancel).unwrap();
+        assert_eq!(result.as_f64(), Some(3.0));
     }
 }
