@@ -1972,13 +1972,23 @@ fn eval_subscript(
     env: &Rc<Environment>,
     index_var: Option<&String>,
 ) -> JsonataResult {
+    // Only create a child environment when the predicate actually needs it:
+    // either it references % (parent operator) or it has an index variable binding.
+    let needs_env = index_var.is_some() || node_has_parent_ref(arena, rhs);
+
     // For non-array inputs without index variable, evaluate directly.
     if !matches!(left, Value::Array(_) | Value::Sequence(_))
         && index_var.is_none() {
-            // Bind %% → input so the % operator can navigate to the parent.
-            let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
-            filter_env.bind("%%".into(), input.clone());
-            let index = eval_fast_inner(arena, rhs, left, &filter_env)?;
+            // Conditionally bind %% → input for the % operator.
+            let filter_env_owned;
+            let eval_env = if needs_env {
+                filter_env_owned = Rc::new(Environment::new_child(Rc::clone(env)));
+                filter_env_owned.bind("%%".into(), input.clone());
+                &filter_env_owned
+            } else {
+                env
+            };
+            let index = eval_fast_inner(arena, rhs, left, eval_env)?;
             if let Some(n) = index.as_f64() {
                 // Numeric index on a single value — treat as array of one.
                 let idx = n.trunc() as i64;
@@ -2063,17 +2073,22 @@ fn eval_subscript(
     }
 
     // Predicate filter — evaluate rhs against each element.
-    // Bind %% → input (parent context) so the % operator can navigate upward.
-    // This matches Go's filterByPredicate which binds parentKey to the input.
-    let filter_env = Rc::new(Environment::new_child(Rc::clone(env)));
-    filter_env.bind("%%".into(), input.clone());
+    // Only create a child env when the predicate uses % or has index variable bindings.
+    let filter_env_owned: Option<Rc<Environment>> = if needs_env {
+        let fe = Rc::new(Environment::new_child(Rc::clone(env)));
+        fe.bind("%%".into(), input.clone());
+        Some(fe)
+    } else {
+        None
+    };
+    let eval_env = filter_env_owned.as_ref().unwrap_or(env);
     let mut seq = Sequence::with_capacity(arr.len());
     for (i, item) in arr.iter().enumerate() {
         // Bind index variable if present (e.g. $#$pos[...]).
         if let Some(var_name) = index_var {
-            filter_env.bind(var_name.clone(), Value::Number(i as f64));
+            eval_env.bind(var_name.clone(), Value::Number(i as f64));
         }
-        let test = eval_fast_inner(arena, rhs, item, &filter_env)?;
+        let test = eval_fast_inner(arena, rhs, item, eval_env)?;
         // Numeric result = index selection from entire array.
         if let Some(n) = test.as_f64() {
             let idx = n.trunc() as i64;
