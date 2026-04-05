@@ -35,7 +35,7 @@ pub use fast_path::FastPath;
 pub use lexer::{Lexer, Token, TokenType};
 pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
 pub use stream::{MetricsHook, StreamEvaluator, StreamStats};
-pub use value::{FxIndexMap, Value};
+pub use value::{FxIndexMap, ObjectMap, Value};
 
 /// Compare two values with JSONata equality semantics.
 ///

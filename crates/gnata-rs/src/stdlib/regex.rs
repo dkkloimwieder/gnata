@@ -72,7 +72,7 @@ fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Valu
         }
     }
 
-    let mut obj = crate::value::FxIndexMap::default();
+    let mut obj = crate::value::ObjectMap::new();
     obj.insert("match".into(), Value::String(match_str));
     obj.insert("start".into(), Value::Number(start));
     obj.insert("end".into(), Value::Number(end));
@@ -162,7 +162,7 @@ fn match_with_custom_matcher(
         let start_val = obj.get("start").cloned().unwrap_or(Value::Undefined);
         let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(Rc::new(vec![])));
 
-        let mut match_obj = crate::value::FxIndexMap::default();
+        let mut match_obj = crate::value::ObjectMap::new();
         match_obj.insert("match".into(), match_val);
         match_obj.insert("index".into(), start_val);
         match_obj.insert("groups".into(), groups_val);

@@ -13,8 +13,13 @@ use serde_json::Number;
 use crate::error::{JsonataError, JsonataResult};
 
 /// Insertion-ordered map with FxHash for fast key lookup.
-/// FxHash is 3-5x faster than SipHash on short strings (typical JSON keys).
+/// Used for internal evaluator state (group-by, etc.).
 pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
+
+/// Object map used in Value::Object. Uses halfbrown which stores a Vec
+/// for ≤32 keys (linear scan, cache-friendly) and upgrades to hashmap above.
+/// 99%+ of real JSON objects have <10 keys, so Vec mode dominates.
+pub type ObjectMap = halfbrown::HashMap<String, Value>;
 
 /// Core value type for JSONata evaluation.
 ///
@@ -35,7 +40,7 @@ pub enum Value {
     Number(f64),
     String(Rc<str>),
     Array(Rc<Vec<Value>>),
-    Object(Rc<FxIndexMap<String, Value>>),
+    Object(Rc<ObjectMap>),
     /// Internal sequence used during evaluation. Never returned to users.
     /// Boxed to keep Value at 16 bytes (same as Go's interface{}).
     Sequence(Box<Sequence>),
@@ -120,7 +125,7 @@ impl Value {
         }
     }
 
-    pub fn as_object(&self) -> Option<&FxIndexMap<String, Value>> {
+    pub fn as_object(&self) -> Option<&ObjectMap> {
         match self {
             Value::Object(o) => Some(o),
             _ => None,
@@ -485,10 +490,7 @@ impl<'de> serde::de::Visitor<'de> for ValueVisitor {
     where
         A: serde::de::MapAccess<'de>,
     {
-        let mut obj = FxIndexMap::with_capacity_and_hasher(
-            map.size_hint().unwrap_or(0),
-            FxBuildHasher,
-        );
+        let mut obj = ObjectMap::with_capacity(map.size_hint().unwrap_or(0));
         while let Some(key) = map.next_key::<String>()? {
             let val: Value = map.next_value()?;
             obj.insert(key, val);
@@ -621,11 +623,11 @@ mod tests {
 
     #[test]
     fn deep_equal_objects() {
-        let mut a = crate::value::FxIndexMap::default();
+        let mut a = ObjectMap::new();
         a.insert("x".into(), Value::Number(1.0));
         a.insert("y".into(), Value::Number(2.0));
 
-        let mut b = crate::value::FxIndexMap::default();
+        let mut b = ObjectMap::new();
         b.insert("y".into(), Value::Number(2.0));
         b.insert("x".into(), Value::Number(1.0));
 

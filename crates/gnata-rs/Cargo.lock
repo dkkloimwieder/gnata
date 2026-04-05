@@ -328,6 +328,7 @@ dependencies = [
  "dashmap",
  "dhat",
  "fastrand",
+ "halfbrown",
  "indexmap",
  "jiff",
  "parking_lot",

@@ -73,10 +73,10 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let spread_one = |obj: &crate::value::FxIndexMap<String, Value>| -> Vec<Value> {
+    let spread_one = |obj: &crate::value::ObjectMap| -> Vec<Value> {
         obj.iter()
             .map(|(k, v)| {
-                let mut m = crate::value::FxIndexMap::default();
+                let mut m = crate::value::ObjectMap::new();
                 m.insert(k.clone(), v.clone());
                 Value::Object(Rc::new(m))
             })
@@ -107,8 +107,8 @@ pub fn fn_merge(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let mut merged = crate::value::FxIndexMap::default();
-    let merge_obj = |merged: &mut crate::value::FxIndexMap<String, Value>, obj: &crate::value::FxIndexMap<String, Value>| {
+    let mut merged = crate::value::ObjectMap::new();
+    let merge_obj = |merged: &mut crate::value::ObjectMap, obj: &crate::value::ObjectMap| {
         for (k, v) in obj {
             merged.insert(k.clone(), v.clone());
         }
