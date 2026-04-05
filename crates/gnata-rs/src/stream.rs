@@ -290,8 +290,6 @@ mod tests {
         let idx = se.compile("Account.Name").unwrap();
         let json = r#"{"Account": {"Name": "Firefly"}}"#;
 
-        // Spawn threads that evaluate concurrently.
-        // Each thread parses its own input (Value is !Send due to Rc).
         let mut handles = Vec::new();
         for _ in 0..4 {
             let se = Arc::clone(&se);
@@ -306,5 +304,172 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
+    }
+
+    // ── Ported from Go stream_test.go ────────────────────────────────
+
+    const STREAM_TEST_DATA: &str = r#"{
+        "data": {"action": "grant-access", "user_type": 2},
+        "metadata": {"is_admin": true}
+    }"#;
+
+    fn test_input() -> Value {
+        Value::from_json_str(STREAM_TEST_DATA).unwrap()
+    }
+
+    #[test]
+    fn compile_sequential_indices() {
+        let se = StreamEvaluator::new(Vec::new());
+        let exprs = [
+            r#"data.action = "grant-access""#,
+            "data.user_type = 2",
+            "metadata.is_admin = true",
+        ];
+        for (i, src) in exprs.iter().enumerate() {
+            let idx = se.compile(src).unwrap();
+            assert_eq!(idx, i, "expr {i} should get index {i}");
+        }
+        assert_eq!(se.len(), 3);
+
+        let indices: Vec<usize> = (0..3).collect();
+        let results = se.eval_many(&test_input(), &indices).unwrap();
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r, &Some(Value::Bool(true)), "result[{i}]");
+        }
+    }
+
+    #[test]
+    fn add_precompiled_expressions() {
+        let cases: &[(&str, Value)] = &[
+            (r#"data.action = "grant-access""#, Value::Bool(true)),
+            ("data.user_type = 2", Value::Bool(true)),
+            ("metadata.is_admin = true", Value::Bool(true)),
+            (r#"data.action != "other""#, Value::Bool(true)),
+            ("data.user_type != 99", Value::Bool(true)),
+            ("data.user_type", Value::Number(2.0)),
+            ("data.user_type > 1", Value::Bool(true)),
+            ("data.user_type = 2 and metadata.is_admin = true", Value::Bool(true)),
+        ];
+        let input = test_input();
+        for (expr, want) in cases {
+            let compiled = Arc::new(Expression::compile(expr).unwrap());
+            let se = StreamEvaluator::new(Vec::new());
+            let idx = se.add(compiled);
+            assert_eq!(idx, 0);
+            let got = se.eval_one(&input, idx).unwrap();
+            assert_eq!(&got, want, "expr: {expr}");
+        }
+    }
+
+    #[test]
+    fn mixed_fast_path_and_full_eval() {
+        let se = StreamEvaluator::new(Vec::new());
+        let i0 = se.compile("data.user_type = 2").unwrap(); // comparison fast path
+        let i1 = se.compile("data.user_type > 1").unwrap(); // full eval
+        let i2 = se.compile("data.user_type").unwrap(); // pure-path fast path
+
+        let results = se.eval_many(&test_input(), &[i0, i1, i2]).unwrap();
+        assert_eq!(results[0], Some(Value::Bool(true)));
+        assert_eq!(results[1], Some(Value::Bool(true)));
+        assert_eq!(results[2], Some(Value::Number(2.0)));
+    }
+
+    #[test]
+    fn index_stability_after_adds() {
+        let se = StreamEvaluator::new(Vec::new());
+        let i0 = se.compile(r#"data.action = "grant-access""#).unwrap();
+        let i1 = se.compile("data.user_type = 2").unwrap();
+
+        // Add 100 more expressions.
+        for i in 0..100 {
+            se.compile(&format!("data.user_type = {}", i + 1000)).unwrap();
+        }
+        assert_eq!(se.len(), 102);
+
+        // Original indices still work correctly.
+        let results = se.eval_many(&test_input(), &[i0, i1]).unwrap();
+        assert_eq!(results[0], Some(Value::Bool(true)));
+        assert_eq!(results[1], Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn replace_swaps_expression() {
+        let se = StreamEvaluator::new(Vec::new());
+        let idx = se.compile("data.action").unwrap();
+        let input = test_input();
+
+        let got = se.eval_one(&input, idx).unwrap();
+        assert_eq!(got, Value::String("grant-access".into()));
+
+        let new_expr = Arc::new(Expression::compile("data.user_type").unwrap());
+        se.replace(idx, new_expr).unwrap();
+
+        let got = se.eval_one(&input, idx).unwrap();
+        assert_eq!(got, Value::Number(2.0));
+    }
+
+    #[test]
+    fn remove_returns_none_keeps_others() {
+        let se = StreamEvaluator::new(Vec::new());
+        let i0 = se.compile(r#"data.action = "grant-access""#).unwrap();
+        let i1 = se.compile("data.user_type = 2").unwrap();
+
+        se.remove(i0).unwrap();
+
+        let results = se.eval_many(&test_input(), &[i0, i1]).unwrap();
+        assert_eq!(results[0], None, "removed expr should be None");
+        assert_eq!(results[1], Some(Value::Bool(true)), "kept expr should work");
+    }
+
+    #[test]
+    fn reset_allows_reuse() {
+        let se = StreamEvaluator::new(Vec::new());
+        se.compile("data.action").unwrap();
+        se.compile("data.user_type").unwrap();
+        assert_eq!(se.len(), 2);
+
+        se.reset();
+        assert_eq!(se.len(), 0);
+
+        // After reset, first compile gets index 0 again.
+        let idx = se.compile("metadata.is_admin").unwrap();
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn concurrent_add_and_eval() {
+        let se = Arc::new(StreamEvaluator::new(Vec::new()));
+        let idx = se.compile(r#"data.action = "grant-access""#).unwrap();
+
+        let mut handles = Vec::new();
+
+        // Readers: evaluate concurrently.
+        for _ in 0..4 {
+            let se = Arc::clone(&se);
+            handles.push(std::thread::spawn(move || {
+                let input = Value::from_json_str(STREAM_TEST_DATA).unwrap();
+                for _ in 0..50 {
+                    let r = se.eval_one(&input, idx).unwrap();
+                    assert_eq!(r, Value::Bool(true));
+                }
+            }));
+        }
+
+        // Writer: add expressions concurrently with reads.
+        {
+            let se = Arc::clone(&se);
+            handles.push(std::thread::spawn(move || {
+                for i in 0..20 {
+                    se.compile(&format!("data.user_type = {i}")).unwrap();
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        // Original expression still at index 0.
+        let input = Value::from_json_str(STREAM_TEST_DATA).unwrap();
+        assert_eq!(se.eval_one(&input, idx).unwrap(), Value::Bool(true));
     }
 }
