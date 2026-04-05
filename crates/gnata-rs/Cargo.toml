@@ -47,15 +47,34 @@ rustc-hash = "2"
 # Stack growth (mirrors Go's auto-growing goroutine stacks)
 stacker = "0.1"
 
+# Profiling (optional)
+dhat = { version = "0.3", optional = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 
+[features]
+dhat-heap = ["dhat"]
+
 [dev-dependencies]
 serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bin]]
 name = "gnata-bench"
 path = "src/bin/bench.rs"
+
+[[bin]]
+name = "gnata-dhat"
+path = "src/bin/dhat_profile.rs"
+
+[[bench]]
+name = "eval"
+harness = false
+
+[[bench]]
+name = "parse"
+harness = false
 
 [profile.release]
 opt-level = "z"
