@@ -36,3 +36,12 @@ pub use lexer::{Lexer, Token, TokenType};
 pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
 pub use stream::{MetricsHook, StreamEvaluator, StreamStats};
 pub use value::{FxIndexMap, Value};
+
+/// Compare two values with JSONata equality semantics.
+///
+/// Equivalent to Go's `gnata.DeepEqual(a, b)`. Follows JSONata rules:
+/// `undefined = undefined` is `false`, `null = null` is `true`,
+/// numbers compare by value, arrays/objects compare recursively.
+pub fn deep_equal(a: &Value, b: &Value) -> bool {
+    a.deep_equal(b)
+}
