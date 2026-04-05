@@ -38,7 +38,6 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
 /// Fast internal eval — no stack check. Used for all recursive calls within
 /// the evaluator. Stack growth is handled at deep-recursion entry points
 /// (call_function for lambda bodies).
-#[inline(always)]
 pub(crate) fn eval_fast_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     eval_inner(arena, node, input, env)
 }
@@ -1968,6 +1967,7 @@ fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
     false
 }
 
+#[allow(clippy::too_many_lines)]
 fn eval_subscript(
     arena: &AstArena,
     rhs: NodeId,
