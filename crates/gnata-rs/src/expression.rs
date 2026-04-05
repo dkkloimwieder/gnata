@@ -131,6 +131,34 @@ impl Expression {
         crate::eval(&self.arena, self.root, input, &env)
     }
 
+    /// Evaluate with extra variable bindings.
+    ///
+    /// Variables are bound in the environment alongside `$` (the input).
+    /// Reference them as `$varName` in expressions. Names should not include
+    /// the leading `$`.
+    ///
+    /// # Errors
+    /// Returns JSONata evaluation errors.
+    pub fn evaluate_with_vars(
+        &self,
+        input: &Value,
+        vars: &[(String, Value)],
+    ) -> JsonataResult {
+        if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
+            return Ok(result);
+        }
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        if !input.is_undefined() {
+            env.bind("$".into(), input.clone());
+        }
+        for (name, value) in vars {
+            env.bind(name.clone(), value.clone());
+        }
+        let env = Rc::new(env);
+        crate::eval(&self.arena, self.root, input, &env)
+    }
+
     /// Evaluate with a cancellation token.
     ///
     /// Setting the `AtomicBool` to `true` from another thread will cause the
@@ -330,5 +358,42 @@ mod tests {
         let expr = Expression::compile("1 + 2").unwrap();
         let result = expr.evaluate_with_cancel(&Value::Undefined, cancel).unwrap();
         assert_eq!(result.as_f64(), Some(3.0));
+    }
+
+    #[test]
+    fn eval_with_vars_basic() {
+        let expr = Expression::compile("$x + $y").unwrap();
+        let result = expr
+            .evaluate_with_vars(
+                &Value::Undefined,
+                &[
+                    ("x".into(), Value::Number(10.0)),
+                    ("y".into(), Value::Number(32.0)),
+                ],
+            )
+            .unwrap();
+        assert_eq!(result.as_f64(), Some(42.0));
+    }
+
+    #[test]
+    fn eval_with_vars_and_input() {
+        let expr = Expression::compile("name & ' ' & $suffix").unwrap();
+        let input = Value::from_json_str(r#"{"name":"Alice"}"#).unwrap();
+        let result = expr
+            .evaluate_with_vars(&input, &[("suffix".into(), Value::String("Smith".into()))])
+            .unwrap();
+        assert_eq!(result.as_str(), Some("Alice Smith"));
+    }
+
+    #[test]
+    fn eval_with_vars_uses_stdlib() {
+        let expr = Expression::compile("$uppercase($greeting)").unwrap();
+        let result = expr
+            .evaluate_with_vars(
+                &Value::Undefined,
+                &[("greeting".into(), Value::String("hello".into()))],
+            )
+            .unwrap();
+        assert_eq!(result.as_str(), Some("HELLO"));
     }
 }
