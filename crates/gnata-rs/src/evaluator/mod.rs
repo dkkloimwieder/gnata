@@ -1315,15 +1315,15 @@ fn eval_tuple_group(
         let key_node = pair[0];
         let val_node = pair[1];
 
-        // Phase 1: group ctxs by key.
-        let mut key_order: Vec<String> = Vec::new();
-        let mut groups: crate::value::FxIndexMap<String, (Vec<Value>, Vec<Rc<Environment>>)> =
+        // Phase 1: group ctxs by key. Use Rc<str> to avoid cloning key strings.
+        let mut key_order: Vec<Rc<str>> = Vec::new();
+        let mut groups: crate::value::FxIndexMap<Rc<str>, (Vec<Value>, Vec<Rc<Environment>>)> =
             crate::value::FxIndexMap::default();
 
         for (item, item_env) in ctxs {
             let key_val = eval_fast_inner(arena, key_node, item, item_env)?;
-            let key_str: String = match &key_val {
-                Value::String(s) => s.to_string(),
+            let key: Rc<str> = match &key_val {
+                Value::String(s) => Rc::clone(s),
                 _ => {
                     return Err(JsonataError::new(
                         "T1003",
@@ -1331,18 +1331,18 @@ fn eval_tuple_group(
                     ));
                 }
             };
-            if let Some(g) = groups.get_mut(&key_str) {
+            if let Some(g) = groups.get_mut(&*key) {
                 g.0.push(item.clone());
                 g.1.push(Rc::clone(item_env));
             } else {
-                key_order.push(key_str.clone());
-                groups.insert(key_str, (vec![item.clone()], vec![Rc::clone(item_env)]));
+                key_order.push(Rc::clone(&key));
+                groups.insert(key, (vec![item.clone()], vec![Rc::clone(item_env)]));
             }
         }
 
         // Phase 2: evaluate value expression per group.
         for key in &key_order {
-            let (values, envs) = groups.get(key.as_str()).ok_or_else(|| JsonataError::new("D0000", "key from key_order must exist in groups"))?;
+            let (values, envs) = groups.get(&**key).ok_or_else(|| JsonataError::new("D0000", "key from key_order must exist in groups"))?;
             let (group_ctx, group_env) = if values.len() == 1 {
                 (values[0].clone(), Rc::clone(&envs[0]))
             } else {
@@ -1355,7 +1355,7 @@ fn eval_tuple_group(
                 eval_fast_inner(arena, val_node, &group_ctx, &group_env)?
             };
             if !val.is_undefined() {
-                result_map.insert(key.clone(), val);
+                result_map.insert(key.to_string(), val);
             }
         }
     }
@@ -2985,8 +2985,8 @@ fn eval_group_by(
     for pair in &group.pairs {
         let key_node = pair[0];
         let val_node = pair[1];
-        let mut group_order: Vec<String> = Vec::new();
-        let mut groups: std::collections::HashMap<String, (Vec<Value>, usize)> =
+        let mut group_order: Vec<Rc<str>> = Vec::new();
+        let mut groups: std::collections::HashMap<Rc<str>, (Vec<Value>, usize)> =
             std::collections::HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
@@ -2994,8 +2994,8 @@ fn eval_group_by(
             if key_val.is_undefined() || key_val.is_null() {
                 continue;
             }
-            let key_str: String = match &key_val {
-                Value::String(s) => s.to_string(),
+            let key: Rc<str> = match &key_val {
+                Value::String(s) => Rc::clone(s),
                 _ => {
                     return Err(JsonataError::new(
                         "T1003",
@@ -3003,22 +3003,22 @@ fn eval_group_by(
                     ));
                 }
             };
-            if let Some(entry) = groups.get_mut(&key_str) {
+            if let Some(entry) = groups.get_mut(&*key) {
                 entry.0.push(item.clone());
             } else {
-                group_order.push(key_str.clone());
-                groups.insert(key_str, (vec![item.clone()], i));
+                group_order.push(Rc::clone(&key));
+                groups.insert(key, (vec![item.clone()], i));
             }
         }
 
-        for key_str in &group_order {
-            if key_set.contains(key_str) {
+        for key in &group_order {
+            if key_set.contains(&**key) {
                 return Err(JsonataError::new(
                     "D1009",
-                    format!("duplicate key: \"{key_str}\""),
+                    format!("duplicate key: \"{key}\""),
                 ));
             }
-            let (group_items, first_idx) = groups.get(key_str.as_str()).ok_or_else(|| JsonataError::new("D0000", "key from group_order must exist in groups"))?;
+            let (group_items, first_idx) = groups.get(&**key).ok_or_else(|| JsonataError::new("D0000", "key from group_order must exist in groups"))?;
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {
@@ -3027,7 +3027,7 @@ fn eval_group_by(
 
             let child_env = Environment::new_child(Rc::clone(env));
             child_env.bind("index".into(), Value::Number(*first_idx as f64));
-            child_env.bind("key".into(), Value::String(key_str.as_str().into()));
+            child_env.bind("key".into(), Value::String(Rc::clone(key)));
             let child_env = Rc::new(child_env);
 
             let mut val_result = if val_node.is_empty() {
@@ -3059,8 +3059,8 @@ fn eval_group_by(
             }
 
             if !val_result.is_undefined() {
-                key_set.insert(key_str.clone());
-                out_obj.insert(key_str.clone(), val_result);
+                key_set.insert(key.to_string());
+                out_obj.insert(key.to_string(), val_result);
             }
         }
     }
