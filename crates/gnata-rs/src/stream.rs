@@ -10,7 +10,7 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use crate::error::{JsonataError, JsonataResult};
-use crate::expression::Expression;
+use crate::expression::{CustomFunc, Expression, new_custom_env};
 use crate::value::Value;
 
 /// Telemetry hook for [`StreamEvaluator`]. Must be thread-safe.
@@ -47,6 +47,7 @@ pub struct StreamEvaluator {
     exprs: ArcSwap<Vec<Option<Arc<Expression>>>>,
     mu: Mutex<()>,
     metrics: Option<Arc<dyn MetricsHook>>,
+    custom_funcs: Arc<Vec<(String, CustomFunc)>>,
 }
 
 impl StreamEvaluator {
@@ -57,7 +58,19 @@ impl StreamEvaluator {
             exprs: ArcSwap::from_pointee(exprs),
             mu: Mutex::new(()),
             metrics: None,
+            custom_funcs: Arc::new(Vec::new()),
         }
+    }
+
+    /// Register user-defined functions that extend the standard JSONata library.
+    ///
+    /// Functions are stored at construction time. During evaluation, a shared
+    /// environment is created once per `eval_many` call (not per expression).
+    /// Function names should not include the leading `$`.
+    #[must_use]
+    pub fn with_custom_functions(mut self, fns: Vec<(String, CustomFunc)>) -> Self {
+        self.custom_funcs = Arc::new(fns);
+        self
     }
 
     /// Attach a metrics hook for evaluation telemetry.
@@ -161,6 +174,18 @@ impl StreamEvaluator {
         }
         // Load expression snapshot once — lock-free.
         let exprs = self.exprs.load();
+
+        // Build shared env once per call if custom functions are registered.
+        let custom_env = if self.custom_funcs.is_empty() {
+            None
+        } else {
+            let env = new_custom_env(&self.custom_funcs);
+            if !input.is_undefined() {
+                env.bind("$".into(), input.clone());
+            }
+            Some(env)
+        };
+
         let mut results = Vec::with_capacity(expr_indices.len());
 
         for &idx in expr_indices {
@@ -174,7 +199,11 @@ impl StreamEvaluator {
             };
 
             let start = self.metrics.as_ref().map(|_| Instant::now());
-            match expr.evaluate(input) {
+            let eval_result = match custom_env {
+                Some(ref env) => expr.evaluate_with_env(input, env),
+                None => expr.evaluate(input),
+            };
+            match eval_result {
                 Ok(val) => {
                     if let (Some(hook), Some(start)) = (&self.metrics, start) {
                         hook.on_eval(idx, expr.is_fast_path(), start.elapsed(), None);
@@ -472,5 +501,63 @@ mod tests {
         // Original expression still at index 0.
         let input = Value::from_json_str(STREAM_TEST_DATA).unwrap();
         assert_eq!(se.eval_one(&input, idx).unwrap(), Value::Bool(true));
+    }
+
+    // ── WithCustomFunctions tests ───────────────────────────────────
+
+    #[test]
+    fn custom_func_in_stream() {
+        let double: CustomFunc = Arc::new(|args: &[Value], _| {
+            let n = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(n * 2.0))
+        });
+        let se = StreamEvaluator::new(Vec::new())
+            .with_custom_functions(vec![("double".into(), double)]);
+        let idx = se.compile("$double(data.user_type)").unwrap();
+        let result = se.eval_one(&test_input(), idx).unwrap();
+        assert_eq!(result, Value::Number(4.0));
+    }
+
+    #[test]
+    fn custom_func_with_stdlib_in_stream() {
+        let greet: CustomFunc = Arc::new(|args: &[Value], _| {
+            let name = args.first().and_then(Value::as_str).unwrap_or("?");
+            Ok(Value::String(format!("hi {name}").into()))
+        });
+        let se = StreamEvaluator::new(Vec::new())
+            .with_custom_functions(vec![("greet".into(), greet)]);
+        let idx = se.compile("$uppercase($greet(data.action))").unwrap();
+        let result = se.eval_one(&test_input(), idx).unwrap();
+        assert_eq!(result, Value::String("HI GRANT-ACCESS".into()));
+    }
+
+    #[test]
+    fn multiple_custom_funcs_in_stream() {
+        let add: CustomFunc = Arc::new(|args: &[Value], _| {
+            let a = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            let b = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(a + b))
+        });
+        let mul: CustomFunc = Arc::new(|args: &[Value], _| {
+            let a = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            let b = args.get(1).and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(a * b))
+        });
+        let se = StreamEvaluator::new(Vec::new())
+            .with_custom_functions(vec![("add".into(), add), ("mul".into(), mul)]);
+        let i0 = se.compile("$add(data.user_type, 10)").unwrap();
+        let i1 = se.compile("$mul(data.user_type, 3)").unwrap();
+        let results = se.eval_many(&test_input(), &[i0, i1]).unwrap();
+        assert_eq!(results[0], Some(Value::Number(12.0)));
+        assert_eq!(results[1], Some(Value::Number(6.0)));
+    }
+
+    #[test]
+    fn stream_no_custom_funcs_unchanged() {
+        // Verify existing behavior is unaffected when no custom funcs registered
+        let se = StreamEvaluator::new(Vec::new());
+        let idx = se.compile("data.user_type + 1").unwrap();
+        let result = se.eval_one(&test_input(), idx).unwrap();
+        assert_eq!(result, Value::Number(3.0));
     }
 }
