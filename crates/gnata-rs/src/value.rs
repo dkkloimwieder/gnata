@@ -127,6 +127,31 @@ impl Value {
         }
     }
 
+    /// Coerce a value to an array. Arrays pass through (Rc clone), scalars
+    /// are wrapped in a single-element array. Used by HOF functions that
+    /// accept both arrays and scalars as their first argument.
+    pub fn coerce_to_array(&self) -> Rc<[Value]> {
+        match self {
+            Value::Array(a) => Rc::clone(a),
+            other => Rc::from(vec![other.clone()]),
+        }
+    }
+
+    /// Extract a `FunctionValue` or return a typed error.
+    /// `func_name` is used in the error message (e.g. "$map").
+    ///
+    /// # Errors
+    /// Returns `T0410` if the value is not a function.
+    pub fn require_function(&self, func_name: &str) -> JsonataResult<Box<crate::evaluator::FunctionValue>> {
+        match self {
+            Value::Function(f) => Ok(f.clone()),
+            _ => Err(JsonataError::new(
+                "T0410",
+                format!("{func_name}: argument is not a function"),
+            )),
+        }
+    }
+
     /// Validates that this is a finite number.
     ///
     /// # Errors

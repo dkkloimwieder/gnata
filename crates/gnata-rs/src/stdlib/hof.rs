@@ -19,19 +19,8 @@ pub fn fn_map(
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let arr = match &args[0] {
-        Value::Array(a) => a.clone(),
-        other => Rc::from(vec![other.clone()]),
-    };
-    let func = match &args[1] {
-        Value::Function(f) => f.clone(),
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$map: second argument must be a function",
-            ));
-        }
-    };
+    let arr = args[0].coerce_to_array();
+    let func = args[1].require_function("$map")?;
     let mut seq = Sequence::new();
     for (i, item) in arr.iter().enumerate() {
         let call_args = vec![
@@ -60,19 +49,8 @@ pub fn fn_filter(
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let arr = match &args[0] {
-        Value::Array(a) => a.clone(),
-        other => Rc::from(vec![other.clone()]),
-    };
-    let func = match &args[1] {
-        Value::Function(f) => f.clone(),
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$filter: second argument must be a function",
-            ));
-        }
-    };
+    let arr = args[0].coerce_to_array();
+    let func = args[1].require_function("$filter")?;
     let mut result = Vec::new();
     for (i, item) in arr.iter().enumerate() {
         let call_args = vec![
@@ -106,19 +84,8 @@ pub fn fn_reduce(
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let arr = match &args[0] {
-        Value::Array(a) => a.clone(),
-        other => Rc::from(vec![other.clone()]),
-    };
-    let func = match &args[1] {
-        Value::Function(f) => f.clone(),
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$reduce: second argument must be a function",
-            ));
-        }
-    };
+    let arr = args[0].coerce_to_array();
+    let func = args[1].require_function("$reduce")?;
     // Check that the function accepts at least 2 parameters.
     if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &*func
         && lambda.params.len() < 2 {
@@ -184,15 +151,7 @@ pub fn fn_each(
             "$each: first argument must be an object",
         ));
     };
-    let func = match func_arg {
-        Value::Function(f) => f.clone(),
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$each: second argument must be a function",
-            ));
-        }
-    };
+    let func = func_arg.require_function("$each")?;
     let mut seq = Sequence::new();
     for (key, val) in obj.iter() {
         let call_args = vec![val.clone(), Value::String(key.as_str().into())];
@@ -221,15 +180,7 @@ pub fn fn_sift(
     if obj_arg.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let func = match func_arg {
-        Value::Function(f) => f.clone(),
-        _ => {
-            return Err(JsonataError::new(
-                "T0410",
-                "$sift: second argument must be a function",
-            ));
-        }
-    };
+    let func = func_arg.require_function("$sift")?;
     // If the argument is an array, map $sift over each element.
     if let Value::Array(arr) = obj_arg {
         let mut results = Vec::new();
@@ -284,10 +235,7 @@ pub fn fn_sort(
     if arr_val.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let mut arr = match arr_val {
-        Value::Array(a) => a.to_vec(),
-        other => vec![other.clone()],
-    };
+    let mut arr = arr_val.coerce_to_array().to_vec();
     if arr.len() <= 1 {
         return Ok(Value::Array(Rc::from(arr)));
     }
@@ -357,10 +305,7 @@ pub fn fn_single(
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let arr = match &args[0] {
-        Value::Array(a) => a.clone(),
-        other => Rc::from(vec![other.clone()]),
-    };
+    let arr = args[0].coerce_to_array();
     let func = args.get(1).and_then(|v| match v {
         Value::Function(f) => Some(f.clone()),
         _ => None,

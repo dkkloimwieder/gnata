@@ -19,6 +19,11 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::parser::{AstArena, BinaryOp, Expr, NodeId, UnaryOp};
 use crate::value::{Sequence, Value};
 
+/// Environment variable name for the parent context (`%` operator).
+const PARENT_BINDING: &str = "%%";
+/// Environment variable name for the join-mode flag.
+const JOIN_FLAG: &str = "%%j";
+
 /// Evaluate an AST node against input data in the given environment.
 ///
 /// Returns `Value::Undefined` for missing/undefined results.
@@ -94,7 +99,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             }
             Expr::Regex { pattern, flags, .. } => return Ok(eval_regex(pattern, flags)),
             Expr::Parent { .. } => {
-                return match cur_env.lookup("%%") {
+                return match cur_env.lookup(PARENT_BINDING) {
                     Some(val) if !val.is_null() && !val.is_undefined() => Ok(val),
                     _ => Err(JsonataError::new(
                         "S0217",
@@ -728,9 +733,9 @@ fn eval_path_tuple(
                             let is_join = focus_var.is_some();
                             for (j, elem) in items.iter().enumerate() {
                                 let child_env = Environment::new_child(Rc::clone(ctx_env));
-                                child_env.bind("%%".into(), val.clone());
+                                child_env.bind(PARENT_BINDING.into(), val.clone());
                                 if is_join {
-                                    child_env.bind("%%j".into(), Value::Bool(true));
+                                    child_env.bind(JOIN_FLAG.into(), Value::Bool(true));
                                 }
                                 if let Some(ref var_name) = index_var {
                                     child_env.bind(var_name.clone(), Value::Number(j as f64));
@@ -773,7 +778,7 @@ fn eval_path_tuple(
         // new env is the parent of the binding env so chained %.% walks upward.
         if matches!(arena.get(step), Expr::Parent { .. }) {
             for (_, ctx_env) in &ctxs {
-                if let Some((parent_val, binding_env)) = Environment::lookup_with_env(ctx_env, "%%")
+                if let Some((parent_val, binding_env)) = Environment::lookup_with_env(ctx_env, PARENT_BINDING)
                 {
                     // In Go, nil parent means "no valid parent context" → S0217.
                     if parent_val.is_null() || parent_val.is_undefined() {
@@ -790,12 +795,12 @@ fn eval_path_tuple(
                     // When the current binding was made by a join step, skip
                     // through any ancestor envs that are ALSO join bindings with
                     // the same parent value.
-                    if binding_env.lookup_direct("%%j").is_some() {
+                    if binding_env.lookup_direct(JOIN_FLAG).is_some() {
                         loop {
-                            if parent_env.lookup_direct("%%j").is_none() {
+                            if parent_env.lookup_direct(JOIN_FLAG).is_none() {
                                 break;
                             }
-                            if let Some((pv, pe)) = Environment::lookup_with_env(&parent_env, "%%")
+                            if let Some((pv, pe)) = Environment::lookup_with_env(&parent_env, PARENT_BINDING)
                             {
                                 if value_ptr_eq(&pv, &parent_val) {
                                     parent_env = pe.parent().cloned().unwrap_or_else(|| pe.clone());
@@ -831,7 +836,7 @@ fn eval_path_tuple(
             if op == BinaryOp::Subscript && !lhs.is_empty() && matches!(arena.get(lhs), Expr::Parent { .. }) {
                 for (_, ctx_env) in &ctxs {
                     if let Some((parent_val, binding_env)) =
-                        Environment::lookup_with_env(ctx_env, "%%")
+                        Environment::lookup_with_env(ctx_env, PARENT_BINDING)
                     {
                         if parent_val.is_null() || parent_val.is_undefined() {
                             return Err(JsonataError::new(
@@ -1070,9 +1075,9 @@ fn eval_path_tuple(
                 let child_env = Environment::new_child(Rc::clone(ctx_env));
                 // Bind parent context (for % operator), unless this is a root step.
                 if !skip_parent {
-                    child_env.bind("%%".into(), val.clone());
+                    child_env.bind(PARENT_BINDING.into(), val.clone());
                     if is_join {
-                        child_env.bind("%%j".into(), Value::Bool(true));
+                        child_env.bind(JOIN_FLAG.into(), Value::Bool(true));
                     }
                 }
                 // Bind index variable if present.
@@ -1142,9 +1147,9 @@ fn expand_path_tuple(
             let items = flatten_to_vec(result);
             for (j, elem) in items.iter().enumerate() {
                 let child_env = Environment::new_child(Rc::clone(ctx_env));
-                child_env.bind("%%".into(), val.clone());
+                child_env.bind(PARENT_BINDING.into(), val.clone());
                 if is_join {
-                    child_env.bind("%%j".into(), Value::Bool(true));
+                    child_env.bind(JOIN_FLAG.into(), Value::Bool(true));
                 }
                 if let Some(ref var_name) = index_var {
                     child_env.bind(var_name.clone(), Value::Number(j as f64));
@@ -1188,8 +1193,8 @@ fn eval_join_filter(
         let items = flatten_to_vec(left_result);
         for (j, item) in items.iter().enumerate() {
             let child_env = Environment::new_child(Rc::clone(ctx_env));
-            child_env.bind("%%".into(), val.clone());
-            child_env.bind("%%j".into(), Value::Bool(true));
+            child_env.bind(PARENT_BINDING.into(), val.clone());
+            child_env.bind(JOIN_FLAG.into(), Value::Bool(true));
             child_env.bind(focus_var.into(), item.clone());
             if let Some(idx_name) = index_var {
                 child_env.bind(idx_name.clone(), Value::Number(j as f64));
@@ -1395,7 +1400,7 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
     for env in envs {
         let mut current: Option<&Rc<Environment>> = Some(env);
         while let Some(e) = current {
-            if e.lookup_direct("%%").is_none() {
+            if e.lookup_direct(PARENT_BINDING).is_none() {
                 break;
             }
             e.for_each_direct(|name, _| {
@@ -1409,7 +1414,7 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
 
     // For each variable, collect values from each env via full lookup.
     for name in &var_names {
-        if name == "%%" || name == "%%j" {
+        if name == PARENT_BINDING || name == JOIN_FLAG {
             if let Some(v) = envs[0].lookup(name) {
                 merged.bind(name.clone(), v);
             }
@@ -1989,7 +1994,7 @@ fn eval_subscript(
             let filter_env_owned;
             let eval_env = if needs_env {
                 filter_env_owned = Rc::new(Environment::new_child(Rc::clone(env)));
-                filter_env_owned.bind("%%".into(), input.clone());
+                filter_env_owned.bind(PARENT_BINDING.into(), input.clone());
                 &filter_env_owned
             } else {
                 env
@@ -2082,7 +2087,7 @@ fn eval_subscript(
     // Only create a child env when the predicate uses % or has index variable bindings.
     let filter_env_owned: Option<Rc<Environment>> = if needs_env {
         let fe = Rc::new(Environment::new_child(Rc::clone(env)));
-        fe.bind("%%".into(), input.clone());
+        fe.bind(PARENT_BINDING.into(), input.clone());
         Some(fe)
     } else {
         None
@@ -2593,9 +2598,9 @@ fn walk_prefix_steps(
             let items = flatten_to_vec(result);
             for (j, elem) in items.iter().enumerate() {
                 let child_env = Environment::new_child(Rc::clone(ctx_env));
-                child_env.bind("%%".into(), val.clone());
+                child_env.bind(PARENT_BINDING.into(), val.clone());
                 if is_join {
-                    child_env.bind("%%j".into(), Value::Bool(true));
+                    child_env.bind(JOIN_FLAG.into(), Value::Bool(true));
                 }
                 if let Some(ref var_name) = index_var {
                     child_env.bind(var_name.clone(), Value::Number(j as f64));
@@ -2636,9 +2641,9 @@ fn expand_last_step(
         let items = flatten_to_vec(result);
         for (j, elem) in items.iter().enumerate() {
             let child_env = Environment::new_child(Rc::clone(ctx_env));
-            child_env.bind("%%".into(), val.clone());
+            child_env.bind(PARENT_BINDING.into(), val.clone());
             if is_join {
-                child_env.bind("%%j".into(), Value::Bool(true));
+                child_env.bind(JOIN_FLAG.into(), Value::Bool(true));
             }
             if let Some(ref var_name) = index_var {
                 child_env.bind(var_name.clone(), Value::Number(j as f64));
