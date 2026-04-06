@@ -288,7 +288,7 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
     let mut current = input.clone();
     for segment in segments {
         current = match &current {
-            Value::Object(obj) => match obj.get(segment) {
+            Value::Object(obj) => match obj.get(segment.as_str()) {
                 Some(v) => v.clone(),
                 None => return Value::Undefined,
             },
@@ -297,7 +297,7 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
                 let mut results = Vec::new();
                 for item in arr.iter() {
                     if let Value::Object(obj) = item
-                        && let Some(v) = obj.get(segment)
+                        && let Some(v) = obj.get(segment.as_str())
                     {
                         match v {
                             Value::Array(inner) => results.extend(inner.iter().cloned()),

@@ -43,7 +43,7 @@ pub fn fn_format_number(args: &[Value], _focus: &Value) -> JsonataResult {
     {
         for (k, v) in map.iter() {
             if let Value::String(s) = v {
-                opts.push((k.clone(), s.to_string()));
+                opts.push((k.to_string(), s.to_string()));
             }
         }
     }

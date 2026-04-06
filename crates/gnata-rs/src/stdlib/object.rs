@@ -31,9 +31,9 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
                     for k in obj.keys() {
                         if !all_keys
                             .iter()
-                            .any(|existing: &Value| matches!(existing, Value::String(s) if s.as_ref() == k))
+                            .any(|existing: &Value| matches!(existing, Value::String(s) if s.as_str() == k.as_str()))
                         {
-                            all_keys.push(Value::String(k.as_str().into()));
+                            all_keys.push(Value::String(compact_str::CompactString::from(k.as_str())));
                         }
                     }
                 }

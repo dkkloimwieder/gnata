@@ -272,7 +272,7 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s: Rc<str> = match &args[0] {
+    let s: compact_str::CompactString = match &args[0] {
         Value::String(s) => s.clone(),
         _ => {
             return Err(JsonataError::new(
@@ -285,7 +285,7 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
         .as_f64()
         .ok_or_else(|| JsonataError::new("T0410", "$pad: width must be a number"))?
         as i64;
-    let pad_str: Rc<str> = if args.len() >= 3 {
+    let pad_str: compact_str::CompactString = if args.len() >= 3 {
         match &args[2] {
             Value::String(c) if !c.is_empty() => c.clone(),
             _ => " ".into(),

@@ -60,7 +60,7 @@ fn compile_regex_arg(v: &Value) -> Result<Regex, JsonataError> {
 
 /// Build a match result object from a regex match.
 fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Value {
-    let match_str: Rc<str> = m.as_str().into();
+    let match_str: compact_str::CompactString = m.as_str().into();
     let start = s[..m.start()].chars().count() as f64;
     let end = s[..m.end()].chars().count() as f64;
 
@@ -201,7 +201,7 @@ pub fn fn_replace(
     if args.is_empty() || args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let s: Rc<str> = match &args[0] {
+    let s: compact_str::CompactString = match &args[0] {
         Value::String(s) => s.clone(),
         _ => {
             return Err(JsonataError::new(
