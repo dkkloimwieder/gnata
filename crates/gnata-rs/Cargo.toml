@@ -21,8 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
 indexmap = { version = "2", features = ["serde"] }
 
-# Error handling
-thiserror = "2.0"
+# Error handling — hand-rolled JsonataError, no thiserror needed
 
 # Numeric formatting
 ryu-js = "1.0"
@@ -34,15 +33,11 @@ jiff = "0.2"
 base64 = "0.22"
 percent-encoding = "2.3"
 
-# Unicode
-unicode-segmentation = "1.13"
 
 
 # RNG
 fastrand = "2"
 
-# Fast hashing (replaces SipHash for IndexMap — 3-5x faster on short strings)
-rustc-hash = "2"
 
 # Stack growth (mirrors Go's auto-growing goroutine stacks) — not available on WASM
 # stacker is in [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

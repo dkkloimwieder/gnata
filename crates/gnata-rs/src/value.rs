@@ -7,15 +7,9 @@ pub use sequence::Sequence;
 use std::rc::Rc;
 
 use compact_str::CompactString;
-use indexmap::IndexMap;
-use rustc_hash::FxBuildHasher;
 use serde_json::Number;
 
 use crate::error::{JsonataError, JsonataResult};
-
-/// Insertion-ordered map with FxHash for fast key lookup.
-/// Used for internal evaluator state (group-by, etc.).
-pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// Object map used in Value::Object. Uses halfbrown for ≤32 keys (linear
 /// scan, cache-friendly) and hashmap above. CompactString keys inline ≤24
