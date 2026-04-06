@@ -9,9 +9,6 @@ license = "MIT"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Concurrency
-arc-swap = "1.9"
-parking_lot = "0.12"
 
 # Parsing & Regex
 regex = "1.12"

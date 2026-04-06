@@ -61,7 +61,7 @@ fn run_stream_bench(data_str: &str, n: u64) {
         "$sum(Account.Order.Product.(UnitPrice * Quantity * (1 - Discount)))",
     ];
 
-    let se = StreamEvaluator::new(Vec::new());
+    let mut se = StreamEvaluator::new(Vec::new());
     let indices: Vec<usize> = exprs
         .iter()
         .map(|e| se.compile(e).expect("compile failed"))
