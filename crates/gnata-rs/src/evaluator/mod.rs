@@ -3086,12 +3086,25 @@ mod tests {
     }
 
     fn eval_simple(src: &str) -> Value {
-        eval_expr(src, &Value::Undefined).expect("eval failed")
+        collapse_result(eval_expr(src, &Value::Undefined).expect("eval failed"))
     }
 
     fn eval_with_data(src: &str, json: &str) -> Value {
         let input = Value::from_json_str(json).expect("invalid JSON");
-        eval_expr(src, &input).expect("eval failed")
+        collapse_result(eval_expr(src, &input).expect("eval failed"))
+    }
+
+    /// Collapse Sequence values for test comparison (mirrors Expression API behavior).
+    fn collapse_result(val: Value) -> Value {
+        match val {
+            Value::Sequence(seq) => seq.collapse(),
+            other => other,
+        }
+    }
+
+    /// Assert a value is undefined (cannot use assert_eq because Undefined != Undefined in JSONata).
+    fn assert_undefined(val: &Value) {
+        assert!(val.is_undefined(), "expected Undefined, got {val:?}");
     }
 
     // ── Literals ────────────────────────────────────────────────
@@ -3837,5 +3850,524 @@ mod tests {
             eval_simple("($f := function($n){$n <= 0 ? 0 : $f($n - 1)}; $f(100))"),
             Value::Number(0.0)
         );
+    }
+
+    // ── HOF: $map ──────────────────────────────────────────────────
+
+    #[test]
+    fn map_basic() {
+        assert_eq!(
+            eval_simple("$map([1,2,3], function($v){$v * 2})"),
+            Value::Array(Rc::from(vec![Value::Number(2.0), Value::Number(4.0), Value::Number(6.0)]))
+        );
+    }
+
+    #[test]
+    fn map_undefined_input() {
+        assert_undefined(&eval_simple("$map(nothing, function($v){$v})"));
+    }
+
+    #[test]
+    fn map_scalar_input() {
+        // Scalar is wrapped in array
+        assert_eq!(eval_simple("$map(5, function($v){$v * 2})"), Value::Number(10.0));
+    }
+
+    #[test]
+    fn map_with_index() {
+        assert_eq!(
+            eval_simple("$map([10,20,30], function($v, $i){$i})"),
+            Value::Array(Rc::from(vec![Value::Number(0.0), Value::Number(1.0), Value::Number(2.0)]))
+        );
+    }
+
+    #[test]
+    fn map_empty_array() {
+        // Map over empty array — all results are undefined, sequence collapses
+        assert_undefined(&eval_simple("$map([], function($v){$v})"));
+    }
+
+    // ── HOF: $filter ───────────────────────────────────────────────
+
+    #[test]
+    fn filter_basic() {
+        assert_eq!(
+            eval_simple("$filter([1,2,3,4,5], function($v){$v > 3})"),
+            Value::Array(Rc::from(vec![Value::Number(4.0), Value::Number(5.0)]))
+        );
+    }
+
+    #[test]
+    fn filter_single_result() {
+        // Single match returns scalar, not array
+        assert_eq!(
+            eval_simple("$filter([1,2,3], function($v){$v = 2})"),
+            Value::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn filter_no_matches() {
+        assert_undefined(&eval_simple("$filter([1,2,3], function($v){$v > 10})"));
+    }
+
+    #[test]
+    fn filter_undefined_input() {
+        assert_undefined(&eval_simple("$filter(nothing, function($v){true})"));
+    }
+
+    // ── HOF: $reduce ──────────────────────────────────────────────
+
+    #[test]
+    fn reduce_sum() {
+        assert_eq!(
+            eval_simple("$reduce([1,2,3,4], function($acc, $val){$acc + $val})"),
+            Value::Number(10.0)
+        );
+    }
+
+    #[test]
+    fn reduce_with_init() {
+        assert_eq!(
+            eval_simple("$reduce([1,2,3], function($acc, $val){$acc + $val}, 100)"),
+            Value::Number(106.0)
+        );
+    }
+
+    #[test]
+    fn reduce_single_element_no_init() {
+        assert_eq!(
+            eval_simple("$reduce([42], function($acc, $val){$acc + $val})"),
+            Value::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn reduce_empty_with_init() {
+        assert_eq!(
+            eval_simple("$reduce([], function($acc, $val){$acc + $val}, 99)"),
+            Value::Number(99.0)
+        );
+    }
+
+    #[test]
+    fn reduce_undefined_input() {
+        assert_undefined(&eval_simple("$reduce(nothing, function($acc, $val){$acc + $val})"));
+    }
+
+    // ── HOF: $sort ────────────────────────────────────────────────
+
+    #[test]
+    fn sort_default() {
+        assert_eq!(
+            eval_simple("$sort([3,1,2])"),
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]))
+        );
+    }
+
+    #[test]
+    fn sort_strings() {
+        assert_eq!(
+            eval_simple(r#"$sort(["banana","apple","cherry"])"#),
+            Value::Array(Rc::from(vec![
+                Value::String("apple".into()),
+                Value::String("banana".into()),
+                Value::String("cherry".into()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn sort_with_comparator() {
+        // Comparator: fn($a,$b) returns true when $a should come after $b
+        // $a > $b → ascending order (swap when a > b)
+        assert_eq!(
+            eval_simple("$sort([1,3,2], function($a,$b){$a > $b})"),
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]))
+        );
+    }
+
+    #[test]
+    fn sort_single_element() {
+        assert_eq!(
+            eval_simple("$sort([42])"),
+            Value::Array(Rc::from(vec![Value::Number(42.0)]))
+        );
+    }
+
+    #[test]
+    fn sort_undefined() {
+        assert_undefined(&eval_simple("$sort(nothing)"));
+    }
+
+    // ── HOF: $single ──────────────────────────────────────────────
+
+    #[test]
+    fn single_one_element() {
+        assert_eq!(eval_simple("$single([42])"), Value::Number(42.0));
+    }
+
+    #[test]
+    fn single_with_predicate() {
+        assert_eq!(
+            eval_simple("$single([1,2,3], function($v){$v = 2})"),
+            Value::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn single_multiple_matches_error() {
+        let err = eval_expr("$single([1,2,3])", &Value::Undefined).unwrap_err();
+        assert_eq!(err.code, "D3138");
+    }
+
+    #[test]
+    fn single_no_matches_error() {
+        let err = eval_expr("$single([1,2,3], function($v){$v > 10})", &Value::Undefined).unwrap_err();
+        assert_eq!(err.code, "D3139");
+    }
+
+    // ── HOF: $each ────────────────────────────────────────────────
+
+    #[test]
+    fn each_basic() {
+        let result = eval_with_data(
+            "$each($, function($v, $k){$k & '=' & $v})",
+            r#"{"a":"1","b":"2"}"#,
+        );
+        // Result is a sequence collapsed to array
+        assert!(result.is_array());
+    }
+
+    #[test]
+    fn each_undefined_input() {
+        assert_undefined(&eval_simple("$each(nothing, function($v,$k){$v})"));
+    }
+
+    // ── HOF: $sift ────────────────────────────────────────────────
+
+    #[test]
+    fn sift_basic() {
+        let result = eval_with_data(
+            "$sift($, function($v){$v > 1})",
+            r#"{"a":1,"b":2,"c":3}"#,
+        );
+        let obj = result.as_object().expect("should be object");
+        assert_eq!(obj.len(), 2);
+        assert_eq!(obj.get("b"), Some(&Value::Number(2.0)));
+        assert_eq!(obj.get("c"), Some(&Value::Number(3.0)));
+    }
+
+    #[test]
+    fn sift_no_matches() {
+        assert_undefined(&eval_with_data("$sift($, function($v){$v > 100})", r#"{"a":1}"#));
+    }
+
+    // ── Regex: $match ─────────────────────────────────────────────
+
+    #[test]
+    fn match_basic() {
+        let result = eval_simple(r#"$match("hello world", /wo/)"#);
+        let obj = result.as_object().expect("should be match object");
+        assert_eq!(obj.get("match"), Some(&Value::String("wo".into())));
+    }
+
+    #[test]
+    fn match_no_match() {
+        assert_undefined(&eval_simple(r#"$match("hello", /xyz/)"#));
+    }
+
+    #[test]
+    fn match_with_groups() {
+        let result = eval_simple(r#"$match("2024-01-15", /(\d{4})-(\d{2})-(\d{2})/)"#);
+        let obj = result.as_object().expect("should be match object");
+        assert_eq!(obj.get("match"), Some(&Value::String("2024-01-15".into())));
+        let groups = obj.get("groups").and_then(|v| v.as_array()).expect("groups");
+        assert_eq!(groups.len(), 3);
+    }
+
+    // ── Regex: $replace ───────────────────────────────────────────
+
+    #[test]
+    fn replace_string() {
+        assert_eq!(
+            eval_simple(r#"$replace("hello world", "world", "rust")"#),
+            Value::String("hello rust".into())
+        );
+    }
+
+    #[test]
+    fn replace_regex() {
+        assert_eq!(
+            eval_simple(r#"$replace("hello 123 world", /\d+/, "NUM")"#),
+            Value::String("hello NUM world".into())
+        );
+    }
+
+    #[test]
+    fn replace_with_limit() {
+        assert_eq!(
+            eval_simple(r#"$replace("aaa", /a/, "b", 2)"#),
+            Value::String("bba".into())
+        );
+    }
+
+    // ── $eval ─────────────────────────────────────────────────────
+
+    #[test]
+    fn eval_simple_expr() {
+        assert_eq!(eval_simple(r#"$eval("1 + 2")"#), Value::Number(3.0));
+    }
+
+    #[test]
+    fn eval_with_context() {
+        assert_eq!(
+            eval_with_data(r#"$eval("name")"#, r#"{"name":"test"}"#),
+            Value::String("test".into())
+        );
+    }
+
+    #[test]
+    fn eval_undefined_input() {
+        assert_undefined(&eval_simple("$eval(nothing)"));
+    }
+
+    // ── Numeric edge cases ────────────────────────────────────────
+
+    #[test]
+    fn round_bankers_rounding() {
+        // JSONata uses banker's rounding (round-half-to-even)
+        assert_eq!(eval_simple("$round(0.5)"), Value::Number(0.0));
+        assert_eq!(eval_simple("$round(1.5)"), Value::Number(2.0));
+        assert_eq!(eval_simple("$round(2.5)"), Value::Number(2.0));
+        assert_eq!(eval_simple("$round(3.5)"), Value::Number(4.0));
+        assert_eq!(eval_simple("$round(-0.5)"), Value::Number(0.0));
+        assert_eq!(eval_simple("$round(-7.5)"), Value::Number(-8.0));
+        assert_eq!(eval_simple("$round(-8.5)"), Value::Number(-8.0));
+    }
+
+    #[test]
+    fn round_with_scale() {
+        assert_eq!(eval_simple("$round(1.2345, 2)"), Value::Number(1.23));
+        assert_eq!(eval_simple("$round(1.235, 2)"), Value::Number(1.24));
+    }
+
+    #[test]
+    fn sqrt_negative_error() {
+        let err = eval_expr("$sqrt(-1)", &Value::Undefined).unwrap_err();
+        assert_eq!(err.code, "D3060");
+    }
+
+    #[test]
+    fn sum_empty_returns_zero() {
+        assert_eq!(eval_simple("$sum([])"), Value::Number(0.0));
+    }
+
+    #[test]
+    fn format_base_binary() {
+        assert_eq!(eval_simple("$formatBase(10, 2)"), Value::String("1010".into()));
+    }
+
+    #[test]
+    fn format_base_hex() {
+        assert_eq!(eval_simple("$formatBase(255, 16)"), Value::String("ff".into()));
+    }
+
+    // ── String edge cases ─────────────────────────────────────────
+
+    #[test]
+    fn length_unicode() {
+        // $length counts characters, not bytes
+        assert_eq!(eval_simple(r#"$length("café")"#), Value::Number(4.0));
+    }
+
+    #[test]
+    fn substring_negative_start() {
+        // Negative start counts from end
+        assert_eq!(eval_simple(r#"$substring("hello", -2, 4)"#), Value::String("lo".into()));
+    }
+
+    #[test]
+    fn trim_collapses_whitespace() {
+        assert_eq!(eval_simple(r#"$trim("  hello   world  ")"#), Value::String("hello world".into()));
+    }
+
+    #[test]
+    fn split_empty_separator() {
+        // Empty string separator splits into characters
+        assert_eq!(
+            eval_simple(r#"$split("abc", "")"#),
+            Value::Array(Rc::from(vec![
+                Value::String("a".into()),
+                Value::String("b".into()),
+                Value::String("c".into()),
+            ]))
+        );
+    }
+
+    #[test]
+    fn join_basic() {
+        assert_eq!(
+            eval_simple(r#"$join(["a","b","c"], "-")"#),
+            Value::String("a-b-c".into())
+        );
+    }
+
+    #[test]
+    fn join_no_separator() {
+        assert_eq!(
+            eval_simple(r#"$join(["a","b","c"])"#),
+            Value::String("abc".into())
+        );
+    }
+
+    #[test]
+    fn base64_roundtrip() {
+        assert_eq!(
+            eval_simple(r#"$base64decode($base64encode("hello world"))"#),
+            Value::String("hello world".into())
+        );
+    }
+
+    // ── Array functions ───────────────────────────────────────────
+
+    #[test]
+    fn count_array() {
+        assert_eq!(eval_simple("$count([1,2,3])"), Value::Number(3.0));
+    }
+
+    #[test]
+    fn count_scalar() {
+        assert_eq!(eval_simple("$count(42)"), Value::Number(1.0));
+    }
+
+    #[test]
+    fn count_undefined() {
+        assert_eq!(eval_simple("$count(nothing)"), Value::Number(0.0));
+    }
+
+    #[test]
+    fn append_arrays() {
+        assert_eq!(
+            eval_simple("$append([1,2], [3,4])"),
+            Value::Array(Rc::from(vec![
+                Value::Number(1.0), Value::Number(2.0),
+                Value::Number(3.0), Value::Number(4.0),
+            ]))
+        );
+    }
+
+    #[test]
+    fn reverse_array() {
+        assert_eq!(
+            eval_simple("$reverse([1,2,3])"),
+            Value::Array(Rc::from(vec![Value::Number(3.0), Value::Number(2.0), Value::Number(1.0)]))
+        );
+    }
+
+    #[test]
+    fn distinct_removes_dupes() {
+        assert_eq!(
+            eval_simple("$distinct([1,2,2,3,3,3])"),
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]))
+        );
+    }
+
+    #[test]
+    fn flatten_nested() {
+        assert_eq!(
+            eval_simple("$flatten([[1,2],[3,[4,5]]])"),
+            Value::Array(Rc::from(vec![
+                Value::Number(1.0), Value::Number(2.0),
+                Value::Number(3.0), Value::Number(4.0), Value::Number(5.0),
+            ]))
+        );
+    }
+
+    #[test]
+    fn zip_basic() {
+        let result = eval_simple("$zip([1,2],[3,4])");
+        let arr = result.as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+    }
+
+    // ── Object functions ──────────────────────────────────────────
+
+    #[test]
+    fn keys_basic() {
+        let result = eval_with_data("$keys($)", r#"{"a":1,"b":2}"#);
+        let arr = result.as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn values_basic() {
+        let result = eval_with_data("$values($)", r#"{"a":1,"b":2}"#);
+        let arr = result.as_array().expect("should be array");
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn merge_objects() {
+        let result = eval_simple(r#"$merge([{"a":1},{"b":2}])"#);
+        let obj = result.as_object().expect("should be object");
+        assert_eq!(obj.get("a"), Some(&Value::Number(1.0)));
+        assert_eq!(obj.get("b"), Some(&Value::Number(2.0)));
+    }
+
+    #[test]
+    fn lookup_basic() {
+        assert_eq!(
+            eval_with_data(r#"$lookup($, "a")"#, r#"{"a":42}"#),
+            Value::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn lookup_missing() {
+        assert_undefined(&eval_with_data(r#"$lookup($, "z")"#, r#"{"a":42}"#));
+    }
+
+    // ── Boolean/type functions ────────────────────────────────────
+
+    #[test]
+    fn boolean_coercion() {
+        assert_eq!(eval_simple("$boolean(0)"), Value::Bool(false));
+        assert_eq!(eval_simple("$boolean(1)"), Value::Bool(true));
+        assert_eq!(eval_simple(r#"$boolean("")"#), Value::Bool(false));
+        assert_eq!(eval_simple(r#"$boolean("0")"#), Value::Bool(true)); // "0" is truthy!
+        assert_eq!(eval_simple("$boolean(null)"), Value::Bool(false));
+        assert_eq!(eval_simple("$boolean(false)"), Value::Bool(false));
+    }
+
+    #[test]
+    fn not_function() {
+        assert_eq!(eval_simple("$not(true)"), Value::Bool(false));
+        assert_eq!(eval_simple("$not(false)"), Value::Bool(true));
+    }
+
+    #[test]
+    fn exists_function() {
+        assert_eq!(eval_simple("$exists(42)"), Value::Bool(true));
+        assert_eq!(eval_simple("$exists(nothing)"), Value::Bool(false));
+        assert_eq!(eval_simple("$exists(null)"), Value::Bool(true));
+    }
+
+    #[test]
+    fn type_function() {
+        assert_eq!(eval_simple(r#"$type(42)"#), Value::String("number".into()));
+        assert_eq!(eval_simple(r#"$type("hi")"#), Value::String("string".into()));
+        assert_eq!(eval_simple(r#"$type(true)"#), Value::String("boolean".into()));
+        assert_eq!(eval_simple(r#"$type(null)"#), Value::String("null".into()));
+        assert_eq!(eval_simple(r#"$type([1])"#), Value::String("array".into()));
+    }
+
+    // ── Error function ────────────────────────────────────────────
+
+    #[test]
+    fn error_function() {
+        let err = eval_expr(r#"$error("custom error")"#, &Value::Undefined).unwrap_err();
+        assert_eq!(err.code, "D3137");
+        assert!(err.message.contains("custom error"));
     }
 }
