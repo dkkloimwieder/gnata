@@ -209,7 +209,7 @@ pub fn fn_uppercase(args: &[Value], focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     match arg {
-        Value::String(s) => Ok(Value::String(s.to_uppercase().into())),
+        Value::String(s) => Ok(Value::String(s.to_uppercase())),
         _ => Err(JsonataError::new(
             "T0410",
             "$uppercase: argument must be a string",
@@ -223,7 +223,7 @@ pub fn fn_lowercase(args: &[Value], focus: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     match arg {
-        Value::String(s) => Ok(Value::String(s.to_lowercase().into())),
+        Value::String(s) => Ok(Value::String(s.to_lowercase())),
         _ => Err(JsonataError::new(
             "T0410",
             "$lowercase: argument must be a string",

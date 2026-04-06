@@ -425,12 +425,12 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
         FuncFastKind::Not => Some(Value::Bool(!val.to_boolean())),
 
         FuncFastKind::Lowercase => match val {
-            Value::String(s) => Some(Value::String(s.to_lowercase().into())),
+            Value::String(s) => Some(Value::String(s.to_lowercase())),
             _ => None,
         },
 
         FuncFastKind::Uppercase => match val {
-            Value::String(s) => Some(Value::String(s.to_uppercase().into())),
+            Value::String(s) => Some(Value::String(s.to_uppercase())),
             _ => None,
         },
 
@@ -583,9 +583,8 @@ pub fn eval_tape_path(
     fast_path: &FastPath,
     json_bytes: &[u8],
 ) -> Option<Result<Value, Box<dyn std::error::Error>>> {
-    let segments = match fast_path {
-        FastPath::PurePath(segments) => segments,
-        _ => return None,
+    let FastPath::PurePath(segments) = fast_path else {
+        return None;
     };
 
     let mut buf = json_bytes.to_vec();
@@ -599,7 +598,7 @@ pub fn eval_tape_path(
 }
 
 /// Walk a tape value through path segments with array auto-mapping.
-fn tape_walk<'t, 'i>(val: tape::Value<'t, 'i>, segments: &[String]) -> Value {
+fn tape_walk(val: tape::Value<'_, '_>, segments: &[String]) -> Value {
     if segments.is_empty() {
         return tape_to_value(val);
     }
@@ -618,7 +617,7 @@ fn tape_walk<'t, 'i>(val: tape::Value<'t, 'i>, segments: &[String]) -> Value {
     // Array: auto-map — descend into each element
     if let Some(arr) = val.as_array() {
         let mut results = Vec::new();
-        for item in arr.iter() {
+        for item in &arr {
             let child = tape_walk(item, segments);
             match child {
                 Value::Undefined => {}
@@ -661,7 +660,7 @@ fn tape_to_value(val: tape::Value<'_, '_>) -> Value {
     }
     if let Some(obj) = val.as_object() {
         let mut map = crate::value::ObjectMap::new();
-        for (k, v) in obj.iter() {
+        for (k, v) in &obj {
             map.insert(CompactString::from(k), tape_to_value(v));
         }
         return Value::Object(Rc::new(map));
