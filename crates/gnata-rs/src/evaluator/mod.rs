@@ -1672,18 +1672,16 @@ fn eval_binary(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-    // Handle subscript `[` separately — it needs AST-level lhs access
-    // for Descendant checks, index_var extraction, and keep_array.
-    if let Expr::Binary { op, lhs, rhs, .. } = arena.get(node)
-        && *op == BinaryOp::Subscript
-    {
-        return eval_subscript_binary(arena, node, *lhs, *rhs, input, env);
-    }
-
     let (op, lhs, rhs) = match arena.get(node) {
         Expr::Binary { op, lhs, rhs, .. } => (*op, *lhs, *rhs),
         _ => unreachable!(),
     };
+
+    // Handle subscript `[` separately — it needs AST-level lhs access
+    // for Descendant checks, index_var extraction, and keep_array.
+    if op == BinaryOp::Subscript {
+        return eval_subscript_binary(arena, node, lhs, rhs, input, env);
+    }
 
     // Only use stacker check when lhs is a Binary (could recurse into another
     // eval_binary creating a deep chain). Leaf nodes (Name, Number, Variable, etc.)
@@ -1852,7 +1850,11 @@ fn apply_binary_op(
 
 /// Apply arithmetic operator to pre-evaluated values.
 fn apply_arithmetic(op: BinaryOp, left: &Value, right: &Value) -> JsonataResult {
-    // Type-check non-undefined operands BEFORE undefined propagation.
+    // Fast path: both are numbers (the common case in arithmetic expressions).
+    if let (Value::Number(ln), Value::Number(rn)) = (left, right) {
+        return apply_arithmetic_nums(op, *ln, *rn);
+    }
+    // Slow path: type-check non-undefined operands BEFORE undefined propagation.
     if !left.is_undefined() && !left.is_number() {
         return Err(JsonataError::new(
             "T2001",
@@ -1865,11 +1867,12 @@ fn apply_arithmetic(op: BinaryOp, left: &Value, right: &Value) -> JsonataResult 
             "the right operand must be a number",
         ));
     }
-    if left.is_undefined() || right.is_undefined() {
-        return Ok(Value::Undefined);
-    }
-    let ln = left.as_f64().ok_or_else(|| JsonataError::new("D0000", "left verified as number above"))?;
-    let rn = right.as_f64().ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
+    // At least one is undefined.
+    Ok(Value::Undefined)
+}
+
+#[inline]
+fn apply_arithmetic_nums(op: BinaryOp, ln: f64, rn: f64) -> JsonataResult {
     // Modulo by zero → D3001 immediately (matches Go).
     if op == BinaryOp::Mod && rn == 0.0 {
         return Err(JsonataError::new("D3001", "modulo by zero"));

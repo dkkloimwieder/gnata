@@ -167,10 +167,12 @@ impl AstArena {
         NodeId(id)
     }
 
+    #[inline]
     pub fn get(&self, id: NodeId) -> &Expr {
         &self.nodes[id.0 as usize]
     }
 
+    #[inline]
     pub fn get_mut(&mut self, id: NodeId) -> &mut Expr {
         &mut self.nodes[id.0 as usize]
     }
