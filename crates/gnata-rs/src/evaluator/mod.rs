@@ -93,7 +93,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             Expr::Descendant { .. } => {
                 let result = descendant_lookup(input);
                 return match result {
-                    Value::Sequence(seq) => Ok(seq.collapse()),
+                    Value::Sequence(seq) => Ok(seq.into_value()),
                     other => Ok(other),
                 };
             }
@@ -277,7 +277,7 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
                 }
                 return Ok(Value::Undefined);
             }
-            Ok(seq.collapse())
+            Ok(seq.into_value())
         }
         Value::Sequence(s) => eval_name(name, &s.collapse()),
         _ => Ok(Value::Undefined),
@@ -302,7 +302,7 @@ fn eval_wildcard(input: &Value) -> JsonataResult {
             if seq.values.is_empty() {
                 Ok(Value::Undefined)
             } else {
-                Ok(seq.collapse())
+                Ok(seq.into_value())
             }
         }
         Value::Array(arr) => {
@@ -317,7 +317,7 @@ fn eval_wildcard(input: &Value) -> JsonataResult {
                     seq.values.push(item.clone());
                 }
             }
-            Ok(seq.collapse())
+            Ok(seq.into_value())
         }
         _ => Ok(Value::Undefined),
     }
@@ -1116,7 +1116,7 @@ fn eval_path_tuple(
     for (val, _) in &ctxs {
         seq.append(val.clone());
     }
-    let result = seq.collapse();
+    let result = seq.into_value();
 
     if keep_singleton_array {
         match result {
@@ -1227,7 +1227,7 @@ fn flatten_to_vec(val: Value) -> Vec<Value> {
     match val {
         Value::Array(a) => a.to_vec(),
         Value::Sequence(s) => {
-            let collapsed = s.collapse();
+            let collapsed = s.into_value();
             match collapsed {
                 Value::Array(a) => a.to_vec(),
                 Value::Undefined => vec![],
@@ -1464,7 +1464,7 @@ fn eval_path_simple(
         }
         // Collapse sequences between steps.
         if let Value::Sequence(seq) = result {
-            result = seq.collapse();
+            result = seq.into_value();
             if i > 0 && result.is_undefined() {
                 return Ok(Value::Undefined);
             }
@@ -1611,7 +1611,7 @@ fn eval_path_step(
     if is_group_step && keep_singleton_array {
         return Ok(Value::Array(Rc::from(seq.values)));
     }
-    Ok(seq.collapse())
+    Ok(seq.into_value())
 }
 
 /// Evaluate a function call step in path context.
@@ -1724,7 +1724,7 @@ fn eval_subscript_binary(
             Value::Undefined => {}
             other => seq.append(other),
         }
-        seq.collapse()
+        seq.into_value()
     } else {
         eval_no_stack_check(arena, lhs, input, env)?
     };
@@ -2120,7 +2120,7 @@ fn eval_subscript(
             seq.values.push(item.clone());
         }
     }
-    Ok(seq.collapse())
+    Ok(seq.into_value())
 }
 
 // ── Chain operator (~>) ─────────────────────────────────────────────
@@ -2201,7 +2201,7 @@ fn eval_chain_step(
         }
         // Collapse sequences from function results.
         return match result {
-            Value::Sequence(seq) => Ok(seq.collapse()),
+            Value::Sequence(seq) => Ok(seq.into_value()),
             other => Ok(other),
         };
     }
@@ -2230,7 +2230,7 @@ fn eval_chain_step(
                         let intermediate = call_function(&inner, args, focus, &env_clone, arena)?;
                         // Collapse sequences between composition steps.
                         let intermediate = match intermediate {
-                            Value::Sequence(seq) => seq.collapse(),
+                            Value::Sequence(seq) => seq.into_value(),
                             other => other,
                         };
                         call_function(&outer, &[intermediate], focus, &env_clone, arena)
@@ -2241,7 +2241,7 @@ fn eval_chain_step(
             {
                 let result = call_function(func, std::slice::from_ref(piped), input, env, arena)?;
                 match result {
-                    Value::Sequence(seq) => Ok(seq.collapse()),
+                    Value::Sequence(seq) => Ok(seq.into_value()),
                     other => Ok(other),
                 }
             }
@@ -2344,7 +2344,7 @@ fn eval_unary(
                 match val {
                     Value::Sequence(seq) => {
                         if seq.cons_array || is_explicit_array {
-                            result.push(seq.collapse());
+                            result.push(seq.into_value());
                         } else {
                             result.extend(seq.values);
                         }
@@ -2393,7 +2393,7 @@ fn eval_unary(
                 let val_val = eval_no_stack_check(arena, lhs_nodes[i + 1], input, env)?;
                 // Collapse sequences.
                 let val_val = match val_val {
-                    Value::Sequence(seq) => seq.collapse(),
+                    Value::Sequence(seq) => seq.into_value(),
                     other => other,
                 };
                 // Skip if value is undefined.
@@ -2468,7 +2468,7 @@ fn eval_sort(
     let (mut arr, was_array) = match items {
         Value::Array(a) => (a.to_vec(), true),
         Value::Sequence(seq) => {
-            let collapsed = seq.collapse();
+            let collapsed = seq.into_value();
             match collapsed {
                 Value::Undefined => return Ok(Value::Undefined),
                 Value::Array(a) => (a.to_vec(), true),
@@ -2546,7 +2546,7 @@ fn eval_sort_with_parent_tracking(
     for (val, _) in &sorted {
         seq.append(val.clone());
     }
-    Ok(seq.collapse())
+    Ok(seq.into_value())
 }
 
 /// Build pathCtx tuples for a sort expression, splitting paths into prefix + lastStep
@@ -2771,7 +2771,7 @@ fn apply_transform(
     // These are VALUE copies of the objects found at matched positions.
     // Sequences may appear if the pattern expression produces one as its final result.
     let matched = match matched {
-        Value::Sequence(seq) => seq.collapse(),
+        Value::Sequence(seq) => seq.into_value(),
         other => other,
     };
     let mut targets: Vec<Value> = Vec::new();
@@ -2972,7 +2972,7 @@ fn eval_group_by(
     let items: Vec<Value> = match base {
         Value::Array(a) => a.to_vec(),
         Value::Sequence(seq) => {
-            let collapsed = seq.collapse();
+            let collapsed = seq.into_value();
             match collapsed {
                 Value::Undefined => return Ok(Value::Undefined),
                 Value::Array(a) => a.to_vec(),
@@ -3102,7 +3102,7 @@ mod tests {
     /// Collapse Sequence values for test comparison (mirrors Expression API behavior).
     fn collapse_result(val: Value) -> Value {
         match val {
-            Value::Sequence(seq) => seq.collapse(),
+            Value::Sequence(seq) => seq.into_value(),
             other => other,
         }
     }
@@ -3663,7 +3663,7 @@ mod tests {
         // $map returns a Sequence that collapses to Array for 3+ elements.
         let result = eval_simple("$map([1, 2, 3], function($v){$v * 2})");
         let collapsed = match result {
-            Value::Sequence(seq) => seq.collapse(),
+            Value::Sequence(seq) => seq.into_value(),
             other => other,
         };
         assert_eq!(

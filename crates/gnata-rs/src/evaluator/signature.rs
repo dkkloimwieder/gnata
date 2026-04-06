@@ -83,8 +83,11 @@ pub fn process_call_args(
 
     // Collapse any Sequence values before processing.
     for v in &mut coerced {
-        if let Value::Sequence(seq) = v {
-            *v = seq.collapse();
+        if matches!(v, Value::Sequence(_)) {
+            let owned = std::mem::replace(v, Value::Undefined);
+            if let Value::Sequence(seq) = owned {
+                *v = seq.into_value();
+            }
         }
     }
 

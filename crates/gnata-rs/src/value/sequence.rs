@@ -71,11 +71,12 @@ impl Sequence {
         }
     }
 
-    /// Apply JSONata singleton-collapsing rules:
+    /// Apply JSONata singleton-collapsing rules (borrowing):
     /// - len 0 → Undefined
     /// - len 1 → element (unless KeepSingleton → wrapped in array)
     /// - len > 1 → Array
     ///
+    /// Prefer `into_value()` when the Sequence is owned to avoid cloning.
     /// Go equivalent: `CollapseSequence` in `value.go`.
     pub fn collapse(&self) -> Value {
         match self.values.len() {
@@ -91,6 +92,22 @@ impl Sequence {
         }
     }
 
+    /// Consuming collapse — moves the Vec into the result instead of cloning.
+    /// Use this when the Sequence is owned and won't be used again.
+    pub fn into_value(mut self) -> Value {
+        match self.values.len() {
+            0 => Value::Undefined,
+            1 => {
+                if self.keep_singleton {
+                    Value::Array(Rc::from(self.values))
+                } else {
+                    self.values.pop().unwrap_or(Value::Undefined)
+                }
+            }
+            _ => Value::Array(Rc::from(self.values)),
+        }
+    }
+
     /// Collapse with KeepArray support for `[]` suffix on function calls.
     ///
     /// Go equivalent: `CollapseAndKeep` in `value.go`.
@@ -98,7 +115,7 @@ impl Sequence {
         if keep_array {
             self.keep_singleton = true;
         }
-        let result = self.collapse();
+        let result = self.into_value();
         if keep_array {
             match result {
                 Value::Array(_) => result,
