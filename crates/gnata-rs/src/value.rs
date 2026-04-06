@@ -346,7 +346,7 @@ impl Value {
                 Value::Array(Rc::from(vec))
             }
             serde_json::Value::Object(obj) => {
-                // serde_json with preserve_order uses IndexMap internally
+                // serde_json with preserve_order uses indexmap internally
                 Value::Object(Rc::new(
                     obj.into_iter()
                         .map(|(k, v)| (CompactString::from(k), Value::from_json(v)))

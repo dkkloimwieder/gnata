@@ -1321,8 +1321,8 @@ fn eval_tuple_group(
 
         // Phase 1: group ctxs by key.
         #[allow(clippy::type_complexity)]
-        let mut groups: indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, Vec<Rc<Environment>>)> =
-            indexmap::IndexMap::default();
+        let mut groups: std::collections::HashMap<compact_str::CompactString, (Vec<Value>, Vec<Rc<Environment>>)> =
+            std::collections::HashMap::new();
         let mut key_order: Vec<compact_str::CompactString> = Vec::new();
 
         for (item, item_env) in ctxs {
