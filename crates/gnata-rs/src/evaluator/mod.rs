@@ -236,6 +236,11 @@ fn eval_variable(name: &str, input: &Value, env: &Rc<Environment>) -> JsonataRes
 
 // ── Name (field access) ─────────────────────────────────────────────
 
+/// Look up a field name in input, with auto-mapping over arrays.
+///
+/// This is the authoritative implementation of path-step semantics.
+/// Simplified versions exist in `fast_path::eval_pure_path` and
+/// `fast_path::tape_walk` — update those if this logic changes.
 fn eval_name(name: &str, input: &Value) -> JsonataResult {
     match input {
         Value::Object(obj) => match obj.get(name) {

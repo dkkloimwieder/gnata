@@ -287,6 +287,11 @@ pub fn eval_fast(fast_path: &FastPath, input: &Value) -> Option<Value> {
 }
 
 /// Traverse a pure dotted path on a Value.
+/// Walk a pre-parsed Value through pure path segments with array auto-mapping.
+///
+/// Simplified version of `evaluator::eval_name` — handles only the pure-path
+/// case (no Sequence, no field_found tracking, no Undefined→Null substitution).
+/// If path semantics change in `eval_name`, update this function to match.
 fn eval_pure_path(segments: &[String], input: &Value) -> Value {
     let mut current = input.clone();
     for segment in segments {
@@ -597,7 +602,12 @@ pub fn eval_tape_path(
     Some(Ok(tape_walk(root, segments)))
 }
 
-/// Walk a tape value through path segments with array auto-mapping.
+/// Walk a simd-json tape value through path segments with array auto-mapping.
+///
+/// Tape equivalent of `eval_pure_path` — same semantics but operates on
+/// `simd_json::tape::Value` to avoid building the full Value tree.
+/// If path semantics change in `eval_pure_path` or `evaluator::eval_name`,
+/// update this function to match.
 fn tape_walk(val: tape::Value<'_, '_>, segments: &[String]) -> Value {
     if segments.is_empty() {
         return tape_to_value(val);
