@@ -1028,7 +1028,7 @@ fn binding_power(tt: TokenType) -> i32 {
     }
 }
 
-fn parse_error(code: &str, msg: &str, _pos: usize) -> JsonataError {
+fn parse_error(code: &'static str, msg: &str, _pos: usize) -> JsonataError {
     JsonataError::new(code, msg)
 }
 

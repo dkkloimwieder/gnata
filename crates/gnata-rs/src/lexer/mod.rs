@@ -445,7 +445,7 @@ fn char_len_at(src: &[u8], pos: usize) -> usize {
     }
 }
 
-fn lex_error(code: &str, msg: &str) -> JsonataError {
+fn lex_error(code: &'static str, msg: &str) -> JsonataError {
     JsonataError::new(code, msg)
 }
 

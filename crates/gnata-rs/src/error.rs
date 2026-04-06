@@ -13,25 +13,25 @@ use std::fmt;
 /// - U1001: Stack overflow
 #[derive(Debug, Clone)]
 pub struct JsonataError {
-    pub code: String,
+    pub code: &'static str,
     pub token: String,
     pub value: Option<String>,
     pub message: String,
 }
 
 impl JsonataError {
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            code: code.into(),
+            code,
             token: String::new(),
             value: None,
             message: message.into(),
         }
     }
 
-    pub fn with_code(code: impl Into<String>) -> Self {
+    pub fn with_code(code: &'static str) -> Self {
         Self {
-            code: code.into(),
+            code,
             token: String::new(),
             value: None,
             message: String::new(),

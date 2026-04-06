@@ -347,7 +347,7 @@ fn is_valid_sig_type(c: u8) -> bool {
     )
 }
 
-fn sig_error(code: &str, msg: &str) -> JsonataError {
+fn sig_error(code: &'static str, msg: &str) -> JsonataError {
     JsonataError::new(code, msg)
 }
 
