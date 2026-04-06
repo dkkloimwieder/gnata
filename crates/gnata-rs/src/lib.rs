@@ -27,6 +27,8 @@ pub mod parser;
 pub mod stdlib;
 pub mod stream;
 pub mod value;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 pub use error::JsonataError;
 pub use evaluator::{Environment, FunctionValue, eval};

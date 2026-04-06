@@ -30,9 +30,10 @@ use crate::value::{Sequence, Value};
 /// Public eval entry point. Checks stack on first call, then dispatches
 /// to eval_inner which is used for all internal recursive calls (no stack check overhead).
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
-    stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
-        eval_inner(arena, node, input, env)
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    { stacker::maybe_grow(128 * 1024, 1024 * 1024, || eval_inner(arena, node, input, env)) }
+    #[cfg(target_arch = "wasm32")]
+    { eval_inner(arena, node, input, env) }
 }
 
 /// Fast internal eval — no stack check. Used for all recursive calls within
@@ -45,9 +46,10 @@ pub(crate) fn eval_fast_inner(arena: &AstArena, node: NodeId, input: &Value, env
 /// Check remaining stack and grow if needed. Called from deep-recursion
 /// entry points (call_function lambda body, etc.).
 pub(crate) fn eval_with_stack_check(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
-    stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
-        eval_inner(arena, node, input, env)
-    })
+    #[cfg(not(target_arch = "wasm32"))]
+    { stacker::maybe_grow(128 * 1024, 1024 * 1024, || eval_inner(arena, node, input, env)) }
+    #[cfg(target_arch = "wasm32")]
+    { eval_inner(arena, node, input, env) }
 }
 
 #[allow(clippy::too_many_lines, clippy::needless_continue)]

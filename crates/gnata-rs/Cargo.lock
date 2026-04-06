@@ -356,6 +356,7 @@ dependencies = [
  "halfbrown",
  "indexmap",
  "jiff",
+ "js-sys",
  "parking_lot",
  "percent-encoding",
  "regex",

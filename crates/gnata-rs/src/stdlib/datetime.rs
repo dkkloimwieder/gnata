@@ -6,11 +6,20 @@
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
+/// Get current time as milliseconds since Unix epoch.
+/// Uses jiff on native, js_sys::Date::now() on WASM.
+fn current_millis() -> i64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    { jiff::Timestamp::now().as_millisecond() }
+    #[cfg(target_arch = "wasm32")]
+    { js_sys::Date::now() as i64 }
+}
+
 // ── Public entry points ─────────────────────────────────────────────────────
 
 #[allow(clippy::missing_errors_doc)]
 pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
-    let now = jiff::Zoned::now();
+    let millis = current_millis();
     if !args.is_empty() && !args[0].is_undefined() {
         let picture = match &args[0] {
             Value::String(s) => s.clone(),
@@ -29,21 +38,16 @@ pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
         } else {
             0
         };
-        let ts = now.timestamp();
-        let millis = ts.as_millisecond();
         let s = format_with_picture(millis, &picture, tz_offset)?;
         return Ok(Value::String(s.into()));
     }
     // Default: ISO 8601 with milliseconds
-    let ts = now.timestamp();
-    let millis = ts.as_millisecond();
     Ok(Value::String(format_default_iso(millis, 0).into()))
 }
 
 #[allow(clippy::missing_errors_doc)]
 pub fn fn_millis(_args: &[Value], _focus: &Value) -> JsonataResult {
-    let now = jiff::Timestamp::now();
-    Ok(Value::Number(now.as_millisecond() as f64))
+    Ok(Value::Number(current_millis() as f64))
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -1052,9 +1056,8 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
 
     // If no year seen, use today for time-only pictures.
     if !has_year && year == 0 && (has_hour || has_min) {
-        let now = jiff::Zoned::now();
-        let ts = now.timestamp().as_millisecond();
-        let (y, mo, d, _, _, _) = secs_to_ymd_hms(ts / 1000);
+        let ms = current_millis();
+        let (y, mo, d, _, _, _) = secs_to_ymd_hms(ms / 1000);
         year = y;
         month = mo;
         day = d;
