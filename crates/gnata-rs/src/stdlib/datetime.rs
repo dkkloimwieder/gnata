@@ -1969,22 +1969,6 @@ fn is_leap_year(y: i32) -> bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
 }
 
-#[allow(dead_code)]
-fn days_in_month(y: i32, m: u8) -> u8 {
-    match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(y) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 30,
-    }
-}
-
 fn day_of_year(y: i32, mo: u8, d: u8) -> u32 {
     let months: &[u8] = &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut doy = u32::from(d);
