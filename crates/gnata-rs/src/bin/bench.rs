@@ -2,7 +2,9 @@
 // Usage: gnata-bench -expr 'Account.Name' -data '{"Account":{"Name":"Firefly"}}' [-n 1000]
 //        gnata-bench -stream -datafile data.json -n 1000   (evaluates 4 expressions per iter)
 
-use std::rc::Rc;
+#[cfg(feature = "mimalloc-alloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use gnata::expression::Expression;
 use gnata::value::Value;
