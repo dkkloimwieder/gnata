@@ -188,7 +188,7 @@ impl StreamEvaluator {
                 env.set_cancel(cancel);
             }
             if !input.is_undefined() {
-                env.bind("$".into(), input.clone());
+                env.bind("$", input.clone());
             }
             Some(std::rc::Rc::new(env))
         } else {

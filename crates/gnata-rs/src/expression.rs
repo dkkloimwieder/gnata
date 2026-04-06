@@ -127,7 +127,7 @@ impl Expression {
         let mut env = Environment::new();
         crate::stdlib::register_all(&mut env);
         if !input.is_undefined() {
-            env.bind("$".into(), input.clone());
+            env.bind("$", input.clone());
         }
         let env = Rc::new(env);
         crate::eval(&self.arena, self.root, input, &env)
@@ -172,7 +172,7 @@ impl Expression {
         }
         let env = new_custom_env(custom_funcs);
         if !input.is_undefined() {
-            env.bind("$".into(), input.clone());
+            env.bind("$", input.clone());
         }
         crate::eval(&self.arena, self.root, &input, &env)
     }
@@ -197,7 +197,7 @@ impl Expression {
         let mut env = Environment::new();
         crate::stdlib::register_all(&mut env);
         if !input.is_undefined() {
-            env.bind("$".into(), input.clone());
+            env.bind("$", input.clone());
         }
         for (name, value) in vars {
             env.bind(name.clone(), value.clone());
@@ -227,7 +227,7 @@ impl Expression {
         crate::stdlib::register_all(&mut env);
         env.set_cancel(cancel);
         if !input.is_undefined() {
-            env.bind("$".into(), input.clone());
+            env.bind("$", input.clone());
         }
         let env = Rc::new(env);
         crate::eval(&self.arena, self.root, &input, &env)
@@ -356,7 +356,7 @@ mod tests {
         let expr1 = Expression::compile("$addOne(10)").unwrap();
         let expr2 = Expression::compile("$addOne(20)").unwrap();
 
-        env.bind("$".into(), Value::Undefined);
+        env.bind("$", Value::Undefined);
         let r1 = expr1.evaluate_with_env(&Value::Undefined, &env).unwrap();
         let r2 = expr2.evaluate_with_env(&Value::Undefined, &env).unwrap();
 

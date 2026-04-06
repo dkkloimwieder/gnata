@@ -225,7 +225,7 @@ fn run_test_case(tc: &TestCase) -> Result<(), String> {
     gnata::stdlib::register_all(&mut env);
     // Bind $$ (root input reference) — Go does env.Bind("$", data).
     if !tc.input.is_undefined() {
-        env.bind("$".into(), tc.input.clone());
+        env.bind("$", tc.input.clone());
     }
     for (name, value) in &tc.bindings {
         env.bind(name.clone(), value.clone());

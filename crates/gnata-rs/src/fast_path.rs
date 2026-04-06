@@ -699,7 +699,7 @@ mod tests {
         let mut env = crate::evaluator::Environment::new();
         crate::stdlib::register_all(&mut env);
         if !input.is_undefined() {
-            env.bind("$".into(), input.clone());
+            env.bind("$", input.clone());
         }
         let env = std::rc::Rc::new(env);
         let full_result = crate::eval(&arena, root, &input, &env).expect("full eval failed");

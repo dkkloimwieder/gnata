@@ -119,42 +119,42 @@ pub fn register_all(env: &mut Environment) {
 /// Register stdlib on an Rc<Environment> (for $eval child envs).
 pub fn register_all_on_rc(env: &Rc<Environment>) {
     // String
-    env.bind("string".into(), _mk_sb(string_funcs::fn_string, "x-b?"));
-    env.bind("length".into(), _mk_b(string_funcs::fn_length));
-    env.bind("uppercase".into(), _mk_sb(string_funcs::fn_uppercase, "s-"));
-    env.bind("lowercase".into(), _mk_sb(string_funcs::fn_lowercase, "s-"));
-    env.bind("trim".into(), _mk_b(string_funcs::fn_trim));
-    env.bind("contains".into(), _mk_b(string_funcs::fn_contains));
-    env.bind("split".into(), _mk_b(string_funcs::fn_split));
-    env.bind("join".into(), _mk_b(string_funcs::fn_join));
+    env.bind("string", _mk_sb(string_funcs::fn_string, "x-b?"));
+    env.bind("length", _mk_b(string_funcs::fn_length));
+    env.bind("uppercase", _mk_sb(string_funcs::fn_uppercase, "s-"));
+    env.bind("lowercase", _mk_sb(string_funcs::fn_lowercase, "s-"));
+    env.bind("trim", _mk_b(string_funcs::fn_trim));
+    env.bind("contains", _mk_b(string_funcs::fn_contains));
+    env.bind("split", _mk_b(string_funcs::fn_split));
+    env.bind("join", _mk_b(string_funcs::fn_join));
     // Numeric
-    env.bind("number".into(), _mk_b(numeric::fn_number));
-    env.bind("abs".into(), _mk_b(numeric::fn_abs));
-    env.bind("floor".into(), _mk_b(numeric::fn_floor));
-    env.bind("ceil".into(), _mk_b(numeric::fn_ceil));
-    env.bind("round".into(), _mk_b(numeric::fn_round));
-    env.bind("sum".into(), _mk_sb(numeric::fn_sum, "a<n>"));
+    env.bind("number", _mk_b(numeric::fn_number));
+    env.bind("abs", _mk_b(numeric::fn_abs));
+    env.bind("floor", _mk_b(numeric::fn_floor));
+    env.bind("ceil", _mk_b(numeric::fn_ceil));
+    env.bind("round", _mk_b(numeric::fn_round));
+    env.bind("sum", _mk_sb(numeric::fn_sum, "a<n>"));
     env.bind(
-        "formatInteger".into(),
+        "formatInteger",
         _mk_b(format_integer::fn_format_integer),
     );
     env.bind(
-        "parseInteger".into(),
+        "parseInteger",
         _mk_b(parse_integer::fn_parse_integer),
     );
-    env.bind("count".into(), _mk_b(array::fn_count));
-    env.bind("append".into(), _mk_b(array::fn_append));
-    env.bind("keys".into(), _mk_b(object::fn_keys));
-    env.bind("values".into(), _mk_b(object::fn_values));
-    env.bind("boolean".into(), _mk_sb(boolean::fn_boolean, "x-"));
-    env.bind("not".into(), _mk_b(boolean::fn_not));
-    env.bind("exists".into(), _mk_b(boolean::fn_exists));
-    env.bind("type".into(), _mk_b(types::fn_type_of));
+    env.bind("count", _mk_b(array::fn_count));
+    env.bind("append", _mk_b(array::fn_append));
+    env.bind("keys", _mk_b(object::fn_keys));
+    env.bind("values", _mk_b(object::fn_values));
+    env.bind("boolean", _mk_sb(boolean::fn_boolean, "x-"));
+    env.bind("not", _mk_b(boolean::fn_not));
+    env.bind("exists", _mk_b(boolean::fn_exists));
+    env.bind("type", _mk_b(types::fn_type_of));
     // HOF
-    env.bind("map".into(), _mk_e(hof::fn_map));
-    env.bind("filter".into(), _mk_e(hof::fn_filter));
-    env.bind("reduce".into(), _mk_e(hof::fn_reduce));
-    env.bind("sort".into(), _mk_e(hof::fn_sort));
+    env.bind("map", _mk_e(hof::fn_map));
+    env.bind("filter", _mk_e(hof::fn_filter));
+    env.bind("reduce", _mk_e(hof::fn_reduce));
+    env.bind("sort", _mk_e(hof::fn_sort));
 }
 
 fn _mk_b(f: fn(&[Value], &Value) -> crate::error::JsonataResult) -> Value {
@@ -185,7 +185,7 @@ fn bind_builtin(
     f: fn(&[Value], &Value) -> crate::error::JsonataResult,
 ) {
     let func: Rc<BuiltinFn> = Rc::new(f);
-    env.bind(name.into(), Value::Function(Box::new(FunctionValue::Builtin(func))));
+    env.bind(name, Value::Function(Box::new(FunctionValue::Builtin(func))));
 }
 
 fn bind_signed_builtin(
@@ -196,7 +196,7 @@ fn bind_signed_builtin(
 ) {
     let func: Rc<BuiltinFn> = Rc::new(f);
     env.bind(
-        name.into(),
+        name,
         Value::Function(Box::new(FunctionValue::SignedBuiltin {
             func,
             signature: signature.into(),
@@ -216,7 +216,7 @@ fn bind_env_builtin(
 ) {
     let func: Rc<crate::evaluator::EnvAwareBuiltinFn> = Rc::new(f);
     env.bind(
-        name.into(),
+        name,
         Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(func))),
     );
 }

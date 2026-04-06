@@ -8,6 +8,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use compact_str::CompactString;
+
 use crate::error::JsonataError;
 use crate::value::Value;
 
@@ -51,10 +53,10 @@ impl CallCounter {
 #[derive(Debug)]
 pub struct Environment {
     parent: Option<Rc<Environment>>,
-    bindings: RefCell<HashMap<String, Value>>,
+    bindings: RefCell<HashMap<CompactString, Value>>,
     /// Lazy cache of non-local lookups. Populated on first parent-chain hit.
     /// Vec-based for cache-line friendliness at typical sizes (0-5 entries).
-    cache: RefCell<Vec<(String, Value)>>,
+    cache: RefCell<Vec<(CompactString, Value)>>,
     calls: Rc<CallCounter>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -86,8 +88,8 @@ impl Environment {
 
     /// Set a variable in this environment.
     /// Uses interior mutability so this works through `Rc<Environment>`.
-    pub fn bind(&self, name: String, value: Value) {
-        self.bindings.borrow_mut().insert(name, value);
+    pub fn bind(&self, name: impl Into<CompactString>, value: Value) {
+        self.bindings.borrow_mut().insert(name.into(), value);
     }
 
     /// Look up a variable, walking the parent chain iteratively.
@@ -109,7 +111,7 @@ impl Environment {
         while let Some(env) = current {
             if let Some(v) = env.bindings.borrow().get(name) {
                 let result = v.clone();
-                self.cache.borrow_mut().push((name.to_string(), result.clone()));
+                self.cache.borrow_mut().push((CompactString::from(name), result.clone()));
                 return Some(result);
             }
             current = env.parent.as_ref();
@@ -238,14 +240,14 @@ mod tests {
     #[test]
     fn bind_and_lookup() {
         let env = Environment::new();
-        env.bind("x".into(), Value::Number(42.0));
+        env.bind("x", Value::Number(42.0));
         assert_eq!(env.lookup("x"), Some(Value::Number(42.0)));
     }
 
     #[test]
     fn child_inherits_parent() {
         let root = Environment::new();
-        root.bind("x".into(), Value::Number(1.0));
+        root.bind("x", Value::Number(1.0));
         let parent = Rc::new(root);
         let child = Environment::new_child(Rc::clone(&parent));
         assert_eq!(child.lookup("x"), Some(Value::Number(1.0)));
@@ -254,10 +256,10 @@ mod tests {
     #[test]
     fn child_shadows_parent() {
         let root = Environment::new();
-        root.bind("x".into(), Value::Number(1.0));
+        root.bind("x", Value::Number(1.0));
         let parent = Rc::new(root);
         let child = Environment::new_child(Rc::clone(&parent));
-        child.bind("x".into(), Value::Number(2.0));
+        child.bind("x", Value::Number(2.0));
         assert_eq!(child.lookup("x"), Some(Value::Number(2.0)));
     }
 
@@ -273,7 +275,7 @@ mod tests {
     #[test]
     fn lookup_direct_no_parent() {
         let root = Environment::new();
-        root.bind("x".into(), Value::Number(1.0));
+        root.bind("x", Value::Number(1.0));
         let parent = Rc::new(root);
         let child = Environment::new_child(parent);
         assert!(child.lookup_direct("x").is_none());
@@ -292,14 +294,14 @@ mod tests {
     #[test]
     fn bind_through_rc() {
         let env = Rc::new(Environment::new());
-        env.bind("x".into(), Value::Number(42.0));
+        env.bind("x", Value::Number(42.0));
         assert_eq!(env.lookup("x"), Some(Value::Number(42.0)));
     }
 
     #[test]
     fn lookup_cache_populated_on_parent_hit() {
         let root = Environment::new();
-        root.bind("builtin".into(), Value::Number(99.0));
+        root.bind("builtin", Value::Number(99.0));
         let e1 = Rc::new(root);
         let e2 = Rc::new(Environment::new_child(Rc::clone(&e1)));
         let child = Environment::new_child(Rc::clone(&e2));
@@ -316,10 +318,10 @@ mod tests {
     #[test]
     fn lookup_cache_not_used_for_local() {
         let root = Environment::new();
-        root.bind("x".into(), Value::Number(1.0));
+        root.bind("x", Value::Number(1.0));
         let env = Rc::new(root);
         let child = Environment::new_child(env);
-        child.bind("x".into(), Value::Number(2.0));
+        child.bind("x", Value::Number(2.0));
 
         // Local binding should be returned, not cached parent value
         assert_eq!(child.lookup("x"), Some(Value::Number(2.0)));
@@ -330,7 +332,7 @@ mod tests {
     #[test]
     fn lookup_with_env_iterative() {
         let root = Environment::new();
-        root.bind("x".into(), Value::Number(1.0));
+        root.bind("x", Value::Number(1.0));
         let e1 = Rc::new(root);
         let e2 = Rc::new(Environment::new_child(Rc::clone(&e1)));
         let e3 = Rc::new(Environment::new_child(Rc::clone(&e2)));

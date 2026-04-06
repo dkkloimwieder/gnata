@@ -76,7 +76,7 @@ fn main() {
                 let mut env = Environment::new();
                 gnata::stdlib::register_all(&mut env);
                 if !input.is_undefined() {
-                    env.bind("$".into(), input.clone());
+                    env.bind("$", input.clone());
                 }
                 let env = Rc::new(env);
                 eprintln!("evaluating '{expr_str}' x {n} on {} bytes...", data.len());
