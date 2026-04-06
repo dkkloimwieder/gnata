@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn cancel_stops_evaluation() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(true));
         let expr = Expression::compile(
             "$reduce([1,2,3], function($a,$b){$a+$b}, 0)",

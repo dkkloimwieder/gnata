@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn expression_cancel_returns_d3001() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(true)); // pre-cancelled
         // Use a recursive expression that will hit call_function's cancel check
         let expr = crate::expression::Expression::compile(
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn stream_cancel_returns_d3001() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(true));
         let se = StreamEvaluator::new(Vec::new());
         let idx = se.compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)").unwrap();
