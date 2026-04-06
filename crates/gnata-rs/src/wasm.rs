@@ -83,15 +83,12 @@ pub fn release_handle(handle: u32) {
 }
 
 fn eval_expression(expr: &Expression, json_data: &str) -> Result<String, JsError> {
-    let input = if json_data.is_empty() || json_data == "null" {
-        Value::Undefined
+    let result = if json_data.is_empty() || json_data == "null" {
+        expr.evaluate_value(&Value::Undefined)
     } else {
-        Value::from_json_str(json_data).map_err(|e| JsError::new(&e.to_string()))?
-    };
-
-    let result = expr
-        .evaluate(&input)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+        expr.evaluate(json_data)
+    }
+    .map_err(|e| JsError::new(&e.to_string()))?;
 
     if result.is_undefined() {
         return Ok(String::new());

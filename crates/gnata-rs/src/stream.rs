@@ -242,7 +242,7 @@ impl StreamEvaluator {
             let start = self.metrics.as_ref().map(|_| Instant::now());
             let eval_result = match custom_env {
                 Some(ref env) => expr.evaluate_with_env(input, env),
-                None => expr.evaluate(input),
+                None => expr.evaluate_value(input),
             };
             match eval_result {
                 Ok(val) => {
@@ -632,7 +632,7 @@ mod tests {
         )
         .unwrap();
         let err = expr
-            .evaluate_with_cancel(&Value::Undefined, cancel)
+            .evaluate_with_cancel("", cancel)
             .unwrap_err();
         assert_eq!(err.code, "D3001");
     }

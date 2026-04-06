@@ -2,10 +2,7 @@
 // Usage: gnata-bench -expr 'Account.Name' -data '{"Account":{"Name":"Firefly"}}' [-n 1000]
 //        gnata-bench -stream -datafile data.json -n 1000   (evaluates 4 expressions per iter)
 
-use std::rc::Rc;
-
-use gnata::evaluator::Environment;
-use gnata::parser::{Parser, process_ast};
+use gnata::expression::Expression;
 use gnata::value::Value;
 
 fn main() {
@@ -14,7 +11,6 @@ fn main() {
     let mut data_str = String::from("{}");
     let mut n: u64 = 1;
     let mut stream_mode = false;
-    let mut bytes_mode = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -27,15 +23,12 @@ fn main() {
             }
             "-n" => { n = args[i + 1].parse().expect("invalid -n"); i += 2; }
             "-stream" => { stream_mode = true; i += 1; }
-            "-bytes" => { bytes_mode = true; i += 1; }
             _ => { i += 1; }
         }
     }
 
     if stream_mode {
         run_stream_bench(&data_str, n);
-    } else if bytes_mode {
-        run_bytes_bench(expr_str, &data_str, n);
     } else {
         run_single_bench(expr_str, &data_str, n);
     }
@@ -47,38 +40,11 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
         std::process::exit(1);
     }
 
-    let (mut arena, root) = Parser::parse(expr_str).expect("parse failed");
-    let root = process_ast(&mut arena, root).expect("process failed");
-    let input = Value::from_json_str(data_str).unwrap_or(Value::Undefined);
-
-    let mut env = Environment::new();
-    gnata::stdlib::register_all(&mut env);
-    if !input.is_undefined() {
-        env.bind("$".into(), input.clone());
-    }
-    let env = Rc::new(env);
+    let compiled = Expression::compile(expr_str).expect("compile failed");
 
     let mut result = Value::Undefined;
     for _ in 0..n {
-        result = gnata::eval(&arena, root, &input, &env).expect("eval failed");
-    }
-
-    let json = result.to_json();
-    println!("{}", serde_json::to_string(&json).unwrap_or_default());
-}
-
-fn run_bytes_bench(expr_str: &str, data_str: &str, n: u64) {
-    if expr_str.is_empty() {
-        eprintln!("usage: gnata-bench -bytes -expr EXPR [-data JSON | -datafile FILE] [-n ITERS]");
-        std::process::exit(1);
-    }
-
-    let compiled = gnata::Expression::compile(expr_str).expect("compile failed");
-    let bytes = data_str.as_bytes();
-
-    let mut result = Value::Undefined;
-    for _ in 0..n {
-        result = compiled.evaluate_bytes(bytes).expect("eval failed");
+        result = compiled.evaluate(data_str).expect("eval failed");
     }
 
     let json = result.to_json();

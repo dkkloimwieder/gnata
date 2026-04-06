@@ -84,20 +84,46 @@ impl Expression {
         })
     }
 
-    /// Evaluate this expression against input data.
+    /// Evaluate this expression against a JSON string.
     ///
-    /// Uses fast-path evaluation when possible, falling back to the full
-    /// AST-walking evaluator for complex expressions.
+    /// Automatically selects the fastest evaluation path:
+    /// - Pure dotted paths (`a.b.c`) use simd-json's tape — no Value tree built
+    /// - All other expressions parse to Value, then use the full evaluator
+    ///
+    /// This is the primary API. Use [`evaluate_value`] if you already have a
+    /// parsed `Value` (e.g., shared across multiple expression evaluations).
+    ///
+    /// # Errors
+    /// Returns JSON parse errors or JSONata evaluation errors.
+    pub fn evaluate(&self, json: &str) -> JsonataResult {
+        if json.is_empty() || json == "null" {
+            return self.evaluate_value(&Value::Undefined);
+        }
+
+        // Try tape-based evaluation for pure paths (no Value tree).
+        if let Some(result) = fast_path::eval_tape_path(&self.fast_path, json.as_bytes()) {
+            return result.map_err(|e| {
+                crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}"))
+            });
+        }
+
+        // Parse to Value, then evaluate.
+        let input = Self::parse_input(json)?;
+        self.evaluate_value(&input)
+    }
+
+    /// Evaluate this expression against a pre-parsed Value.
+    ///
+    /// Use this when you already have a `Value` — e.g., when evaluating
+    /// multiple expressions against the same input (parse once, eval many).
     ///
     /// # Errors
     /// Returns JSONata evaluation errors.
-    pub fn evaluate(&self, input: &Value) -> JsonataResult {
-        // Try fast path first.
+    pub fn evaluate_value(&self, input: &Value) -> JsonataResult {
         if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
             return Ok(result);
         }
 
-        // Fall back to full evaluator.
         let mut env = Environment::new();
         crate::stdlib::register_all(&mut env);
         if !input.is_undefined() {
@@ -107,30 +133,23 @@ impl Expression {
         crate::eval(&self.arena, self.root, input, &env)
     }
 
-    /// Evaluate this expression against raw JSON bytes.
-    ///
-    /// For pure dotted paths (`a.b.c`), navigates the JSON using simd-json's
-    /// tape representation without building a full Value tree. Only leaf values
-    /// are converted to `Value`. For non-qualifying expressions, falls back to
-    /// full parse + eval.
+    /// Evaluate against raw bytes. Equivalent to [`evaluate`] but takes `&[u8]`.
     ///
     /// # Errors
     /// Returns JSON parse errors or JSONata evaluation errors.
     pub fn evaluate_bytes(&self, json_bytes: &[u8]) -> JsonataResult {
-        // Try tape-based evaluation for pure paths.
         if let Some(result) = fast_path::eval_tape_path(&self.fast_path, json_bytes) {
             return result.map_err(|e| {
                 crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}"))
             });
         }
 
-        // Fall back: full parse + eval.
         let input = Value::from_json_str(
             std::str::from_utf8(json_bytes)
                 .map_err(|e| crate::error::JsonataError::new("D0000", format!("invalid UTF-8: {e}")))?
         )
         .map_err(|e| crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}")))?;
-        self.evaluate(&input)
+        self.evaluate_value(&input)
     }
 
     /// Evaluate with user-defined custom functions.
@@ -144,17 +163,18 @@ impl Expression {
     /// Returns JSONata evaluation errors.
     pub fn evaluate_with_custom_funcs(
         &self,
-        input: &Value,
+        json: &str,
         custom_funcs: &[(String, CustomFunc)],
     ) -> JsonataResult {
-        if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
+        let input = Self::parse_input(json)?;
+        if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
         }
         let env = new_custom_env(custom_funcs);
         if !input.is_undefined() {
             env.bind("$".into(), input.clone());
         }
-        crate::eval(&self.arena, self.root, input, &env)
+        crate::eval(&self.arena, self.root, &input, &env)
     }
 
     /// Evaluate with extra variable bindings.
@@ -167,10 +187,11 @@ impl Expression {
     /// Returns JSONata evaluation errors.
     pub fn evaluate_with_vars(
         &self,
-        input: &Value,
+        json: &str,
         vars: &[(String, Value)],
     ) -> JsonataResult {
-        if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
+        let input = Self::parse_input(json)?;
+        if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
         }
         let mut env = Environment::new();
@@ -182,7 +203,7 @@ impl Expression {
             env.bind(name.clone(), value.clone());
         }
         let env = Rc::new(env);
-        crate::eval(&self.arena, self.root, input, &env)
+        crate::eval(&self.arena, self.root, &input, &env)
     }
 
     /// Evaluate with a cancellation token.
@@ -195,10 +216,11 @@ impl Expression {
     /// Returns `D3001` if cancelled, or other JSONata evaluation errors.
     pub fn evaluate_with_cancel(
         &self,
-        input: &Value,
+        json: &str,
         cancel: Arc<AtomicBool>,
     ) -> JsonataResult {
-        if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
+        let input = Self::parse_input(json)?;
+        if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
         }
         let mut env = Environment::new();
@@ -208,7 +230,7 @@ impl Expression {
             env.bind("$".into(), input.clone());
         }
         let env = Rc::new(env);
-        crate::eval(&self.arena, self.root, input, &env)
+        crate::eval(&self.arena, self.root, &input, &env)
     }
 
     /// Evaluate with a pre-configured environment.
@@ -220,6 +242,15 @@ impl Expression {
             return Ok(result);
         }
         crate::eval(&self.arena, self.root, input, env)
+    }
+
+    /// Parse JSON string to Value, treating empty/null as Undefined.
+    fn parse_input(json: &str) -> JsonataResult<Value> {
+        if json.is_empty() || json == "null" {
+            return Ok(Value::Undefined);
+        }
+        Value::from_json_str(json)
+            .map_err(|e| crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}")))
     }
 
     /// Returns the fast-path classification for this expression.
@@ -271,7 +302,7 @@ mod tests {
         });
         let expr = Expression::compile("$double(21)").unwrap();
         let result = expr
-            .evaluate_with_custom_funcs(&Value::Undefined, &[("double".into(), double)])
+            .evaluate_with_custom_funcs("", &[("double".into(), double)])
             .unwrap();
         assert_eq!(result.as_f64(), Some(42.0));
     }
@@ -283,9 +314,8 @@ mod tests {
             Ok(Value::String(t.into()))
         });
         let expr = Expression::compile("$getType()").unwrap();
-        let input = Value::from_json_str(r#"{"a":1}"#).unwrap();
         let result = expr
-            .evaluate_with_custom_funcs(&input, &[("getType".into(), get_type)])
+            .evaluate_with_custom_funcs(r#"{"a":1}"#, &[("getType".into(), get_type)])
             .unwrap();
         assert_eq!(result.as_str(), Some("object"));
     }
@@ -297,9 +327,8 @@ mod tests {
             Ok(Value::String(format!("hello {name}").into()))
         });
         let expr = Expression::compile("$uppercase($greet(name))").unwrap();
-        let input = Value::from_json_str(r#"{"name":"alice"}"#).unwrap();
         let result = expr
-            .evaluate_with_custom_funcs(&input, &[("greet".into(), greet)])
+            .evaluate_with_custom_funcs(r#"{"name":"alice"}"#, &[("greet".into(), greet)])
             .unwrap();
         assert_eq!(result.as_str(), Some("HELLO ALICE"));
     }
@@ -311,7 +340,7 @@ mod tests {
         });
         let expr = Expression::compile("$fail()").unwrap();
         let err = expr
-            .evaluate_with_custom_funcs(&Value::Undefined, &[("fail".into(), fail)])
+            .evaluate_with_custom_funcs("", &[("fail".into(), fail)])
             .unwrap_err();
         assert_eq!(err.code, "D3030");
     }
@@ -327,7 +356,6 @@ mod tests {
         let expr1 = Expression::compile("$addOne(10)").unwrap();
         let expr2 = Expression::compile("$addOne(20)").unwrap();
 
-        // Bind $ for each eval
         env.bind("$".into(), Value::Undefined);
         let r1 = expr1.evaluate_with_env(&Value::Undefined, &env).unwrap();
         let r2 = expr2.evaluate_with_env(&Value::Undefined, &env).unwrap();
@@ -351,7 +379,7 @@ mod tests {
         let expr = Expression::compile("$mul($add(2, 3), 4)").unwrap();
         let result = expr
             .evaluate_with_custom_funcs(
-                &Value::Undefined,
+                "",
                 &[("add".into(), add), ("mul".into(), mul)],
             )
             .unwrap();
@@ -360,7 +388,6 @@ mod tests {
 
     #[test]
     fn custom_func_is_send_sync() {
-        // Compile-time check that CustomFunc is Send + Sync
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<CustomFunc>();
     }
@@ -368,12 +395,12 @@ mod tests {
     #[test]
     fn cancel_stops_evaluation() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        let cancel = Arc::new(AtomicBool::new(true)); // pre-cancelled
+        let cancel = Arc::new(AtomicBool::new(true));
         let expr = Expression::compile(
             "$reduce([1,2,3], function($a,$b){$a+$b}, 0)",
         )
         .unwrap();
-        let err = expr.evaluate_with_cancel(&Value::Undefined, cancel).unwrap_err();
+        let err = expr.evaluate_with_cancel("", cancel).unwrap_err();
         assert_eq!(err.code, "D3001");
     }
 
@@ -382,7 +409,7 @@ mod tests {
         use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(false));
         let expr = Expression::compile("1 + 2").unwrap();
-        let result = expr.evaluate_with_cancel(&Value::Undefined, cancel).unwrap();
+        let result = expr.evaluate_with_cancel("", cancel).unwrap();
         assert_eq!(result.as_f64(), Some(3.0));
     }
 
@@ -391,7 +418,7 @@ mod tests {
         let expr = Expression::compile("$x + $y").unwrap();
         let result = expr
             .evaluate_with_vars(
-                &Value::Undefined,
+                "",
                 &[
                     ("x".into(), Value::Number(10.0)),
                     ("y".into(), Value::Number(32.0)),
@@ -404,9 +431,8 @@ mod tests {
     #[test]
     fn eval_with_vars_and_input() {
         let expr = Expression::compile("name & ' ' & $suffix").unwrap();
-        let input = Value::from_json_str(r#"{"name":"Alice"}"#).unwrap();
         let result = expr
-            .evaluate_with_vars(&input, &[("suffix".into(), Value::String("Smith".into()))])
+            .evaluate_with_vars(r#"{"name":"Alice"}"#, &[("suffix".into(), Value::String("Smith".into()))])
             .unwrap();
         assert_eq!(result.as_str(), Some("Alice Smith"));
     }
@@ -416,7 +442,7 @@ mod tests {
         let expr = Expression::compile("$uppercase($greeting)").unwrap();
         let result = expr
             .evaluate_with_vars(
-                &Value::Undefined,
+                "",
                 &[("greeting".into(), Value::String("hello".into()))],
             )
             .unwrap();
