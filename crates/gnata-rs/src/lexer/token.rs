@@ -70,6 +70,12 @@ pub struct Token {
     pub pos: usize,
 }
 
+impl Default for Token {
+    fn default() -> Self {
+        Self::eof()
+    }
+}
+
 impl Token {
     pub fn eof() -> Self {
         Self {

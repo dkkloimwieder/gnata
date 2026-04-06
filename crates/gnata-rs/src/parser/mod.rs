@@ -72,7 +72,7 @@ impl Parser {
                 self.token.pos,
             ));
         }
-        let tok = self.token.clone();
+        let tok = std::mem::take(&mut self.token);
         self.advance()?;
         Ok(tok)
     }
@@ -85,7 +85,7 @@ impl Parser {
                 self.token.pos,
             ));
         }
-        let tok = self.token.clone();
+        let tok = std::mem::take(&mut self.token);
         self.advance_prefix()?;
         Ok(tok)
     }
@@ -116,7 +116,7 @@ impl Parser {
 
     #[allow(clippy::too_many_lines)]
     fn nud(&mut self) -> Result<NodeId, JsonataError> {
-        let tok = self.token.clone();
+        let tok = std::mem::take(&mut self.token);
         match tok.typ {
             TokenType::Name => {
                 self.infix = true;
@@ -361,7 +361,7 @@ impl Parser {
 
     #[allow(clippy::too_many_lines)]
     fn led(&mut self, left: NodeId) -> Result<NodeId, JsonataError> {
-        let tok = self.token.clone();
+        let tok = std::mem::take(&mut self.token);
         match tok.typ {
             TokenType::Dot => {
                 self.advance_prefix()?;
