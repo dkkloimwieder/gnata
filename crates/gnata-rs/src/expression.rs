@@ -107,6 +107,32 @@ impl Expression {
         crate::eval(&self.arena, self.root, input, &env)
     }
 
+    /// Evaluate this expression against raw JSON bytes.
+    ///
+    /// For pure dotted paths (`a.b.c`), navigates the JSON using simd-json's
+    /// tape representation without building a full Value tree. Only leaf values
+    /// are converted to `Value`. For non-qualifying expressions, falls back to
+    /// full parse + eval.
+    ///
+    /// # Errors
+    /// Returns JSON parse errors or JSONata evaluation errors.
+    pub fn evaluate_bytes(&self, json_bytes: &[u8]) -> JsonataResult {
+        // Try tape-based evaluation for pure paths.
+        if let Some(result) = fast_path::eval_tape_path(&self.fast_path, json_bytes) {
+            return result.map_err(|e| {
+                crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}"))
+            });
+        }
+
+        // Fall back: full parse + eval.
+        let input = Value::from_json_str(
+            std::str::from_utf8(json_bytes)
+                .map_err(|e| crate::error::JsonataError::new("D0000", format!("invalid UTF-8: {e}")))?
+        )
+        .map_err(|e| crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}")))?;
+        self.evaluate(&input)
+    }
+
     /// Evaluate with user-defined custom functions.
     ///
     /// Creates a fresh environment with stdlib + the provided custom functions,

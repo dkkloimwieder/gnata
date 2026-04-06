@@ -11,6 +11,9 @@
 
 use std::rc::Rc;
 
+use compact_str::CompactString;
+use simd_json::tape;
+
 use crate::parser::{AstArena, BinaryOp, Expr, NodeId};
 use crate::value::Value;
 
@@ -568,6 +571,105 @@ fn collect_numbers(val: &Value) -> Option<Vec<f64>> {
     }
 }
 
+// ── Tape-based evaluation (raw bytes, no Value tree) ───────────────
+
+/// Evaluate a pure dotted path directly on raw JSON bytes using simd-json's tape.
+/// Returns `Some(Value)` on success, `None` if the fast path doesn't apply.
+///
+/// This avoids building the full Value tree — only leaf values at the end of
+/// the path are converted to `Value`. For 100K products with 10 fields each,
+/// this means ~100K leaf conversions instead of ~1.5M Value allocations.
+pub fn eval_tape_path(
+    fast_path: &FastPath,
+    json_bytes: &[u8],
+) -> Option<Result<Value, Box<dyn std::error::Error>>> {
+    let segments = match fast_path {
+        FastPath::PurePath(segments) => segments,
+        _ => return None,
+    };
+
+    let mut buf = json_bytes.to_vec();
+    let tape = match simd_json::to_tape(&mut buf) {
+        Ok(t) => t,
+        Err(e) => return Some(Err(e.into())),
+    };
+
+    let root = tape.as_value();
+    Some(Ok(tape_walk(root, segments)))
+}
+
+/// Walk a tape value through path segments with array auto-mapping.
+fn tape_walk<'t, 'i>(val: tape::Value<'t, 'i>, segments: &[String]) -> Value {
+    if segments.is_empty() {
+        return tape_to_value(val);
+    }
+
+    let key = segments[0].as_str();
+    let rest = &segments[1..];
+
+    // Object: descend into the key
+    if let Some(obj) = val.as_object() {
+        return match obj.get(key) {
+            Some(child) => tape_walk(child, rest),
+            None => Value::Undefined,
+        };
+    }
+
+    // Array: auto-map — descend into each element
+    if let Some(arr) = val.as_array() {
+        let mut results = Vec::new();
+        for item in arr.iter() {
+            let child = tape_walk(item, segments);
+            match child {
+                Value::Undefined => {}
+                Value::Array(inner) => results.extend(inner.iter().cloned()),
+                other => results.push(other),
+            }
+        }
+        return match results.len() {
+            0 => Value::Undefined,
+            1 => results.into_iter().next().unwrap_or(Value::Undefined),
+            _ => Value::Array(Rc::from(results)),
+        };
+    }
+
+    Value::Undefined
+}
+
+/// Convert a simd-json tape value to a gnata Value.
+/// Only called for leaf values at the end of a path — not the full tree.
+fn tape_to_value(val: tape::Value<'_, '_>) -> Value {
+    use simd_json::prelude::*;
+
+    if let Some(s) = val.as_str() {
+        return Value::String(CompactString::from(s));
+    }
+    if let Some(b) = val.as_bool() {
+        return Value::Bool(b);
+    }
+    if val.is_null() {
+        return Value::Null;
+    }
+    if let Some(n) = val.as_f64() {
+        return Value::Number(n);
+    }
+
+    // Container at leaf position — convert recursively
+    if let Some(arr) = val.as_array() {
+        let items: Vec<Value> = arr.iter().map(tape_to_value).collect();
+        return Value::Array(Rc::from(items));
+    }
+    if let Some(obj) = val.as_object() {
+        let mut map = crate::value::ObjectMap::new();
+        for (k, v) in obj.iter() {
+            map.insert(CompactString::from(k), tape_to_value(v));
+        }
+        return Value::Object(Rc::new(map));
+    }
+
+    Value::Undefined
+}
+
 /// Create a canonical string key for deduplication in $distinct.
 fn canonical_key(val: &Value) -> String {
     match val {
@@ -738,5 +840,31 @@ mod tests {
     fn classification_wildcard_no_fast_path() {
         let expr = Expression::compile("a.*").unwrap();
         assert!(matches!(expr.fast_path_info(), FastPath::None));
+    }
+
+    #[test]
+    fn tape_eval_simple_path() {
+        let expr = Expression::compile("Account.Name").unwrap();
+        let json = r#"{"Account":{"Name":"Firefly"}}"#;
+        let result = expr.evaluate_bytes(json.as_bytes()).unwrap();
+        assert_eq!(result.as_str(), Some("Firefly"));
+    }
+
+    #[test]
+    fn tape_eval_nested_array() {
+        let expr = Expression::compile("Account.Order.Product.SKU").unwrap();
+        let json = r#"{"Account":{"Order":[{"Product":[{"SKU":"A"},{"SKU":"B"}]},{"Product":[{"SKU":"C"}]}]}}"#;
+        let result = expr.evaluate_bytes(json.as_bytes()).unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+    }
+
+    #[test]
+    fn tape_eval_falls_back_for_non_pure_path() {
+        let expr = Expression::compile("Account.Order[id > 1].Name").unwrap();
+        let json = r#"{"Account":{"Order":[{"id":1,"Name":"A"},{"id":2,"Name":"B"}]}}"#;
+        // Should fall back to full eval, still produce correct result
+        let result = expr.evaluate_bytes(json.as_bytes()).unwrap();
+        assert_eq!(result.as_str(), Some("B"));
     }
 }

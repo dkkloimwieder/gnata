@@ -14,6 +14,7 @@ fn main() {
     let mut data_str = String::from("{}");
     let mut n: u64 = 1;
     let mut stream_mode = false;
+    let mut bytes_mode = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -26,12 +27,15 @@ fn main() {
             }
             "-n" => { n = args[i + 1].parse().expect("invalid -n"); i += 2; }
             "-stream" => { stream_mode = true; i += 1; }
+            "-bytes" => { bytes_mode = true; i += 1; }
             _ => { i += 1; }
         }
     }
 
     if stream_mode {
         run_stream_bench(&data_str, n);
+    } else if bytes_mode {
+        run_bytes_bench(expr_str, &data_str, n);
     } else {
         run_single_bench(expr_str, &data_str, n);
     }
@@ -57,6 +61,24 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
     let mut result = Value::Undefined;
     for _ in 0..n {
         result = gnata::eval(&arena, root, &input, &env).expect("eval failed");
+    }
+
+    let json = result.to_json();
+    println!("{}", serde_json::to_string(&json).unwrap_or_default());
+}
+
+fn run_bytes_bench(expr_str: &str, data_str: &str, n: u64) {
+    if expr_str.is_empty() {
+        eprintln!("usage: gnata-bench -bytes -expr EXPR [-data JSON | -datafile FILE] [-n ITERS]");
+        std::process::exit(1);
+    }
+
+    let compiled = gnata::Expression::compile(expr_str).expect("compile failed");
+    let bytes = data_str.as_bytes();
+
+    let mut result = Value::Undefined;
+    for _ in 0..n {
+        result = compiled.evaluate_bytes(bytes).expect("eval failed");
     }
 
     let json = result.to_json();
