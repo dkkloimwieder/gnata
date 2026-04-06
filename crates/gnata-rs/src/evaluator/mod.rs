@@ -41,10 +41,10 @@ pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>
     { eval_inner(arena, node, input, env) }
 }
 
-/// Fast internal eval — no stack check. Used for all recursive calls within
+/// Internal eval without stack check. Used for all recursive calls within
 /// the evaluator. Stack growth is handled at deep-recursion entry points
 /// (call_function for lambda bodies).
-pub(crate) fn eval_fast_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
+pub(crate) fn eval_no_stack_check(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     eval_inner(arena, node, input, env)
 }
 
@@ -117,7 +117,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                     return Ok(Value::Undefined);
                 }
                 for &expr in &expressions[..expressions.len() - 1] {
-                    eval_fast_inner(arena, expr, input, &child_env)?;
+                    eval_no_stack_check(arena, expr, input, &child_env)?;
                 }
                 cur_node = expressions[expressions.len() - 1];
                 cur_env_owned = Some(child_env);
@@ -132,7 +132,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                 ..
             } => {
                 let (cond_id, then_id, else_id) = (*condition, *then, *else_);
-                let cond_val = eval_fast_inner(arena, cond_id, input, cur_env)?;
+                let cond_val = eval_no_stack_check(arena, cond_id, input, cur_env)?;
                 if cond_val.to_boolean() {
                     cur_node = then_id;
                     continue;
@@ -148,7 +148,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                 let (op, lhs, rhs) = (*op, *lhs, *rhs);
                 match op {
                     BinaryOp::CondTern => {
-                        let left = eval_fast_inner(arena, lhs, input, cur_env)?;
+                        let left = eval_no_stack_check(arena, lhs, input, cur_env)?;
                         if left.to_boolean() {
                             return Ok(left);
                         }
@@ -156,7 +156,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                         continue;
                     }
                     BinaryOp::NullCoal => {
-                        let left = eval_fast_inner(arena, lhs, input, cur_env)?;
+                        let left = eval_no_stack_check(arena, lhs, input, cur_env)?;
                         if left.is_undefined() {
                             cur_node = rhs;
                             continue;
@@ -164,7 +164,7 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                         return Ok(left);
                     }
                     BinaryOp::Chain => {
-                        let piped = eval_fast_inner(arena, lhs, input, cur_env)?;
+                        let piped = eval_no_stack_check(arena, lhs, input, cur_env)?;
                         return eval_chain(arena, rhs, &piped, input, cur_env);
                     }
                     _ => unreachable!(),
@@ -726,7 +726,7 @@ fn eval_path_tuple(
                         inner_ctxs.extend(expanded);
                     } else {
                         // Non-path inner expression — evaluate and bind %% for parent context.
-                        let result = eval_fast_inner(arena, expr, val, ctx_env)?;
+                        let result = eval_no_stack_check(arena, expr, val, ctx_env)?;
                         if !result.is_undefined() {
                             let items = flatten_to_vec(result);
                             let (index_var, focus_var) = get_step_bindings(arena, expr);
@@ -848,7 +848,7 @@ fn eval_path_tuple(
                             .parent()
                             .cloned()
                             .unwrap_or_else(|| binding_env.clone());
-                        let pred_result = eval_fast_inner(arena, rhs, &parent_val, &parent_env)?;
+                        let pred_result = eval_no_stack_check(arena, rhs, &parent_val, &parent_env)?;
                         if pred_result.to_boolean() {
                             next_ctxs.push((parent_val, parent_env));
                         }
@@ -897,7 +897,7 @@ fn eval_path_tuple(
                             }
                         if tuple_ctxs.is_empty() {
                             // Fallback: evaluate block normally.
-                            let block_result = eval_fast_inner(arena, lhs, val, ctx_env)?;
+                            let block_result = eval_no_stack_check(arena, lhs, val, ctx_env)?;
                             if block_result.is_undefined() {
                                 continue;
                             }
@@ -912,7 +912,7 @@ fn eval_path_tuple(
                         }
                     }
                     for (tval, tenv) in &tuple_ctxs {
-                        let pred_result = eval_fast_inner(arena, rhs, tval, tenv)?;
+                        let pred_result = eval_no_stack_check(arena, rhs, tval, tenv)?;
                         if pred_result.to_boolean() {
                             next_ctxs.push((tval.clone(), tenv.clone()));
                         }
@@ -1019,7 +1019,7 @@ fn eval_path_tuple(
                             // Apply the outer subscript to the collected tuples.
                             if !next_ctxs.is_empty() {
                                 let outer_result =
-                                    eval_fast_inner(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
+                                    eval_no_stack_check(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
                                 if let Some(idx) = outer_result.as_f64() {
                                     let mut i = idx as i64;
                                     if i < 0 {
@@ -1200,7 +1200,7 @@ fn eval_join_filter(
                 child_env.bind(idx_name.clone(), Value::Number(j as f64));
             }
             let child_rc = Rc::new(child_env);
-            let pred_result = eval_fast_inner(arena, predicate, item, &child_rc)?;
+            let pred_result = eval_no_stack_check(arena, predicate, item, &child_rc)?;
             if pred_result.to_boolean() {
                 dst.push((val.clone(), child_rc));
             }
@@ -1331,7 +1331,7 @@ fn eval_tuple_group(
         let mut key_order: Vec<compact_str::CompactString> = Vec::new();
 
         for (item, item_env) in ctxs {
-            let key_val = eval_fast_inner(arena, key_node, item, item_env)?;
+            let key_val = eval_no_stack_check(arena, key_node, item, item_env)?;
             let key: compact_str::CompactString = match &key_val {
                 Value::String(s) => s.clone(),
                 _ => {
@@ -1362,7 +1362,7 @@ fn eval_tuple_group(
             let val = if val_node.is_empty() {
                 group_ctx
             } else {
-                eval_fast_inner(arena, val_node, &group_ctx, &group_env)?
+                eval_no_stack_check(arena, val_node, &group_ctx, &group_env)?
             };
             if !val.is_undefined() {
                 result_map.insert(key.clone(), val);
@@ -1522,10 +1522,10 @@ fn eval_path_step(
         | Expr::StringLit { .. }
         | Expr::ValueLit { .. }
         | Expr::Sort { .. } => {
-            return eval_fast_inner(arena, step, input, env);
+            return eval_no_stack_check(arena, step, input, env);
         }
         Expr::Block { .. } if !prev_was_mapper => {
-            return eval_fast_inner(arena, step, input, env);
+            return eval_no_stack_check(arena, step, input, env);
         }
         Expr::Descendant { .. } => {
             // In path context, descendant includes the current node itself.
@@ -1555,7 +1555,7 @@ fn eval_path_step(
             };
         }
         Expr::Binary { op, lhs, .. } if *op == BinaryOp::Subscript && !lhs.is_empty() && !prev_was_mapper => {
-            return eval_fast_inner(arena, step, input, env);
+            return eval_no_stack_check(arena, step, input, env);
         }
         _ => {}
     }
@@ -1565,7 +1565,7 @@ fn eval_path_step(
         && *op == UnaryOp::ArrayCons
         && !prev_was_mapper
     {
-        return eval_fast_inner(arena, step, input, env);
+        return eval_no_stack_check(arena, step, input, env);
     }
 
     // For all other step types, map over array input.
@@ -1574,7 +1574,7 @@ fn eval_path_step(
         if matches!(expr, Expr::Function { .. }) {
             return eval_path_function_step(arena, step, input, env);
         }
-        return eval_fast_inner(arena, step, input, env);
+        return eval_no_stack_check(arena, step, input, env);
     };
 
     let is_group_step = matches!(expr, Expr::Unary { op, .. } if *op == UnaryOp::ArrayCons);
@@ -1584,7 +1584,7 @@ fn eval_path_step(
         let val = if matches!(arena.get(step), Expr::Function { .. }) {
             eval_path_function_step(arena, step, item, env)?
         } else {
-            eval_fast_inner(arena, step, item, env)?
+            eval_no_stack_check(arena, step, item, env)?
         };
         if val.is_undefined() {
             continue;
@@ -1623,10 +1623,10 @@ fn eval_path_function_step(
             arguments,
             ..
         } => (*procedure, arguments.clone()),
-        _ => return eval_fast_inner(arena, step, item, env),
+        _ => return eval_no_stack_check(arena, step, item, env),
     };
 
-    let fn_val = eval_fast_inner(arena, procedure, item, env)?;
+    let fn_val = eval_no_stack_check(arena, procedure, item, env)?;
     let func = match &fn_val {
         Value::Function(f) => f.clone(),
         _ => {
@@ -1643,7 +1643,7 @@ fn eval_path_function_step(
             args.push(Value::Undefined);
             continue;
         }
-        args.push(eval_fast_inner(arena, arg_node, item, env)?);
+        args.push(eval_no_stack_check(arena, arg_node, item, env)?);
     }
 
     // For lambdas, prepend path element when fewer args than params.
@@ -1686,7 +1686,7 @@ fn eval_binary(
     let left = if matches!(arena.get(lhs), Expr::Binary { .. }) {
         eval_with_stack_check(arena, lhs, input, env)?
     } else {
-        eval_fast_inner(arena, lhs, input, env)?
+        eval_no_stack_check(arena, lhs, input, env)?
     };
     apply_binary_op(arena, op, left, rhs, lhs, input, env)
 }
@@ -1721,7 +1721,7 @@ fn eval_subscript_binary(
         }
         seq.collapse()
     } else {
-        eval_fast_inner(arena, lhs, input, env)?
+        eval_no_stack_check(arena, lhs, input, env)?
     };
     // Extract index variable from the LHS (e.g. $#$pos[...] → index_var="pos").
     let index_var = match arena.get(lhs) {
@@ -1763,26 +1763,26 @@ fn apply_binary_op(
             if !left.to_boolean() {
                 return Ok(Value::Bool(false));
             }
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             Ok(Value::Bool(right.to_boolean()))
         }
         BinaryOp::Or => {
             if left.to_boolean() {
                 return Ok(Value::Bool(true));
             }
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             Ok(Value::Bool(right.to_boolean()))
         }
         BinaryOp::CondTern => {
             if left.to_boolean() {
                 Ok(left)
             } else {
-                eval_fast_inner(arena, rhs, input, env)
+                eval_no_stack_check(arena, rhs, input, env)
             }
         }
         BinaryOp::NullCoal => {
             if left.is_undefined() {
-                eval_fast_inner(arena, rhs, input, env)
+                eval_no_stack_check(arena, rhs, input, env)
             } else {
                 Ok(left)
             }
@@ -1790,12 +1790,12 @@ fn apply_binary_op(
         BinaryOp::Chain => eval_chain(arena, rhs, &left, input, env),
         // Arithmetic operators.
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             apply_arithmetic(op, &left, &right)
         }
         // String concatenation.
         BinaryOp::Concat => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             let ls = if left.is_undefined() {
                 String::new()
             } else {
@@ -1810,14 +1810,14 @@ fn apply_binary_op(
         }
         // Equality.
         BinaryOp::Eq => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             if left.is_undefined() || right.is_undefined() {
                 return Ok(Value::Bool(false));
             }
             Ok(Value::Bool(left.deep_equal(&right)))
         }
         BinaryOp::Ne => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             if left.is_undefined() || right.is_undefined() {
                 return Ok(Value::Bool(false));
             }
@@ -1825,17 +1825,17 @@ fn apply_binary_op(
         }
         // Comparison.
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             left.compare(&right, op.as_str())
         }
         // Membership.
         BinaryOp::In => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             Ok(Value::Bool(left.contained_in(&right)))
         }
         // Range.
         BinaryOp::Range => {
-            let right = eval_fast_inner(arena, rhs, input, env)?;
+            let right = eval_no_stack_check(arena, rhs, input, env)?;
             apply_range(&left, &right)
         }
         _ => Err(JsonataError::new(
@@ -1999,7 +1999,7 @@ fn eval_subscript(
             } else {
                 env
             };
-            let index = eval_fast_inner(arena, rhs, left, eval_env)?;
+            let index = eval_no_stack_check(arena, rhs, left, eval_env)?;
             if let Some(n) = index.as_f64() {
                 // Numeric index on a single value — treat as array of one.
                 let idx = n.trunc() as i64;
@@ -2035,7 +2035,7 @@ fn eval_subscript(
     let rhs_could_be_numeric = !matches!(arena.get(rhs),
         Expr::Binary { op, .. } if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::And | BinaryOp::Or | BinaryOp::In)
     );
-    if rhs_could_be_numeric && let Ok(index) = eval_fast_inner(arena, rhs, left, env) {
+    if rhs_could_be_numeric && let Ok(index) = eval_no_stack_check(arena, rhs, left, env) {
         // Array of all-numeric values → select those indices (e.g. [[1..4]]).
         // Matches Go's selectByIndices: resolve negative indices (add len), sort
         // ascending, then select. This ensures [[1..3,8,-1]] on a 10-element array
@@ -2099,7 +2099,7 @@ fn eval_subscript(
         if let Some(var_name) = index_var {
             eval_env.bind(var_name.clone(), Value::Number(i as f64));
         }
-        let test = eval_fast_inner(arena, rhs, item, eval_env)?;
+        let test = eval_no_stack_check(arena, rhs, item, eval_env)?;
         // Numeric result = index selection from entire array.
         if let Some(n) = test.as_f64() {
             let idx = n.trunc() as i64;
@@ -2169,7 +2169,7 @@ fn eval_chain_step(
         let procedure = *procedure;
         let arguments = arguments.clone();
         let keep_array = *keep_array;
-        let fn_val = eval_fast_inner(arena, procedure, input, env)?;
+        let fn_val = eval_no_stack_check(arena, procedure, input, env)?;
         let Value::Function(func) = fn_val else {
             return Err(JsonataError::new(
                 "T1006",
@@ -2182,7 +2182,7 @@ fn eval_chain_step(
                 args.push(Value::Undefined);
                 continue;
             }
-            args.push(eval_fast_inner(arena, arg_node, input, env)?);
+            args.push(eval_no_stack_check(arena, arg_node, input, env)?);
         }
         let result = call_function(&func, &args, input, env, arena)?;
         // Apply keep_array wrapping if [] suffix present.
@@ -2202,7 +2202,7 @@ fn eval_chain_step(
     }
 
     // Otherwise evaluate right side and call it.
-    let fn_val = eval_fast_inner(arena, rhs, input, env)?;
+    let fn_val = eval_no_stack_check(arena, rhs, input, env)?;
 
     // If right side is a regex object, apply regex test (like $contains).
     if let Value::Object(ref obj) = fn_val
@@ -2313,7 +2313,7 @@ fn eval_unary(
 
     match op {
         UnaryOp::Negate => {
-            let val = eval_fast_inner(arena, operand, input, env)?;
+            let val = eval_no_stack_check(arena, operand, input, env)?;
             if val.is_undefined() {
                 return Ok(Value::Undefined);
             }
@@ -2326,7 +2326,7 @@ fn eval_unary(
             // Array constructor.
             let mut result = Vec::new();
             for &expr in &expressions {
-                let val = eval_fast_inner(arena, expr, input, env)?;
+                let val = eval_no_stack_check(arena, expr, input, env)?;
                 if val.is_undefined() {
                     continue;
                 }
@@ -2362,7 +2362,7 @@ fn eval_unary(
             // lhs is flat [k0,v0,k1,v1,...]
             let mut i = 0;
             while i + 1 < lhs_nodes.len() {
-                let key_val = eval_fast_inner(arena, lhs_nodes[i], input, env)?;
+                let key_val = eval_no_stack_check(arena, lhs_nodes[i], input, env)?;
                 // Skip if key is undefined.
                 if key_val.is_undefined() {
                     i += 2;
@@ -2385,7 +2385,7 @@ fn eval_unary(
                         format!("duplicate key: \"{key}\""),
                     ));
                 }
-                let val_val = eval_fast_inner(arena, lhs_nodes[i + 1], input, env)?;
+                let val_val = eval_no_stack_check(arena, lhs_nodes[i + 1], input, env)?;
                 // Collapse sequences.
                 let val_val = match val_val {
                     Value::Sequence(seq) => seq.collapse(),
@@ -2419,7 +2419,7 @@ fn eval_bind(
         _ => unreachable!(),
     };
 
-    let val = eval_fast_inner(arena, rhs, input, env)?;
+    let val = eval_no_stack_check(arena, rhs, input, env)?;
 
     // The LHS is a Variable node — extract the name.
     let name = match arena.get(lhs) {
@@ -2455,7 +2455,7 @@ fn eval_sort(
         return eval_sort_with_parent_tracking(arena, sort_expr, &terms, input, env);
     }
 
-    let items = eval_fast_inner(arena, sort_expr, input, env)?;
+    let items = eval_no_stack_check(arena, sort_expr, input, env)?;
     if items.is_undefined() {
         return Ok(Value::Undefined);
     }
@@ -2564,7 +2564,7 @@ fn build_sort_ctxs(
     }
 
     // Non-path expression: evaluate normally and wrap results.
-    let result = eval_fast_inner(arena, sort_expr, input, env)?;
+    let result = eval_no_stack_check(arena, sort_expr, input, env)?;
     if result.is_undefined() {
         return Ok(vec![]);
     }
@@ -2667,8 +2667,8 @@ fn compare_sort_terms(
     b_env: &Rc<Environment>,
 ) -> Result<i8, JsonataError> {
     for term in terms {
-        let av = eval_fast_inner(arena, term.expression, a, a_env)?;
-        let bv = eval_fast_inner(arena, term.expression, b, b_env)?;
+        let av = eval_no_stack_check(arena, term.expression, a, a_env)?;
+        let bv = eval_no_stack_check(arena, term.expression, b, b_env)?;
         let cmp = av.compare_order(&bv)?;
         if cmp != 0 {
             return if term.descending { Ok(-cmp) } else { Ok(cmp) };
@@ -2760,7 +2760,7 @@ fn apply_transform(
     // handles copy-on-write — only containers along the mutation path are cloned.
     let cloned = input.clone();
 
-    let matched = eval_fast_inner(arena, pattern, &cloned, env)?;
+    let matched = eval_no_stack_check(arena, pattern, &cloned, env)?;
 
     // Collect target objects from the matched result.
     // These are VALUE copies of the objects found at matched positions.
@@ -2818,7 +2818,7 @@ fn compute_updated_object(
 
     if !update.is_empty() {
         // Evaluate update expression with the original target as context.
-        let update_val = eval_fast_inner(arena, update, target, env)?;
+        let update_val = eval_no_stack_check(arena, update, target, env)?;
         if !update_val.is_undefined() && !update_val.is_null() {
             if let Value::Object(updates) = update_val {
                 if let Value::Object(ref mut obj) = result {
@@ -2839,7 +2839,7 @@ fn compute_updated_object(
     if let Some(del) = delete {
         // Evaluate delete expression with the original target as context (pre-update),
         // matching Go: Eval(node.Delete, target, env) where target is the original object.
-        let delete_val = eval_fast_inner(arena, del, target, env)?;
+        let delete_val = eval_no_stack_check(arena, del, target, env)?;
         if !delete_val.is_undefined() && !delete_val.is_null() {
             match delete_val {
                 Value::String(key) => {
@@ -2907,7 +2907,7 @@ fn validate_transform_clauses(
     env: &Rc<Environment>,
 ) -> Result<(), JsonataError> {
     if !update.is_empty() {
-        let update_val = eval_fast_inner(arena, update, target, env)?;
+        let update_val = eval_no_stack_check(arena, update, target, env)?;
         if !update_val.is_undefined() && !update_val.is_null() && !update_val.is_object() {
             return Err(JsonataError::new(
                 "T2011",
@@ -2916,7 +2916,7 @@ fn validate_transform_clauses(
         }
     }
     if let Some(del) = delete {
-        let delete_val = eval_fast_inner(arena, del, target, env)?;
+        let delete_val = eval_no_stack_check(arena, del, target, env)?;
         if !delete_val.is_undefined() && !delete_val.is_null() {
             match &delete_val {
                 Value::Array(_) | Value::String(_) => {}
@@ -2948,7 +2948,7 @@ fn eval_group_by(
         Expr::Path { group: Some(g), .. } => g.clone(),
         Expr::Variable { group: Some(g), .. } => g.clone(),
         Expr::Function { group: Some(g), .. } => g.clone(),
-        _ => return eval_fast_inner(arena, node, input, env),
+        _ => return eval_no_stack_check(arena, node, input, env),
     };
 
     // Evaluate the base expression without the group-by reduction.
@@ -2958,7 +2958,7 @@ fn eval_group_by(
         Expr::Path { .. } => eval_path(arena, node, input, env)?,
         Expr::Variable { name, .. } => eval_variable(name, input, env)?,
         Expr::Function { .. } => eval_function(arena, node, input, env)?,
-        _ => eval_fast_inner(arena, node, input, env)?,
+        _ => eval_no_stack_check(arena, node, input, env)?,
     };
     if base.is_undefined() {
         return Ok(Value::Undefined);
@@ -2988,7 +2988,7 @@ fn eval_group_by(
             std::collections::HashMap::new();
 
         for (i, item) in items.iter().enumerate() {
-            let key_val = eval_fast_inner(arena, key_node, item, env)?;
+            let key_val = eval_no_stack_check(arena, key_node, item, env)?;
             if key_val.is_undefined() || key_val.is_null() {
                 continue;
             }
@@ -3031,7 +3031,7 @@ fn eval_group_by(
             let mut val_result = if val_node.is_empty() {
                 group_input
             } else {
-                eval_fast_inner(arena, val_node, &group_input, &child_env)?
+                eval_no_stack_check(arena, val_node, &group_input, &child_env)?
             };
 
             // Apply keep_array wrapping for value nodes with [] suffix.
