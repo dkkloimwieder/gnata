@@ -82,12 +82,12 @@ impl Sequence {
             0 => Value::Undefined,
             1 => {
                 if self.keep_singleton {
-                    Value::Array(Rc::new(vec![self.values[0].clone()]))
+                    Value::Array(Rc::from(vec![self.values[0].clone()]))
                 } else {
                     self.values[0].clone()
                 }
             }
-            _ => Value::Array(Rc::new(self.values.clone())),
+            _ => Value::Array(Rc::from(self.values.clone())),
         }
     }
 
@@ -103,7 +103,7 @@ impl Sequence {
             match result {
                 Value::Array(_) => result,
                 Value::Undefined => Value::Undefined,
-                scalar => Value::Array(Rc::new(vec![scalar])),
+                scalar => Value::Array(Rc::from(vec![scalar])),
             }
         } else {
             result
@@ -144,7 +144,7 @@ mod tests {
         let mut seq = Sequence::with_items(vec![Value::Number(42.0)]);
         seq.keep_singleton = true;
         let result = seq.collapse();
-        assert_eq!(result, Value::Array(Rc::new(vec![Value::Number(42.0)])));
+        assert_eq!(result, Value::Array(Rc::from(vec![Value::Number(42.0)])));
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
         let result = seq.collapse();
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -180,7 +180,7 @@ mod tests {
     fn collapse_and_keep_wraps_scalar() {
         let seq = Sequence::with_items(vec![Value::Number(42.0)]);
         let result = seq.collapse_and_keep(true);
-        assert_eq!(result, Value::Array(Rc::new(vec![Value::Number(42.0)])));
+        assert_eq!(result, Value::Array(Rc::from(vec![Value::Number(42.0)])));
     }
 
     #[test]

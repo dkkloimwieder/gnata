@@ -40,7 +40,7 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(CompactString),
-    Array(Rc<Vec<Value>>),
+    Array(Rc<[Value]>),
     Object(Rc<ObjectMap>),
     /// Internal sequence used during evaluation. Never returned to users.
     /// Boxed to keep Value at 16 bytes (same as Go's interface{}).
@@ -119,7 +119,7 @@ impl Value {
         }
     }
 
-    pub fn as_array(&self) -> Option<&Vec<Value>> {
+    pub fn as_array(&self) -> Option<&[Value]> {
         match self {
             Value::Array(a) => Some(a),
             _ => None,
@@ -348,7 +348,8 @@ impl Value {
             }
             serde_json::Value::String(s) => Value::String(CompactString::from(s)),
             serde_json::Value::Array(arr) => {
-                Value::Array(Rc::new(arr.into_iter().map(Value::from_json).collect()))
+                let vec: Vec<Value> = arr.into_iter().map(Value::from_json).collect();
+                Value::Array(Rc::from(vec))
             }
             serde_json::Value::Object(obj) => {
                 // serde_json with preserve_order uses IndexMap internally
@@ -486,7 +487,7 @@ impl<'de> serde::de::Visitor<'de> for ValueVisitor {
         while let Some(elem) = seq.next_element()? {
             vec.push(elem);
         }
-        Ok(Value::Array(Rc::new(vec)))
+        Ok(Value::Array(Rc::from(vec)))
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Value, A::Error>
@@ -540,7 +541,8 @@ impl From<String> for Value {
 
 impl<T: Into<Value>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
-        Value::Array(Rc::new(v.into_iter().map(Into::into).collect()))
+        let vec: Vec<Value> = v.into_iter().map(Into::into).collect();
+        Value::Array(Rc::from(vec))
     }
 }
 
@@ -601,13 +603,13 @@ mod tests {
     #[test]
     fn boolean_array_coercion() {
         // Empty array → false
-        assert!(!Value::Array(Rc::new(vec![])).to_boolean());
+        assert!(!Value::Array(Rc::from(vec![])).to_boolean());
         // Single element → recurse
-        assert!(Value::Array(Rc::new(vec![Value::Bool(true)])).to_boolean());
-        assert!(!Value::Array(Rc::new(vec![Value::Bool(false)])).to_boolean());
+        assert!(Value::Array(Rc::from(vec![Value::Bool(true)])).to_boolean());
+        assert!(!Value::Array(Rc::from(vec![Value::Bool(false)])).to_boolean());
         // Multiple → any truthy
-        assert!(Value::Array(Rc::new(vec![Value::Bool(false), Value::Bool(true)])).to_boolean());
-        assert!(!Value::Array(Rc::new(vec![Value::Bool(false), Value::Bool(false)])).to_boolean());
+        assert!(Value::Array(Rc::from(vec![Value::Bool(false), Value::Bool(true)])).to_boolean());
+        assert!(!Value::Array(Rc::from(vec![Value::Bool(false), Value::Bool(false)])).to_boolean());
     }
 
     // ── Deep equality ────────────────────────────────────────────────
@@ -620,9 +622,9 @@ mod tests {
 
     #[test]
     fn deep_equal_arrays() {
-        let a = Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
-        let b = Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]));
-        let c = Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(3.0)]));
+        let a = Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0)]));
+        let b = Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0)]));
+        let c = Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(3.0)]));
         assert!(a.deep_equal(&b));
         assert!(!a.deep_equal(&c));
     }

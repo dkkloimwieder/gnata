@@ -312,7 +312,7 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
                 if results.len() == 1 {
                     results.into_iter().next().unwrap_or(Value::Undefined)
                 } else {
-                    Value::Array(Rc::new(results))
+                    Value::Array(Rc::from(results))
                 }
             }
             _ => return Value::Undefined,
@@ -510,7 +510,7 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
                 Some(match keys.len() {
                     0 => Value::Undefined,
                     1 => keys.into_iter().next().unwrap_or(Value::Undefined),
-                    _ => Value::Array(Rc::new(keys)),
+                    _ => Value::Array(Rc::from(keys)),
                 })
             }
             _ => None,
@@ -519,16 +519,16 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
         FuncFastKind::Values => match val {
             Value::Object(obj) => {
                 let vals: Vec<Value> = obj.values().cloned().collect();
-                Some(Value::Array(Rc::new(vals)))
+                Some(Value::Array(Rc::from(vals)))
             }
             _ => None,
         },
 
         FuncFastKind::Reverse => match val {
             Value::Array(arr) => {
-                let mut rev = (**arr).clone();
+                let mut rev = arr.to_vec();
                 rev.reverse();
-                Some(Value::Array(Rc::new(rev)))
+                Some(Value::Array(Rc::from(rev)))
             }
             _ => None,
         },
@@ -543,7 +543,7 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
                         result.push(item.clone());
                     }
                 }
-                Some(Value::Array(Rc::new(result)))
+                Some(Value::Array(Rc::from(result)))
             }
             _ => None,
         },

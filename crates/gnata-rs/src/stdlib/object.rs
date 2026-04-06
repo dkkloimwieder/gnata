@@ -21,7 +21,7 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
             if keys.len() == 1 {
                 return Ok(keys.into_iter().next().unwrap_or(Value::Undefined));
             }
-            Ok(Value::Array(Rc::new(keys)))
+            Ok(Value::Array(Rc::from(keys)))
         }
         Value::Array(arr) => {
             // Collect all keys from array of objects.
@@ -44,7 +44,7 @@ pub fn fn_keys(args: &[Value], _focus: &Value) -> JsonataResult {
             if all_keys.len() == 1 {
                 return Ok(all_keys.into_iter().next().unwrap_or(Value::Undefined));
             }
-            Ok(Value::Array(Rc::new(all_keys)))
+            Ok(Value::Array(Rc::from(all_keys)))
         }
         _ => Ok(Value::Undefined),
     }
@@ -60,7 +60,7 @@ pub fn fn_values(args: &[Value], _focus: &Value) -> JsonataResult {
     match &args[0] {
         Value::Object(obj) => {
             let vals: Vec<Value> = obj.values().cloned().collect();
-            Ok(Value::Array(Rc::new(vals)))
+            Ok(Value::Array(Rc::from(vals)))
         }
         _ => Ok(Value::Undefined),
     }
@@ -94,7 +94,7 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
                     result.extend(spread_one(obj));
                 }
             }
-            Ok(Value::Array(Rc::new(result)))
+            Ok(Value::Array(Rc::from(result)))
         }
         _ => Ok(args[0].clone()),
     }
@@ -158,7 +158,7 @@ pub fn fn_lookup(args: &[Value], _focus: &Value) -> JsonataResult {
             match result.len() {
                 0 => Ok(Value::Undefined),
                 1 => Ok(result.into_iter().next().unwrap_or(Value::Undefined)),
-                _ => Ok(Value::Array(Rc::new(result))),
+                _ => Ok(Value::Array(Rc::from(result))),
             }
         }
         _ => Ok(Value::Undefined),

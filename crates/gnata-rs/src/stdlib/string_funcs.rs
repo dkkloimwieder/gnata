@@ -454,7 +454,7 @@ pub fn fn_split(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    Ok(Value::Array(Rc::new(parts)))
+    Ok(Value::Array(Rc::from(parts)))
 }
 
 pub fn fn_join(args: &[Value], _focus: &Value) -> JsonataResult {

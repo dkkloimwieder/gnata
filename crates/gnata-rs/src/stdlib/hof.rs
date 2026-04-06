@@ -21,7 +21,7 @@ pub fn fn_map(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => Rc::new(vec![other.clone()]),
+        other => Rc::from(vec![other.clone()]),
     };
     let func = match &args[1] {
         Value::Function(f) => f.clone(),
@@ -62,7 +62,7 @@ pub fn fn_filter(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => Rc::new(vec![other.clone()]),
+        other => Rc::from(vec![other.clone()]),
     };
     let func = match &args[1] {
         Value::Function(f) => f.clone(),
@@ -91,7 +91,7 @@ pub fn fn_filter(
     if result.len() == 1 {
         return Ok(result.swap_remove(0));
     }
-    Ok(Value::Array(Rc::new(result)))
+    Ok(Value::Array(Rc::from(result)))
 }
 
 pub fn fn_reduce(
@@ -108,7 +108,7 @@ pub fn fn_reduce(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => Rc::new(vec![other.clone()]),
+        other => Rc::from(vec![other.clone()]),
     };
     let func = match &args[1] {
         Value::Function(f) => f.clone(),
@@ -244,7 +244,7 @@ pub fn fn_sift(
         if results.is_empty() {
             return Ok(Value::Undefined);
         }
-        return Ok(Value::Array(Rc::new(results)));
+        return Ok(Value::Array(Rc::from(results)));
     }
     let Value::Object(obj) = obj_arg else {
         return Err(JsonataError::new(
@@ -285,11 +285,11 @@ pub fn fn_sort(
         return Ok(Value::Undefined);
     }
     let mut arr = match arr_val {
-        Value::Array(a) => (**a).clone(),
+        Value::Array(a) => a.to_vec(),
         other => vec![other.clone()],
     };
     if arr.len() <= 1 {
-        return Ok(Value::Array(Rc::new(arr)));
+        return Ok(Value::Array(Rc::from(arr)));
     }
     // Sort with optional comparator.
     let mut error: Option<JsonataError> = None;
@@ -342,7 +342,7 @@ pub fn fn_sort(
     if let Some(e) = error {
         return Err(e);
     }
-    Ok(Value::Array(Rc::new(arr)))
+    Ok(Value::Array(Rc::from(arr)))
 }
 
 pub fn fn_single(
@@ -359,7 +359,7 @@ pub fn fn_single(
     }
     let arr = match &args[0] {
         Value::Array(a) => a.clone(),
-        other => Rc::new(vec![other.clone()]),
+        other => Rc::from(vec![other.clone()]),
     };
     let func = args.get(1).and_then(|v| match v {
         Value::Function(f) => Some(f.clone()),

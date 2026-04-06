@@ -261,7 +261,7 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
             if seq.values.is_empty() {
                 if field_found {
                     // Field exists but was empty array — return empty array.
-                    return Ok(Value::Array(Rc::new(vec![])));
+                    return Ok(Value::Array(Rc::from(vec![])));
                 }
                 return Ok(Value::Undefined);
             }
@@ -1110,7 +1110,7 @@ fn eval_path_tuple(
         match result {
             Value::Array(_) => return Ok(result),
             Value::Undefined => return Ok(Value::Undefined),
-            _ => return Ok(Value::Array(Rc::new(vec![result]))),
+            _ => return Ok(Value::Array(Rc::from(vec![result]))),
         }
     }
     Ok(result)
@@ -1213,11 +1213,11 @@ fn collapse_val(val: &Value) -> Value {
 /// Flatten a result value into a Vec of individual items.
 fn flatten_to_vec(val: Value) -> Vec<Value> {
     match val {
-        Value::Array(a) => (*a).clone(),
+        Value::Array(a) => a.to_vec(),
         Value::Sequence(s) => {
             let collapsed = s.collapse();
             match collapsed {
-                Value::Array(a) => (*a).clone(),
+                Value::Array(a) => a.to_vec(),
                 Value::Undefined => vec![],
                 other => vec![other],
             }
@@ -1350,7 +1350,7 @@ fn eval_tuple_group(
                 (values[0].clone(), Rc::clone(&envs[0]))
             } else {
                 let merged = merge_group_envs(envs);
-                (Value::Array(Rc::new(values.clone())), Rc::new(merged))
+                (Value::Array(Rc::from(values.clone())), Rc::new(merged))
             };
             let val = if val_node.is_empty() {
                 group_ctx
@@ -1427,7 +1427,7 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
             if all_same {
                 merged.bind(name.clone(), vals.into_iter().next().unwrap_or(Value::Undefined));
             } else {
-                merged.bind(name.clone(), Value::Array(Rc::new(vals)));
+                merged.bind(name.clone(), Value::Array(Rc::from(vals)));
             }
         }
     }
@@ -1484,7 +1484,7 @@ fn eval_path_simple(
         match result {
             Value::Array(_) => return Ok(result),
             Value::Undefined => return Ok(Value::Undefined),
-            _ => return Ok(Value::Array(Rc::new(vec![result]))),
+            _ => return Ok(Value::Array(Rc::from(vec![result]))),
         }
     }
     Ok(result)
@@ -1597,7 +1597,7 @@ fn eval_path_step(
         return Ok(Value::Undefined);
     }
     if is_group_step && keep_singleton_array {
-        return Ok(Value::Array(Rc::new(seq.values)));
+        return Ok(Value::Array(Rc::from(seq.values)));
     }
     Ok(seq.collapse())
 }
@@ -1730,8 +1730,8 @@ fn eval_subscript_binary(
     if keep_array {
         match result {
             Value::Array(_) => Ok(result),
-            Value::Undefined => Ok(Value::Array(Rc::new(vec![]))),
-            scalar => Ok(Value::Array(Rc::new(vec![scalar]))),
+            Value::Undefined => Ok(Value::Array(Rc::from(vec![]))),
+            scalar => Ok(Value::Array(Rc::from(vec![scalar]))),
         }
     } else {
         Ok(result)
@@ -1936,7 +1936,7 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
         return Err(JsonataError::new("D2014", "range operator too large"));
     }
     let arr: Vec<Value> = (start..=end).map(|i| Value::Number(i as f64)).collect();
-    Ok(Value::Array(Rc::new(arr)))
+    Ok(Value::Array(Rc::from(arr)))
 }
 
 /// Walk the left chain of a Binary "[" node to check if keep_array is set
@@ -2059,7 +2059,7 @@ fn eval_subscript(
             return if result.is_empty() {
                 Ok(Value::Undefined)
             } else {
-                Ok(Value::Array(Rc::new(result)))
+                Ok(Value::Array(Rc::from(result)))
             };
         }
         // Single numeric index.
@@ -2184,7 +2184,7 @@ fn eval_chain_step(
                 Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
                 Value::Array(_) => Ok(result),
                 Value::Undefined => Ok(Value::Undefined),
-                scalar => Ok(Value::Array(Rc::new(vec![scalar]))),
+                scalar => Ok(Value::Array(Rc::from(vec![scalar]))),
             };
         }
         // Collapse sequences from function results.
@@ -2278,7 +2278,7 @@ fn apply_regex_chain(
                 None => groups.push(Value::String("".into())),
             }
         }
-        obj.insert("groups".into(), Value::Array(Rc::new(groups)));
+        obj.insert("groups".into(), Value::Array(Rc::from(groups)));
         Ok(Value::Object(Rc::new(obj)))
     } else {
         Ok(Value::Undefined)
@@ -2347,7 +2347,7 @@ fn eval_unary(
                     other => result.push(other),
                 }
             }
-            Ok(Value::Array(Rc::new(result)))
+            Ok(Value::Array(Rc::from(result)))
         }
         UnaryOp::ObjCons => {
             // Object constructor.
@@ -2454,12 +2454,12 @@ fn eval_sort(
     }
 
     let (mut arr, was_array) = match items {
-        Value::Array(a) => ((*a).clone(), true),
+        Value::Array(a) => (a.to_vec(), true),
         Value::Sequence(seq) => {
             let collapsed = seq.collapse();
             match collapsed {
                 Value::Undefined => return Ok(Value::Undefined),
-                Value::Array(a) => ((*a).clone(), true),
+                Value::Array(a) => (a.to_vec(), true),
                 other => (vec![other], false),
             }
         }
@@ -2470,7 +2470,7 @@ fn eval_sort(
         if !was_array && arr.len() == 1 {
             return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
         }
-        return Ok(Value::Array(Rc::new(arr)));
+        return Ok(Value::Array(Rc::from(arr)));
     }
 
     // Stable sort with error propagation.
@@ -2494,7 +2494,7 @@ fn eval_sort(
     if !was_array && arr.len() == 1 {
         return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
     }
-    Ok(Value::Array(Rc::new(arr)))
+    Ok(Value::Array(Rc::from(arr)))
 }
 
 /// Sort with parent-tracking: when sort terms reference %, we need to build
@@ -2877,9 +2877,11 @@ fn replace_all_in_value(value: &mut Value, replacements: &[(Value, Value)]) {
     }
     match value {
         Value::Array(arr) => {
-            for item in Rc::make_mut(arr).iter_mut() {
+            let mut vec = arr.to_vec();
+            for item in &mut vec {
                 replace_all_in_value(item, replacements);
             }
+            *arr = Rc::from(vec);
         }
         Value::Object(obj) => {
             for v in Rc::make_mut(obj).values_mut() {
@@ -2956,12 +2958,12 @@ fn eval_group_by(
     }
 
     let items: Vec<Value> = match base {
-        Value::Array(a) => (*a).clone(),
+        Value::Array(a) => a.to_vec(),
         Value::Sequence(seq) => {
             let collapsed = seq.collapse();
             match collapsed {
                 Value::Undefined => return Ok(Value::Undefined),
-                Value::Array(a) => (*a).clone(),
+                Value::Array(a) => a.to_vec(),
                 other => vec![other],
             }
         }
@@ -3011,7 +3013,7 @@ fn eval_group_by(
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {
-                Value::Array(Rc::new(group_items.clone()))
+                Value::Array(Rc::from(group_items.clone()))
             };
 
             let child_env = Environment::new_child(Rc::clone(env));
@@ -3041,9 +3043,9 @@ fn eval_group_by(
             };
             if val_keep_array {
                 val_result = match val_result {
-                    Value::Undefined => Value::Array(Rc::new(vec![])),
+                    Value::Undefined => Value::Array(Rc::from(vec![])),
                     Value::Array(_) => val_result,
-                    scalar => Value::Array(Rc::new(vec![scalar])),
+                    scalar => Value::Array(Rc::from(vec![scalar])),
                 };
             }
 
@@ -3146,7 +3148,7 @@ mod tests {
         let result = eval_with_data("name", r#"[{"name": "A"}, {"name": "B"}]"#);
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::String("A".into()), Value::String("B".into())]))
+            Value::Array(Rc::from(vec![Value::String("A".into()), Value::String("B".into())]))
         );
     }
 
@@ -3177,7 +3179,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::Number(10.0), Value::Number(20.0)]))
+            Value::Array(Rc::from(vec![Value::Number(10.0), Value::Number(20.0)]))
         );
     }
 
@@ -3201,7 +3203,7 @@ mod tests {
         let result = eval_with_data("nums[$ > 2]", r#"{"nums": [1, 2, 3, 4]}"#);
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::Number(3.0), Value::Number(4.0)]))
+            Value::Array(Rc::from(vec![Value::Number(3.0), Value::Number(4.0)]))
         );
     }
 
@@ -3228,7 +3230,7 @@ mod tests {
         let result = eval_with_data("*", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -3342,7 +3344,7 @@ mod tests {
     fn array_constructor() {
         assert_eq!(
             eval_simple("[1, 2, 3]"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0)
@@ -3370,7 +3372,7 @@ mod tests {
     fn range_operator() {
         assert_eq!(
             eval_simple("[1..5]"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
@@ -3490,7 +3492,7 @@ mod tests {
     fn stdlib_split() {
         assert_eq!(
             eval_simple(r#"$split("a,b,c", ",")"#),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::String("a".into()),
                 Value::String("b".into()),
                 Value::String("c".into()),
@@ -3560,7 +3562,7 @@ mod tests {
     fn stdlib_append() {
         assert_eq!(
             eval_simple("$append([1, 2], [3, 4])"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
@@ -3573,7 +3575,7 @@ mod tests {
     fn stdlib_reverse() {
         assert_eq!(
             eval_simple("$reverse([1, 2, 3])"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(3.0),
                 Value::Number(2.0),
                 Value::Number(1.0),
@@ -3586,7 +3588,7 @@ mod tests {
         let result = eval_with_data("$keys($)", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::String("a".into()), Value::String("b".into()),]))
+            Value::Array(Rc::from(vec![Value::String("a".into()), Value::String("b".into()),]))
         );
     }
 
@@ -3595,7 +3597,7 @@ mod tests {
         let result = eval_with_data("$values($)", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(Rc::new(vec![Value::Number(1.0), Value::Number(2.0)]))
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0)]))
         );
     }
 
@@ -3641,7 +3643,7 @@ mod tests {
         };
         assert_eq!(
             collapsed,
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(2.0),
                 Value::Number(4.0),
                 Value::Number(6.0),
@@ -3653,7 +3655,7 @@ mod tests {
     fn stdlib_filter() {
         assert_eq!(
             eval_simple("$filter([1, 2, 3, 4], function($v){$v > 2})"),
-            Value::Array(Rc::new(vec![Value::Number(3.0), Value::Number(4.0)]))
+            Value::Array(Rc::from(vec![Value::Number(3.0), Value::Number(4.0)]))
         );
     }
 
@@ -3669,7 +3671,7 @@ mod tests {
     fn stdlib_sort_default() {
         assert_eq!(
             eval_simple("$sort([3, 1, 2])"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
@@ -3681,7 +3683,7 @@ mod tests {
     fn stdlib_distinct() {
         assert_eq!(
             eval_simple("$distinct([1, 2, 2, 3, 1])"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
@@ -3705,7 +3707,7 @@ mod tests {
     fn stdlib_flatten() {
         assert_eq!(
             eval_simple("$flatten([[1, 2], [3, [4, 5]]])"),
-            Value::Array(Rc::new(vec![
+            Value::Array(Rc::from(vec![
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),

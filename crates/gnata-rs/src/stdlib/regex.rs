@@ -76,7 +76,7 @@ fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Valu
     obj.insert("match".into(), Value::String(match_str));
     obj.insert("start".into(), Value::Number(start));
     obj.insert("end".into(), Value::Number(end));
-    obj.insert("groups".into(), Value::Array(Rc::new(groups)));
+    obj.insert("groups".into(), Value::Array(Rc::from(groups)));
     Value::Object(Rc::new(obj))
 }
 
@@ -134,7 +134,7 @@ pub fn fn_match(
     if result.len() == 1 {
         return Ok(result.swap_remove(0));
     }
-    Ok(Value::Array(Rc::new(result)))
+    Ok(Value::Array(Rc::from(result)))
 }
 
 /// Custom matcher: call a function that returns {match, start, groups, next} objects.
@@ -160,7 +160,7 @@ fn match_with_custom_matcher(
 
         let match_val = obj.get("match").cloned().unwrap_or(Value::Undefined);
         let start_val = obj.get("start").cloned().unwrap_or(Value::Undefined);
-        let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(Rc::new(vec![])));
+        let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(Rc::from(vec![])));
 
         let mut match_obj = crate::value::ObjectMap::new();
         match_obj.insert("match".into(), match_val);
@@ -187,7 +187,7 @@ fn match_with_custom_matcher(
     if result.len() == 1 {
         return Ok(result.swap_remove(0));
     }
-    Ok(Value::Array(Rc::new(result)))
+    Ok(Value::Array(Rc::from(result)))
 }
 
 /// $replace(str, pattern, replacement, limit?)
