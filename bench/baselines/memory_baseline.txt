@@ -1,0 +1,18 @@
+=== Building ===
+    Finished `release` profile [optimized] target(s) in 0.03s
+    Finished `profiling` profile [optimized + debuginfo] target(s) in 0.04s
+
+Tag                 Bytes  Go RSS(KB)   Rust RSS(KB)  Go HeapInUse   Go TotalAlloc   DHAT Total   DHAT Blocks 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+tiny_short            477  8684         4080          688128         17042544        6434443      120348      
+1k_short           199723  9588         5652          712704         19959232        22534205     24567       
+10k_short         2006036  25452        24472         892928         40908216        57925641     204137      
+10k_long          5615891  33516        34648         974848         49300392        71050558     233156      
+10k_mixed         2886391  27688        27456         892928         37948536        58386757     233157      
+100k_short       20253657  143656       210528        2727936        195930272       420982037    2002313     
+100k_long        56259108  218920       313820        2727936        341742840       606768826    2096080     
+100k_mixed       28964153  176552       240416        2736128        227518304       479874421    2096083     
+
+RSS = peak resident set size in KB (/usr/bin/time -v)
+Go HeapInUse/TotalAlloc = runtime.MemStats after GC (bytes)
+DHAT Total/Blocks = all allocations during run (bytes/count)

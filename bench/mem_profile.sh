@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Memory profiling: Go vs Rust across payload sizes.
+# Memory profiling: Go vs Rust across payload sizes and string-length variants.
 # Measures peak RSS via /usr/bin/time -v and Go runtime.MemStats.
 # Runs each measurement ONCE (no parallelism, no hyperfine).
 set -euo pipefail
@@ -16,28 +16,30 @@ cd "$ROOT" && go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
 cd "$RUST_DIR" && cargo build --release --bin gnata-bench 2>&1 | tail -1
 cargo build --features dhat-heap --bin gnata-dhat --profile profiling 2>&1 | tail -1
 
-EXPR='Account.Order.Product[UnitPrice > 50].SKU'
+# Short-key expression
+EXPR_SHORT='Account.Order.Product[UnitPrice > 50].SKU'
+# Long-key expression
+EXPR_LONG='Account.Order.Product[UnitPriceWithTaxIncluded > 50].StockKeepingUnitIdentifier'
 
-declare -A DATA ITERS
-DATA[tiny]="$BENCH_DIR/data.json"
-DATA[1k]="$BENCH_DIR/data_1k.json"
-DATA[10k]="$BENCH_DIR/data_10k.json"
-DATA[100k]="$BENCH_DIR/data_100k.json"
-ITERS[tiny]=10000
-ITERS[1k]=100
-ITERS[10k]=10
-ITERS[100k]=1
-
-SIZES=(tiny 1k 10k 100k)
+# Config: (tag, datafile, iterations, expression)
+declare -a CONFIGS=(
+    "tiny_short|$BENCH_DIR/data.json|10000|$EXPR_SHORT"
+    "1k_short|$BENCH_DIR/data_1k.json|100|$EXPR_SHORT"
+    "10k_short|$BENCH_DIR/data_10k.json|10|$EXPR_SHORT"
+    "10k_long|$BENCH_DIR/data_10k_long.json|10|$EXPR_LONG"
+    "10k_mixed|$BENCH_DIR/data_10k_mixed.json|10|$EXPR_SHORT"
+    "100k_short|$BENCH_DIR/data_100k.json|1|$EXPR_SHORT"
+    "100k_long|$BENCH_DIR/data_100k_long.json|1|$EXPR_LONG"
+    "100k_mixed|$BENCH_DIR/data_100k_mixed.json|1|$EXPR_SHORT"
+)
 
 echo ""
-printf "%-8s %8s  %-12s %-12s  %-14s %-14s  %-12s %-12s\n" \
-  "Size" "Bytes" "Go RSS(KB)" "Rust RSS(KB)" "Go HeapInUse" "Go TotalAlloc" "DHAT Total" "DHAT Blocks"
+printf "%-14s %10s  %-12s %-12s  %-14s %-14s  %-12s %-12s\n" \
+  "Tag" "Bytes" "Go RSS(KB)" "Rust RSS(KB)" "Go HeapInUse" "Go TotalAlloc" "DHAT Total" "DHAT Blocks"
 printf '%.0s─' {1..120}; echo ""
 
-for SIZE in "${SIZES[@]}"; do
-    DF="${DATA[$SIZE]}"
-    N="${ITERS[$SIZE]}"
+for CFG in "${CONFIGS[@]}"; do
+    IFS='|' read -r TAG DF N EXPR <<< "$CFG"
     FILE_BYTES=$(wc -c < "$DF" | tr -d ' ')
 
     # Go: peak RSS + memstats
@@ -58,8 +60,8 @@ for SIZE in "${SIZES[@]}"; do
     rm -f dhat-heap.json
     cd "$ROOT"
 
-    printf "%-8s %8s  %-12s %-12s  %-14s %-14s  %-12s %-12s\n" \
-      "$SIZE" "$FILE_BYTES" "$GO_RSS" "$RS_RSS" "$GO_HEAP" "$GO_TOTAL" "$DHAT_TOTAL" "$DHAT_BLOCKS"
+    printf "%-14s %10s  %-12s %-12s  %-14s %-14s  %-12s %-12s\n" \
+      "$TAG" "$FILE_BYTES" "$GO_RSS" "$RS_RSS" "$GO_HEAP" "$GO_TOTAL" "$DHAT_TOTAL" "$DHAT_BLOCKS"
 done
 
 echo ""

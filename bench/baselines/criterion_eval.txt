@@ -1,0 +1,545 @@
+   Compiling gnata v0.1.0 (/home/kaalin/dev/gnata/crates/gnata-rs)
+    Finished `bench` profile [optimized] target(s) in 15.29s
+     Running benches/eval.rs (target/release/deps/eval-291c3d4fd8d0f9b5)
+Gnuplot not found, using plotters backend
+Benchmarking eval/path_simple/rust/tiny_4
+Benchmarking eval/path_simple/rust/tiny_4: Warming up for 3.0000 s
+Benchmarking eval/path_simple/rust/tiny_4: Collecting 100 samples in estimated 5.0001 s (107M iterations)
+Benchmarking eval/path_simple/rust/tiny_4: Analyzing
+eval/path_simple/rust/tiny_4
+                        time:   [47.745 ns 48.306 ns 48.931 ns]
+                        change: [-23.617% -22.490% -21.355%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  7 (7.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/path_simple/rust/1k
+Benchmarking eval/path_simple/rust/1k: Warming up for 3.0000 s
+Benchmarking eval/path_simple/rust/1k: Collecting 100 samples in estimated 5.0001 s (109M iterations)
+Benchmarking eval/path_simple/rust/1k: Analyzing
+eval/path_simple/rust/1k
+                        time:   [45.622 ns 46.092 ns 46.578 ns]
+                        change: [-25.364% -24.348% -23.234%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval/path_simple/rust/10k
+Benchmarking eval/path_simple/rust/10k: Warming up for 3.0000 s
+Benchmarking eval/path_simple/rust/10k: Collecting 100 samples in estimated 5.0000 s (110M iterations)
+Benchmarking eval/path_simple/rust/10k: Analyzing
+eval/path_simple/rust/10k
+                        time:   [46.621 ns 47.377 ns 48.026 ns]
+                        change: [-27.375% -25.906% -24.447%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+Benchmarking eval/path_simple/rust/10k_mixed
+Benchmarking eval/path_simple/rust/10k_mixed: Warming up for 3.0000 s
+Benchmarking eval/path_simple/rust/10k_mixed: Collecting 100 samples in estimated 5.0002 s (95M iterations)
+Benchmarking eval/path_simple/rust/10k_mixed: Analyzing
+eval/path_simple/rust/10k_mixed
+                        time:   [49.859 ns 50.222 ns 50.593 ns]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval/path_simple/rust/100k
+Benchmarking eval/path_simple/rust/100k: Warming up for 3.0000 s
+Benchmarking eval/path_simple/rust/100k: Collecting 100 samples in estimated 5.0000 s (96M iterations)
+Benchmarking eval/path_simple/rust/100k: Analyzing
+eval/path_simple/rust/100k
+                        time:   [50.949 ns 51.685 ns 52.517 ns]
+                        change: [-21.460% -20.110% -18.656%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  6 (6.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/path_simple/rust/100k_mixed
+Benchmarking eval/path_simple/rust/100k_mixed: Warming up for 3.0000 s
+Benchmarking eval/path_simple/rust/100k_mixed: Collecting 100 samples in estimated 5.0001 s (97M iterations)
+Benchmarking eval/path_simple/rust/100k_mixed: Analyzing
+eval/path_simple/rust/100k_mixed
+                        time:   [49.838 ns 50.202 ns 50.605 ns]
+Found 11 outliers among 100 measurements (11.00%)
+  1 (1.00%) low mild
+  6 (6.00%) high mild
+  4 (4.00%) high severe
+
+Benchmarking eval/path_nested/rust/tiny_4
+Benchmarking eval/path_nested/rust/tiny_4: Warming up for 3.0000 s
+Benchmarking eval/path_nested/rust/tiny_4: Collecting 100 samples in estimated 5.0002 s (23M iterations)
+Benchmarking eval/path_nested/rust/tiny_4: Analyzing
+eval/path_nested/rust/tiny_4
+                        time:   [208.03 ns 210.03 ns 212.75 ns]
+                        change: [-23.866% -22.819% -21.659%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 12 outliers among 100 measurements (12.00%)
+  6 (6.00%) high mild
+  6 (6.00%) high severe
+Benchmarking eval/path_nested/rust/1k
+Benchmarking eval/path_nested/rust/1k: Warming up for 3.0000 s
+Benchmarking eval/path_nested/rust/1k: Collecting 100 samples in estimated 5.0215 s (232k iterations)
+Benchmarking eval/path_nested/rust/1k: Analyzing
+eval/path_nested/rust/1k
+                        time:   [21.180 µs 21.327 µs 21.476 µs]
+                        change: [-39.031% -38.009% -37.027%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  1 (1.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/path_nested/rust/10k
+Benchmarking eval/path_nested/rust/10k: Warming up for 3.0000 s
+Benchmarking eval/path_nested/rust/10k: Collecting 100 samples in estimated 5.9139 s (20k iterations)
+Benchmarking eval/path_nested/rust/10k: Analyzing
+eval/path_nested/rust/10k
+                        time:   [282.10 µs 283.98 µs 286.14 µs]
+                        change: [-65.040% -63.958% -62.855%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/path_nested/rust/10k_mixed
+Benchmarking eval/path_nested/rust/10k_mixed: Warming up for 3.0000 s
+Benchmarking eval/path_nested/rust/10k_mixed: Collecting 100 samples in estimated 5.2963 s (15k iterations)
+Benchmarking eval/path_nested/rust/10k_mixed: Analyzing
+eval/path_nested/rust/10k_mixed
+                        time:   [340.87 µs 345.00 µs 349.12 µs]
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval/path_nested/rust/100k
+Benchmarking eval/path_nested/rust/100k: Warming up for 3.0000 s
+Benchmarking eval/path_nested/rust/100k: Collecting 100 samples in estimated 5.4252 s (600 iterations)
+Benchmarking eval/path_nested/rust/100k: Analyzing
+eval/path_nested/rust/100k
+                        time:   [8.8154 ms 8.8664 ms 8.9231 ms]
+                        change: [-59.777% -59.236% -58.711%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/path_nested/rust/100k_mixed
+Benchmarking eval/path_nested/rust/100k_mixed: Warming up for 3.0000 s
+Benchmarking eval/path_nested/rust/100k_mixed: Collecting 100 samples in estimated 5.1270 s (400 iterations)
+Benchmarking eval/path_nested/rust/100k_mixed: Analyzing
+eval/path_nested/rust/100k_mixed
+                        time:   [12.662 ms 12.745 ms 12.833 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+
+Benchmarking eval/filter/rust/tiny_4
+Benchmarking eval/filter/rust/tiny_4: Warming up for 3.0000 s
+Benchmarking eval/filter/rust/tiny_4: Collecting 100 samples in estimated 5.0009 s (5.1M iterations)
+Benchmarking eval/filter/rust/tiny_4: Analyzing
+eval/filter/rust/tiny_4 time:   [942.58 ns 952.70 ns 964.76 ns]
+                        change: [+9.3731% +11.279% +13.182%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/filter/rust/1k
+Benchmarking eval/filter/rust/1k: Warming up for 3.0000 s
+Benchmarking eval/filter/rust/1k: Collecting 100 samples in estimated 5.1040 s (45k iterations)
+Benchmarking eval/filter/rust/1k: Analyzing
+eval/filter/rust/1k     time:   [106.35 µs 107.07 µs 107.81 µs]
+                        change: [-7.7761% -6.2751% -4.8938%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  5 (5.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/filter/rust/10k
+Benchmarking eval/filter/rust/10k: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.5s, enable flat sampling, or reduce sample count to 50.
+Benchmarking eval/filter/rust/10k: Collecting 100 samples in estimated 7.5307 s (5050 iterations)
+Benchmarking eval/filter/rust/10k: Analyzing
+eval/filter/rust/10k    time:   [1.4134 ms 1.4314 ms 1.4521 ms]
+                        change: [-8.1563% -5.4650% -2.7413%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+Benchmarking eval/filter/rust/10k_mixed
+Benchmarking eval/filter/rust/10k_mixed: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 8.1s, enable flat sampling, or reduce sample count to 50.
+Benchmarking eval/filter/rust/10k_mixed: Collecting 100 samples in estimated 8.0542 s (5050 iterations)
+Benchmarking eval/filter/rust/10k_mixed: Analyzing
+eval/filter/rust/10k_mixed
+                        time:   [1.4338 ms 1.4528 ms 1.4739 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/filter/rust/100k
+Benchmarking eval/filter/rust/100k: Warming up for 3.0000 s
+Benchmarking eval/filter/rust/100k: Collecting 100 samples in estimated 5.6661 s (200 iterations)
+Benchmarking eval/filter/rust/100k: Analyzing
+eval/filter/rust/100k   time:   [27.417 ms 27.592 ms 27.797 ms]
+                        change: [-6.8260% -5.7694% -4.6737%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval/filter/rust/100k_mixed
+Benchmarking eval/filter/rust/100k_mixed: Warming up for 3.0000 s
+Benchmarking eval/filter/rust/100k_mixed: Collecting 100 samples in estimated 6.1679 s (200 iterations)
+Benchmarking eval/filter/rust/100k_mixed: Analyzing
+eval/filter/rust/100k_mixed
+                        time:   [29.919 ms 30.112 ms 30.322 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking eval/aggregation/rust/tiny_4
+Benchmarking eval/aggregation/rust/tiny_4: Warming up for 3.0000 s
+Benchmarking eval/aggregation/rust/tiny_4: Collecting 100 samples in estimated 5.0052 s (2.7M iterations)
+Benchmarking eval/aggregation/rust/tiny_4: Analyzing
+eval/aggregation/rust/tiny_4
+                        time:   [1.8096 µs 1.8245 µs 1.8411 µs]
+                        change: [-31.633% -30.098% -28.703%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+Benchmarking eval/aggregation/rust/1k
+Benchmarking eval/aggregation/rust/1k: Warming up for 3.0000 s
+Benchmarking eval/aggregation/rust/1k: Collecting 100 samples in estimated 5.3090 s (20k iterations)
+Benchmarking eval/aggregation/rust/1k: Analyzing
+eval/aggregation/rust/1k
+                        time:   [249.08 µs 252.18 µs 255.52 µs]
+                        change: [-40.285% -39.284% -38.253%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/aggregation/rust/10k
+Benchmarking eval/aggregation/rust/10k: Warming up for 3.0000 s
+Benchmarking eval/aggregation/rust/10k: Collecting 100 samples in estimated 5.0619 s (1600 iterations)
+Benchmarking eval/aggregation/rust/10k: Analyzing
+eval/aggregation/rust/10k
+                        time:   [3.0780 ms 3.1312 ms 3.1908 ms]
+                        change: [-57.303% -56.097% -54.784%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/aggregation/rust/10k_mixed
+Benchmarking eval/aggregation/rust/10k_mixed: Warming up for 3.0000 s
+Benchmarking eval/aggregation/rust/10k_mixed: Collecting 100 samples in estimated 5.1462 s (1600 iterations)
+Benchmarking eval/aggregation/rust/10k_mixed: Analyzing
+eval/aggregation/rust/10k_mixed
+                        time:   [3.0664 ms 3.0979 ms 3.1334 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/aggregation/rust/100k
+Benchmarking eval/aggregation/rust/100k: Warming up for 3.0000 s
+Benchmarking eval/aggregation/rust/100k: Collecting 100 samples in estimated 7.7712 s (200 iterations)
+Benchmarking eval/aggregation/rust/100k: Analyzing
+eval/aggregation/rust/100k
+                        time:   [38.140 ms 38.442 ms 38.768 ms]
+                        change: [-56.902% -56.378% -55.856%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval/aggregation/rust/100k_mixed
+Benchmarking eval/aggregation/rust/100k_mixed: Warming up for 3.0000 s
+Benchmarking eval/aggregation/rust/100k_mixed: Collecting 100 samples in estimated 8.4095 s (200 iterations)
+Benchmarking eval/aggregation/rust/100k_mixed: Analyzing
+eval/aggregation/rust/100k_mixed
+                        time:   [41.222 ms 41.626 ms 42.128 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+
+Benchmarking eval/comparison/rust/tiny_4
+Benchmarking eval/comparison/rust/tiny_4: Warming up for 3.0000 s
+Benchmarking eval/comparison/rust/tiny_4: Collecting 100 samples in estimated 5.0002 s (73M iterations)
+Benchmarking eval/comparison/rust/tiny_4: Analyzing
+eval/comparison/rust/tiny_4
+                        time:   [67.264 ns 67.918 ns 68.681 ns]
+                        change: [-15.769% -14.578% -13.432%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking eval/comparison/rust/1k
+Benchmarking eval/comparison/rust/1k: Warming up for 3.0000 s
+Benchmarking eval/comparison/rust/1k: Collecting 100 samples in estimated 5.0000 s (72M iterations)
+Benchmarking eval/comparison/rust/1k: Analyzing
+eval/comparison/rust/1k time:   [65.846 ns 66.330 ns 66.920 ns]
+                        change: [-18.586% -16.604% -14.425%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 8 outliers among 100 measurements (8.00%)
+  3 (3.00%) high mild
+  5 (5.00%) high severe
+Benchmarking eval/comparison/rust/10k
+Benchmarking eval/comparison/rust/10k: Warming up for 3.0000 s
+Benchmarking eval/comparison/rust/10k: Collecting 100 samples in estimated 5.0003 s (73M iterations)
+Benchmarking eval/comparison/rust/10k: Analyzing
+eval/comparison/rust/10k
+                        time:   [65.388 ns 65.896 ns 66.431 ns]
+                        change: [-23.663% -22.547% -21.318%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 9 outliers among 100 measurements (9.00%)
+  7 (7.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval/comparison/rust/10k_mixed
+Benchmarking eval/comparison/rust/10k_mixed: Warming up for 3.0000 s
+Benchmarking eval/comparison/rust/10k_mixed: Collecting 100 samples in estimated 5.0003 s (74M iterations)
+Benchmarking eval/comparison/rust/10k_mixed: Analyzing
+eval/comparison/rust/10k_mixed
+                        time:   [63.566 ns 64.058 ns 64.622 ns]
+Found 6 outliers among 100 measurements (6.00%)
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/comparison/rust/100k
+Benchmarking eval/comparison/rust/100k: Warming up for 3.0000 s
+Benchmarking eval/comparison/rust/100k: Collecting 100 samples in estimated 5.0000 s (75M iterations)
+Benchmarking eval/comparison/rust/100k: Analyzing
+eval/comparison/rust/100k
+                        time:   [64.382 ns 64.854 ns 65.383 ns]
+                        change: [-21.022% -19.529% -18.144%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/comparison/rust/100k_mixed
+Benchmarking eval/comparison/rust/100k_mixed: Warming up for 3.0000 s
+Benchmarking eval/comparison/rust/100k_mixed: Collecting 100 samples in estimated 5.0000 s (75M iterations)
+Benchmarking eval/comparison/rust/100k_mixed: Analyzing
+eval/comparison/rust/100k_mixed
+                        time:   [63.769 ns 64.129 ns 64.525 ns]
+Found 11 outliers among 100 measurements (11.00%)
+  5 (5.00%) high mild
+  6 (6.00%) high severe
+
+Benchmarking eval/func_count/rust/tiny_4
+Benchmarking eval/func_count/rust/tiny_4: Warming up for 3.0000 s
+Benchmarking eval/func_count/rust/tiny_4: Collecting 100 samples in estimated 5.0001 s (24M iterations)
+Benchmarking eval/func_count/rust/tiny_4: Analyzing
+eval/func_count/rust/tiny_4
+                        time:   [206.85 ns 209.80 ns 213.28 ns]
+                        change: [-29.264% -27.999% -26.673%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking eval/func_count/rust/1k
+Benchmarking eval/func_count/rust/1k: Warming up for 3.0000 s
+Benchmarking eval/func_count/rust/1k: Collecting 100 samples in estimated 5.0230 s (232k iterations)
+Benchmarking eval/func_count/rust/1k: Analyzing
+eval/func_count/rust/1k time:   [21.194 µs 21.388 µs 21.595 µs]
+                        change: [-40.482% -39.326% -38.303%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval/func_count/rust/10k
+Benchmarking eval/func_count/rust/10k: Warming up for 3.0000 s
+Benchmarking eval/func_count/rust/10k: Collecting 100 samples in estimated 5.7005 s (20k iterations)
+Benchmarking eval/func_count/rust/10k: Analyzing
+eval/func_count/rust/10k
+                        time:   [277.56 µs 280.85 µs 284.89 µs]
+                        change: [-66.399% -65.426% -64.429%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 6 outliers among 100 measurements (6.00%)
+  1 (1.00%) high mild
+  5 (5.00%) high severe
+Benchmarking eval/func_count/rust/10k_mixed
+Benchmarking eval/func_count/rust/10k_mixed: Warming up for 3.0000 s
+Benchmarking eval/func_count/rust/10k_mixed: Collecting 100 samples in estimated 5.3509 s (15k iterations)
+Benchmarking eval/func_count/rust/10k_mixed: Analyzing
+eval/func_count/rust/10k_mixed
+                        time:   [340.71 µs 343.67 µs 346.77 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  3 (3.00%) low mild
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking eval/func_count/rust/100k
+Benchmarking eval/func_count/rust/100k: Warming up for 3.0000 s
+Benchmarking eval/func_count/rust/100k: Collecting 100 samples in estimated 5.4797 s (600 iterations)
+Benchmarking eval/func_count/rust/100k: Analyzing
+eval/func_count/rust/100k
+                        time:   [9.0116 ms 9.0935 ms 9.1938 ms]
+                        change: [-58.199% -57.550% -56.817%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) high mild
+  3 (3.00%) high severe
+Benchmarking eval/func_count/rust/100k_mixed
+Benchmarking eval/func_count/rust/100k_mixed: Warming up for 3.0000 s
+Benchmarking eval/func_count/rust/100k_mixed: Collecting 100 samples in estimated 5.1993 s (400 iterations)
+Benchmarking eval/func_count/rust/100k_mixed: Analyzing
+eval/func_count/rust/100k_mixed
+                        time:   [12.775 ms 12.882 ms 13.008 ms]
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high severe
+
+Benchmarking eval_long/path_nested/rust/10k_long
+Benchmarking eval_long/path_nested/rust/10k_long: Warming up for 3.0000 s
+Benchmarking eval_long/path_nested/rust/10k_long: Collecting 100 samples in estimated 5.3419 s (15k iterations)
+Benchmarking eval_long/path_nested/rust/10k_long: Analyzing
+eval_long/path_nested/rust/10k_long
+                        time:   [336.37 µs 339.04 µs 341.96 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  3 (3.00%) high mild
+  4 (4.00%) high severe
+Benchmarking eval_long/path_nested/rust/100k_long
+Benchmarking eval_long/path_nested/rust/100k_long: Warming up for 3.0000 s
+Benchmarking eval_long/path_nested/rust/100k_long: Collecting 100 samples in estimated 5.1456 s (400 iterations)
+Benchmarking eval_long/path_nested/rust/100k_long: Analyzing
+eval_long/path_nested/rust/100k_long
+                        time:   [12.458 ms 12.541 ms 12.630 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking eval_long/filter/rust/10k_long
+Benchmarking eval_long/filter/rust/10k_long: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.9s, enable flat sampling, or reduce sample count to 50.
+Benchmarking eval_long/filter/rust/10k_long: Collecting 100 samples in estimated 7.8651 s (5050 iterations)
+Benchmarking eval_long/filter/rust/10k_long: Analyzing
+eval_long/filter/rust/10k_long
+                        time:   [1.4689 ms 1.4939 ms 1.5209 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  4 (4.00%) high mild
+  1 (1.00%) high severe
+Benchmarking eval_long/filter/rust/100k_long
+Benchmarking eval_long/filter/rust/100k_long: Warming up for 3.0000 s
+Benchmarking eval_long/filter/rust/100k_long: Collecting 100 samples in estimated 6.0702 s (200 iterations)
+Benchmarking eval_long/filter/rust/100k_long: Analyzing
+eval_long/filter/rust/100k_long
+                        time:   [29.982 ms 30.254 ms 30.552 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  2 (2.00%) high mild
+  3 (3.00%) high severe
+
+Benchmarking eval_long/aggregation/rust/10k_long
+Benchmarking eval_long/aggregation/rust/10k_long: Warming up for 3.0000 s
+Benchmarking eval_long/aggregation/rust/10k_long: Collecting 100 samples in estimated 5.1642 s (1600 iterations)
+Benchmarking eval_long/aggregation/rust/10k_long: Analyzing
+eval_long/aggregation/rust/10k_long
+                        time:   [3.1009 ms 3.1429 ms 3.1931 ms]
+Found 5 outliers among 100 measurements (5.00%)
+  3 (3.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval_long/aggregation/rust/100k_long
+Benchmarking eval_long/aggregation/rust/100k_long: Warming up for 3.0000 s
+Benchmarking eval_long/aggregation/rust/100k_long: Collecting 100 samples in estimated 8.5222 s (200 iterations)
+Benchmarking eval_long/aggregation/rust/100k_long: Analyzing
+eval_long/aggregation/rust/100k_long
+                        time:   [41.537 ms 41.882 ms 42.279 ms]
+Found 8 outliers among 100 measurements (8.00%)
+  6 (6.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking eval_long/func_count/rust/10k_long
+Benchmarking eval_long/func_count/rust/10k_long: Warming up for 3.0000 s
+Benchmarking eval_long/func_count/rust/10k_long: Collecting 100 samples in estimated 5.3662 s (15k iterations)
+Benchmarking eval_long/func_count/rust/10k_long: Analyzing
+eval_long/func_count/rust/10k_long
+                        time:   [340.25 µs 343.41 µs 346.63 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+Benchmarking eval_long/func_count/rust/100k_long
+Benchmarking eval_long/func_count/rust/100k_long: Warming up for 3.0000 s
+Benchmarking eval_long/func_count/rust/100k_long: Collecting 100 samples in estimated 5.0767 s (400 iterations)
+Benchmarking eval_long/func_count/rust/100k_long: Analyzing
+eval_long/func_count/rust/100k_long
+                        time:   [12.548 ms 12.634 ms 12.733 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) high mild
+  2 (2.00%) high severe
+
+Benchmarking end_to_end/parse_and_eval/tiny_4
+Benchmarking end_to_end/parse_and_eval/tiny_4: Warming up for 3.0000 s
+Benchmarking end_to_end/parse_and_eval/tiny_4: Collecting 100 samples in estimated 5.0593 s (232k iterations)
+Benchmarking end_to_end/parse_and_eval/tiny_4: Analyzing
+end_to_end/parse_and_eval/tiny_4
+                        time:   [21.062 µs 21.220 µs 21.405 µs]
+                        change: [-1.5766% +0.3458% +2.1650%] (p = 0.72 > 0.05)
+                        No change in performance detected.
+Found 12 outliers among 100 measurements (12.00%)
+  9 (9.00%) high mild
+  3 (3.00%) high severe
+Benchmarking end_to_end/parse_and_eval/1k
+Benchmarking end_to_end/parse_and_eval/1k: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.1s, enable flat sampling, or reduce sample count to 50.
+Benchmarking end_to_end/parse_and_eval/1k: Collecting 100 samples in estimated 7.0693 s (5050 iterations)
+Benchmarking end_to_end/parse_and_eval/1k: Analyzing
+end_to_end/parse_and_eval/1k
+                        time:   [1.3634 ms 1.3735 ms 1.3845 ms]
+                        change: [-16.629% -15.201% -13.818%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 7 outliers among 100 measurements (7.00%)
+  1 (1.00%) low mild
+  3 (3.00%) high mild
+  3 (3.00%) high severe
+Benchmarking end_to_end/parse_and_eval/10k
+Benchmarking end_to_end/parse_and_eval/10k: Warming up for 3.0000 s
+Benchmarking end_to_end/parse_and_eval/10k: Collecting 100 samples in estimated 5.1802 s (300 iterations)
+Benchmarking end_to_end/parse_and_eval/10k: Analyzing
+end_to_end/parse_and_eval/10k
+                        time:   [16.477 ms 16.666 ms 16.887 ms]
+                        change: [-22.071% -20.317% -18.549%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+Benchmarking end_to_end/parse_and_eval/10k_mixed
+Benchmarking end_to_end/parse_and_eval/10k_mixed: Warming up for 3.0000 s
+Benchmarking end_to_end/parse_and_eval/10k_mixed: Collecting 100 samples in estimated 5.9166 s (300 iterations)
+Benchmarking end_to_end/parse_and_eval/10k_mixed: Analyzing
+end_to_end/parse_and_eval/10k_mixed
+                        time:   [18.984 ms 19.130 ms 19.287 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+Benchmarking end_to_end/parse_and_eval/100k
+Benchmarking end_to_end/parse_and_eval/100k: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 20.1s, or reduce sample count to 20.
+Benchmarking end_to_end/parse_and_eval/100k: Collecting 100 samples in estimated 20.066 s (100 iterations)
+Benchmarking end_to_end/parse_and_eval/100k: Analyzing
+end_to_end/parse_and_eval/100k
+                        time:   [193.70 ms 195.44 ms 197.22 ms]
+                        change: [-25.595% -24.682% -23.710%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 2 outliers among 100 measurements (2.00%)
+  2 (2.00%) high mild
+Benchmarking end_to_end/parse_and_eval/100k_mixed
+Benchmarking end_to_end/parse_and_eval/100k_mixed: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 23.5s, or reduce sample count to 20.
+Benchmarking end_to_end/parse_and_eval/100k_mixed: Collecting 100 samples in estimated 23.490 s (100 iterations)
+Benchmarking end_to_end/parse_and_eval/100k_mixed: Analyzing
+end_to_end/parse_and_eval/100k_mixed
+                        time:   [220.02 ms 221.92 ms 223.92 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+Benchmarking end_to_end/parse_and_eval/10k_long
+Benchmarking end_to_end/parse_and_eval/10k_long: Warming up for 3.0000 s
+Benchmarking end_to_end/parse_and_eval/10k_long: Collecting 100 samples in estimated 6.0673 s (300 iterations)
+Benchmarking end_to_end/parse_and_eval/10k_long: Analyzing
+end_to_end/parse_and_eval/10k_long
+                        time:   [19.863 ms 19.931 ms 20.004 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  6 (6.00%) high mild
+  1 (1.00%) high severe
+Benchmarking end_to_end/parse_and_eval/100k_long
+Benchmarking end_to_end/parse_and_eval/100k_long: Warming up for 3.0000 s
+
+Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 25.9s, or reduce sample count to 10.
+Benchmarking end_to_end/parse_and_eval/100k_long: Collecting 100 samples in estimated 25.893 s (100 iterations)
+Benchmarking end_to_end/parse_and_eval/100k_long: Analyzing
+end_to_end/parse_and_eval/100k_long
+                        time:   [250.90 ms 251.51 ms 252.16 ms]
+Found 6 outliers among 100 measurements (6.00%)
+  5 (5.00%) high mild
+  1 (1.00%) high severe
+

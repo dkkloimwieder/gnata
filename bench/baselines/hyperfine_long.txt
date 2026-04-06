@@ -1,0 +1,139 @@
+=== Building Go benchmark CLI ===
+=== Building Rust benchmark CLI (release) ===
+    Finished `release` profile [optimized] target(s) in 0.09s
+
+════════════════════════════════════════════════════════════
+  Payload: 10k_long (5615891 bytes), 100 eval iters per run
+════════════════════════════════════════════════════════════
+
+── nested_path: Account.Order.Product.StockKeepingUnitIdentifier ──
+Benchmark 1: go
+  Time (mean ± σ):     124.7 ms ±   9.6 ms    [User: 211.8 ms, System: 19.4 ms]
+  Range (min … max):   114.5 ms … 161.9 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):      99.2 ms ±   9.6 ms    [User: 85.7 ms, System: 13.1 ms]
+  Range (min … max):    87.7 ms … 124.7 ms    34 runs
+ 
+Summary
+  rust ran
+    1.26 ± 0.16 times faster than go
+
+── filter_path: Account.Order.Product[UnitPriceWithTaxIncluded > 50].StockKeepingUnitIdentifier ──
+Benchmark 1: go
+  Time (mean ± σ):     217.8 ms ±  10.5 ms    [User: 324.6 ms, System: 22.0 ms]
+  Range (min … max):   201.9 ms … 239.4 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     181.7 ms ±  21.5 ms    [User: 167.5 ms, System: 13.8 ms]
+  Range (min … max):   150.6 ms … 240.0 ms    30 runs
+ 
+Summary
+  rust ran
+    1.20 ± 0.15 times faster than go
+
+── aggregation: $sum(Account.Order.Product.(UnitPriceWithTaxIncluded * QuantityInWarehouseStock * (1 - ApplicableDiscountPercentage))) ──
+Benchmark 1: go
+  Time (mean ± σ):     474.0 ms ±  36.1 ms    [User: 714.5 ms, System: 25.2 ms]
+  Range (min … max):   432.7 ms … 564.6 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     373.1 ms ±  15.6 ms    [User: 356.4 ms, System: 16.1 ms]
+  Range (min … max):   350.9 ms … 403.5 ms    30 runs
+ 
+Summary
+  rust ran
+    1.27 ± 0.11 times faster than go
+
+── func_count: $count(Account.Order.Product.StockKeepingUnitIdentifier) ──
+Benchmark 1: go
+  Time (mean ± σ):     136.2 ms ±   7.7 ms    [User: 223.4 ms, System: 20.1 ms]
+  Range (min … max):   127.5 ms … 165.0 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     109.1 ms ±   8.6 ms    [User: 93.9 ms, System: 15.0 ms]
+  Range (min … max):    96.0 ms … 132.5 ms    30 runs
+ 
+Summary
+  rust ran
+    1.25 ± 0.12 times faster than go
+
+
+=== 10k_long payload (100 iters) ===
+
+Benchmark            Go µs/op   Rust µs/op    Ratio
+────────────────────────────────────────────────────
+nested_path              1.2ms         1.0ms    0.80x ✓ Rs
+filter_path              2.2ms         1.8ms    0.83x ✓ Rs
+aggregation              4.7ms         3.7ms    0.79x ✓ Rs
+func_count               1.4ms         1.1ms    0.80x ✓ Rs
+
+Ratio < 1.0 = Rust faster. Ratio > 1.0 = Go faster.
+
+════════════════════════════════════════════════════════════
+  Payload: 100k_long (56259108 bytes), 10 eval iters per run
+════════════════════════════════════════════════════════════
+
+── nested_path: Account.Order.Product.StockKeepingUnitIdentifier ──
+Benchmark 1: go
+  Time (mean ± σ):     674.3 ms ±  21.6 ms    [User: 792.2 ms, System: 112.6 ms]
+  Range (min … max):   637.5 ms … 731.3 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     561.8 ms ±  30.3 ms    [User: 445.5 ms, System: 115.6 ms]
+  Range (min … max):   533.8 ms … 677.4 ms    30 runs
+ 
+Summary
+  rust ran
+    1.20 ± 0.08 times faster than go
+
+── filter_path: Account.Order.Product[UnitPriceWithTaxIncluded > 50].StockKeepingUnitIdentifier ──
+Benchmark 1: go
+  Time (mean ± σ):     707.4 ms ±  14.3 ms    [User: 835.3 ms, System: 102.9 ms]
+  Range (min … max):   678.7 ms … 751.7 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     630.7 ms ±  10.8 ms    [User: 517.2 ms, System: 113.0 ms]
+  Range (min … max):   614.8 ms … 656.9 ms    30 runs
+ 
+Summary
+  rust ran
+    1.12 ± 0.03 times faster than go
+
+── aggregation: $sum(Account.Order.Product.(UnitPriceWithTaxIncluded * QuantityInWarehouseStock * (1 - ApplicableDiscountPercentage))) ──
+Benchmark 1: go
+  Time (mean ± σ):     942.7 ms ±  15.6 ms    [User: 1225.3 ms, System: 115.9 ms]
+  Range (min … max):   915.3 ms … 973.1 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     751.2 ms ±  18.8 ms    [User: 638.0 ms, System: 112.5 ms]
+  Range (min … max):   731.9 ms … 798.9 ms    30 runs
+ 
+Summary
+  rust ran
+    1.25 ± 0.04 times faster than go
+
+── func_count: $count(Account.Order.Product.StockKeepingUnitIdentifier) ──
+Benchmark 1: go
+  Time (mean ± σ):     620.1 ms ±  13.2 ms    [User: 733.2 ms, System: 108.5 ms]
+  Range (min … max):   598.1 ms … 645.6 ms    30 runs
+ 
+Benchmark 2: rust
+  Time (mean ± σ):     528.6 ms ±   8.0 ms    [User: 419.2 ms, System: 108.9 ms]
+  Range (min … max):   516.1 ms … 549.9 ms    30 runs
+ 
+Summary
+  rust ran
+    1.17 ± 0.03 times faster than go
+
+
+=== 100k_long payload (10 iters) ===
+
+Benchmark            Go µs/op   Rust µs/op    Ratio
+────────────────────────────────────────────────────
+nested_path             67.4ms        56.2ms    0.83x ✓ Rs
+filter_path             70.7ms        63.1ms    0.89x ✓ Rs
+aggregation             94.3ms        75.1ms    0.80x ✓ Rs
+func_count              62.0ms        52.9ms    0.85x ✓ Rs
+
+Ratio < 1.0 = Rust faster. Ratio > 1.0 = Go faster.

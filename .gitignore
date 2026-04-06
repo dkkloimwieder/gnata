@@ -3,6 +3,9 @@
 .DS_Store
 target/
 
+# Large benchmark fixtures (>10MB, regenerate via python3 script in run_scaled.sh header)
+bench/data_100k*.json
+
 # npm package build artifacts
 npm/dist/
 npm/node_modules/

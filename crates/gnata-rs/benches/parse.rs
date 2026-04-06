@@ -14,7 +14,11 @@ const FIXTURES: &[(&str, &str)] = &[
     ("tiny_4", "../../bench/data.json"),
     ("1k", "../../bench/data_1k.json"),
     ("10k", "../../bench/data_10k.json"),
+    ("10k_long", "../../bench/data_10k_long.json"),
+    ("10k_mixed", "../../bench/data_10k_mixed.json"),
     ("100k", "../../bench/data_100k.json"),
+    ("100k_long", "../../bench/data_100k_long.json"),
+    ("100k_mixed", "../../bench/data_100k_mixed.json"),
 ];
 
 fn bench_parse(c: &mut Criterion) {
