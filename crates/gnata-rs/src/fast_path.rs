@@ -691,7 +691,7 @@ mod tests {
     fn assert_fast_matches_full(expr: &str, json: &str) {
         let input = Value::from_json_str(json).unwrap_or(Value::Undefined);
         let compiled = Expression::compile(expr).expect("compile failed");
-        let fast_result = compiled.evaluate(&input).expect("eval failed");
+        let fast_result = compiled.evaluate_value(&input).expect("eval failed");
 
         // Also run through full evaluator (bypassing fast path).
         let (mut arena, root) = crate::parser::Parser::parse(expr).expect("parse failed");
