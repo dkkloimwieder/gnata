@@ -1829,7 +1829,7 @@ fn apply_binary_op(
         // Comparison.
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             let right = eval_no_stack_check(arena, rhs, input, env)?;
-            left.compare(&right, op.as_str())
+            compare_values(&left, &right, op)
         }
         // Membership.
         BinaryOp::In => {
@@ -1846,6 +1846,24 @@ fn apply_binary_op(
             format!("unknown binary operator: {op}"),
         )),
     }
+}
+
+/// Typed comparison — avoids string matching on the operator in the hot loop.
+#[inline]
+fn compare_values(left: &Value, right: &Value, op: BinaryOp) -> JsonataResult {
+    // Fast path: both numbers (the common case in filter predicates).
+    if let (Value::Number(a), Value::Number(b)) = (left, right) {
+        let result = match op {
+            BinaryOp::Lt => a < b,
+            BinaryOp::Le => a <= b,
+            BinaryOp::Gt => a > b,
+            BinaryOp::Ge => a >= b,
+            _ => unreachable!(),
+        };
+        return Ok(Value::Bool(result));
+    }
+    // Slow path: delegates to Value::compare for type checking and error messages.
+    left.compare(right, op.as_str())
 }
 
 /// Apply arithmetic operator to pre-evaluated values.
