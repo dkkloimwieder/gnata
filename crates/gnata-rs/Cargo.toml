@@ -11,7 +11,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Concurrency
 arc-swap = "1.9"
-dashmap = "6.1"
 parking_lot = "0.12"
 
 # Parsing & Regex
@@ -38,8 +37,6 @@ percent-encoding = "2.3"
 # Unicode
 unicode-segmentation = "1.13"
 
-# Memory
-bumpalo = "3.17"
 
 # RNG
 fastrand = "2"
