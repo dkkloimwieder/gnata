@@ -41,10 +41,11 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
     }
 
     let compiled = Expression::compile(expr_str).expect("compile failed");
+    let input = Value::from_json_str(data_str).unwrap_or(Value::Undefined);
 
     let mut result = Value::Undefined;
     for _ in 0..n {
-        result = compiled.evaluate(data_str).expect("eval failed");
+        result = compiled.evaluate_value(&input).expect("eval failed");
     }
 
     let json = result.to_json();
