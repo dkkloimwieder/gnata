@@ -460,12 +460,50 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
 
 // ── Lifted dispatch for mapped expressions ──────────────────────────────────
 
+/// Pre-computed function-specific state for lifted dispatch.
+/// Each variant captures what a specific function needs to skip per-call setup.
+pub enum PreparedState {
+    /// $formatNumber: pre-parsed picture into SubPicture + FmtChars
+    FormatNumber {
+        pos_pic: super::format_number::SubPicture,
+        neg_pic: super::format_number::SubPicture,
+        fc: super::format_number::FmtChars,
+    },
+    /// $round: pre-extracted precision
+    Round { precision: i64 },
+    /// $substring: pre-extracted start and optional length
+    Substring { start: f64, length: Option<f64> },
+    /// $pad: pre-extracted width and pad char
+    Pad { width: i64, pad_char: char },
+    /// $contains with string arg: pre-extracted needle
+    Contains { needle: String },
+    /// $split with string arg: pre-extracted separator and optional limit
+    Split { separator: String, limit: Option<usize> },
+    /// $formatBase: pre-extracted radix
+    FormatBase { radix: u32 },
+}
+
+impl std::fmt::Debug for PreparedState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FormatNumber { .. } => write!(f, "FormatNumber(...)"),
+            Self::Round { precision } => write!(f, "Round({precision})"),
+            Self::Substring { start, length } => write!(f, "Substring({start}, {length:?})"),
+            Self::Pad { width, pad_char } => write!(f, "Pad({width}, {pad_char:?})"),
+            Self::Contains { needle } => write!(f, "Contains({needle:?})"),
+            Self::Split { separator, limit } => write!(f, "Split({separator:?}, {limit:?})"),
+            Self::FormatBase { radix } => write!(f, "FormatBase({radix})"),
+        }
+    }
+}
+
 /// A pre-analyzed function call that can be dispatched efficiently per item.
 /// Function resolution and constant arg evaluation happen once at analysis time.
 #[derive(Debug)]
 pub struct MappedCall {
     pub func: Box<FunctionValue>,
     pub arg_template: Vec<CallArg>,
+    pub prepared: Option<PreparedState>,
 }
 
 /// Classification of a function argument for lifted dispatch.
@@ -528,9 +566,13 @@ pub fn analyze_mapped_call(
         return None;
     }
 
+    // Try to pre-compute function-specific state from constant args.
+    let prepared = try_prepare(func_name, &arg_template);
+
     Some(MappedCall {
         func,
         arg_template,
+        prepared,
     })
 }
 
@@ -589,6 +631,170 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
     }
 }
 
+/// Try to pre-compute function-specific state from the argument template.
+fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
+    match func_name {
+        "formatNumber" => {
+            // args: [Field(number), Const(picture), optional Const(opts)]
+            let picture = match args.get(1) {
+                Some(CallArg::Const(Value::String(s))) => s.to_string(),
+                _ => return None,
+            };
+            let fc = super::format_number::FmtChars::default(); // TODO: handle opts arg
+            let pics = super::format_number::split_on_pattern_sep(&picture, fc.pattern_sep);
+            if pics.len() > 2 { return None; }
+            let pos_pic = super::format_number::parse_sub_picture(&pics[0], &fc).ok()?;
+            let neg_pic = if pics.len() == 2 {
+                super::format_number::parse_sub_picture(&pics[1], &fc).ok()?
+            } else {
+                let mut np = pos_pic.clone();
+                np.prefix = format!("-{}", pos_pic.prefix);
+                np
+            };
+            Some(PreparedState::FormatNumber { pos_pic, neg_pic, fc })
+        }
+        "round" => {
+            let precision = match args.get(1) {
+                Some(CallArg::Const(Value::Number(n))) => *n as i64,
+                None => 0,
+                _ => return None,
+            };
+            Some(PreparedState::Round { precision })
+        }
+        "substring" => {
+            let start = match args.get(1) {
+                Some(CallArg::Const(Value::Number(n))) => *n,
+                _ => return None,
+            };
+            let length = match args.get(2) {
+                Some(CallArg::Const(Value::Number(n))) => Some(*n),
+                None => None,
+                _ => return None,
+            };
+            Some(PreparedState::Substring { start, length })
+        }
+        "pad" => {
+            let width = match args.get(1) {
+                Some(CallArg::Const(Value::Number(n))) => *n as i64,
+                _ => return None,
+            };
+            let pad_char = match args.get(2) {
+                Some(CallArg::Const(Value::String(s))) => s.chars().next().unwrap_or(' '),
+                None => ' ',
+                _ => return None,
+            };
+            Some(PreparedState::Pad { width, pad_char })
+        }
+        "contains" => {
+            let needle = match args.get(1) {
+                Some(CallArg::Const(Value::String(s))) => s.to_string(),
+                _ => return None,
+            };
+            Some(PreparedState::Contains { needle })
+        }
+        "split" => {
+            let separator = match args.get(1) {
+                Some(CallArg::Const(Value::String(s))) => s.to_string(),
+                _ => return None,
+            };
+            let limit = match args.get(2) {
+                Some(CallArg::Const(Value::Number(n))) => Some(*n as usize),
+                None => None,
+                _ => return None,
+            };
+            Some(PreparedState::Split { separator, limit })
+        }
+        "formatBase" => {
+            let radix = match args.get(1) {
+                Some(CallArg::Const(Value::Number(n))) => *n as u32,
+                _ => return None,
+            };
+            if !(2..=36).contains(&radix) { return None; }
+            Some(PreparedState::FormatBase { radix })
+        }
+        _ => None,
+    }
+}
+
+/// Execute a prepared function call directly, skipping internal parsing.
+fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataResult> {
+    match prepared {
+        PreparedState::FormatNumber { pos_pic, neg_pic, fc } => {
+            let n = match field_val {
+                Value::Number(f) => *f,
+                _ => return None,
+            };
+            let negative = n < 0.0;
+            let sp = if negative { neg_pic } else { pos_pic };
+            let mut value = if negative { -n } else { n };
+            match sp.scale {
+                1 => value *= 100.0,
+                2 => value *= 1000.0,
+                _ => {}
+            }
+            let inner = if sp.exp_mandatory > 0 {
+                super::format_number::format_with_exponent(value, sp, fc)
+            } else {
+                super::format_number::format_fixed(value, sp, fc)
+            };
+            let inner = super::format_number::apply_digit_family(&inner, fc.zero_digit);
+            Some(Ok(Value::String(format!("{}{}{}", sp.prefix, inner, sp.suffix).into())))
+        }
+        PreparedState::Round { precision } => {
+            let n = match field_val {
+                Value::Number(f) => *f,
+                _ => return None,
+            };
+            let p = *precision;
+            let factor = 10f64.powi(p as i32);
+            // Round-half-away-from-zero (JSONata spec)
+            let rounded = if p >= 0 {
+                (n * factor + 0.5_f64.copysign(n * factor)).trunc() / factor
+            } else {
+                let inv = 10f64.powi((-p) as i32);
+                (n / inv + 0.5_f64.copysign(n / inv)).trunc() * inv
+            };
+            Some(Ok(Value::Number(rounded)))
+        }
+        PreparedState::Contains { needle } => {
+            let s = match field_val {
+                Value::String(s) => s,
+                _ => return None,
+            };
+            Some(Ok(Value::Bool(s.contains(needle.as_str()))))
+        }
+        PreparedState::FormatBase { radix } => {
+            let n = match field_val {
+                Value::Number(f) => *f as i64,
+                _ => return None,
+            };
+            let formatted = match radix {
+                2 => format!("{n:b}"),
+                8 => format!("{n:o}"),
+                16 => format!("{n:x}"),
+                _ => {
+                    // Generic radix formatting
+                    if n == 0 { return Some(Ok(Value::String("0".into()))); }
+                    let mut result = String::new();
+                    let mut val = n.unsigned_abs();
+                    let r = *radix as u64;
+                    while val > 0 {
+                        let digit = (val % r) as u32;
+                        result.push(char::from_digit(digit, *radix).unwrap_or('?'));
+                        val /= r;
+                    }
+                    if n < 0 { result.push('-'); }
+                    let s: String = result.chars().rev().collect();
+                    return Some(Ok(Value::String(s.into())));
+                }
+            };
+            Some(Ok(Value::String(formatted.into())))
+        }
+        // For other prepared states, fall through to generic dispatch
+        _ => None,
+    }
+}
+
 /// Execute a MappedCall for a single item. Function is already resolved,
 /// constant args are already evaluated. Only field args need per-item work.
 pub fn exec_mapped_call(
@@ -597,7 +803,18 @@ pub fn exec_mapped_call(
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
-    // Build args from template — small vec, no heap alloc for <=4 args.
+    // If we have prepared state and the first arg is a field, try the fast path.
+    if let Some(ref prepared) = mc.prepared {
+        // Get the field value (first Field arg).
+        if let Some(CallArg::Field(name)) = mc.arg_template.first() {
+            let field_val = get_field(item, name);
+            if let Some(result) = exec_prepared(prepared, &field_val) {
+                return result;
+            }
+        }
+    }
+
+    // Fallback: generic dispatch with pre-resolved function.
     let mut args: Vec<Value> = Vec::with_capacity(mc.arg_template.len());
     for arg in &mc.arg_template {
         match arg {

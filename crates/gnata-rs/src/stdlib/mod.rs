@@ -7,7 +7,7 @@ mod boolean;
 pub mod datetime;
 mod eval_fn;
 mod format_integer;
-mod format_number;
+pub(crate) mod format_number;
 mod hof;
 pub mod hof_fast;
 mod numeric;

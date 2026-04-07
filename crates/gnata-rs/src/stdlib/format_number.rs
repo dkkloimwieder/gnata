@@ -55,16 +55,16 @@ pub fn fn_format_number(args: &[Value], _focus: &Value) -> JsonataResult {
 // ── Format character set ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
-struct FmtChars {
-    decimal_sep: char,
-    grouping_sep: char,
-    percent: char,
-    per_mille: char,
-    zero_digit: char,
-    digit: char,
-    pattern_sep: char,
-    exponent_sep: char,
-    per_mille_str: String,
+pub(crate) struct FmtChars {
+    pub(crate) decimal_sep: char,
+    pub(crate) grouping_sep: char,
+    pub(crate) percent: char,
+    pub(crate) per_mille: char,
+    pub(crate) zero_digit: char,
+    pub(crate) digit: char,
+    pub(crate) pattern_sep: char,
+    pub(crate) exponent_sep: char,
+    pub(crate) per_mille_str: String,
 }
 
 impl Default for FmtChars {
@@ -121,21 +121,21 @@ impl FmtChars {
 // ── Sub-picture ───────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone)]
-struct SubPicture {
-    prefix: String,
-    suffix: String,
-    int_mandatory: usize,
-    int_optional: usize,
-    frac_mandatory: usize,
-    frac_optional: usize,
-    exp_mandatory: usize,
-    exp_min_width: usize,
+pub(crate) struct SubPicture {
+    pub(crate) prefix: String,
+    pub(crate) suffix: String,
+    pub(crate) int_mandatory: usize,
+    pub(crate) int_optional: usize,
+    pub(crate) frac_mandatory: usize,
+    pub(crate) frac_optional: usize,
+    pub(crate) exp_mandatory: usize,
+    pub(crate) exp_min_width: usize,
     /// 0=none, 1=percent, 2=per-mille
-    scale: u8,
-    int_grp_pos: Vec<usize>,
-    frac_grp_pos: Vec<usize>,
-    has_decimal: bool,
-    has_any_int_digit: bool,
+    pub(crate) scale: u8,
+    pub(crate) int_grp_pos: Vec<usize>,
+    pub(crate) frac_grp_pos: Vec<usize>,
+    pub(crate) has_decimal: bool,
+    pub(crate) has_any_int_digit: bool,
 }
 
 // ── Parsing helpers ───────────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ fn parse_frac_part(
     Ok(())
 }
 
-fn parse_sub_picture(pic: &str, fc: &FmtChars) -> Result<SubPicture, JsonataError> {
+pub(crate) fn parse_sub_picture(pic: &str, fc: &FmtChars) -> Result<SubPicture, JsonataError> {
     let runes: Vec<char> = pic.chars().collect();
     let mut sp = SubPicture::default();
 
@@ -417,7 +417,7 @@ fn compute_int_group_positions(
     result
 }
 
-fn apply_digit_family(s: &str, zero_digit: char) -> String {
+pub(crate) fn apply_digit_family(s: &str, zero_digit: char) -> String {
     if zero_digit == '0' {
         return s.to_string();
     }
@@ -461,7 +461,7 @@ fn apply_frac_grouping(frac_str: &str, grp_pos: &[usize], sep: char) -> String {
     result
 }
 
-fn format_fixed(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
+pub(crate) fn format_fixed(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
     let total_frac_digits = sp.frac_mandatory + sp.frac_optional;
     let formatted = format!("{n:.total_frac_digits$}");
     let mut parts = formatted.splitn(2, '.');
@@ -507,7 +507,7 @@ fn format_fixed(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
     }
 }
 
-fn format_with_exponent(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
+pub(crate) fn format_with_exponent(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
     let cap_n = sp.int_mandatory;
     let mut frac_sig = sp.frac_mandatory + sp.frac_optional;
     if cap_n == 0 && sp.frac_mandatory == 0 && sp.frac_optional == 0 {
@@ -587,7 +587,7 @@ fn format_with_exponent(n: f64, sp: &SubPicture, fc: &FmtChars) -> String {
     )
 }
 
-fn split_on_pattern_sep(picture: &str, sep: char) -> Vec<String> {
+pub(crate) fn split_on_pattern_sep(picture: &str, sep: char) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut cur = String::new();
     for c in picture.chars() {
