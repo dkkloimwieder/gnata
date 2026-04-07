@@ -329,6 +329,98 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
     current
 }
 
+/// Count matches along a pure path without materializing values.
+/// Avoids cloning leaf values — just counts how many exist.
+fn count_pure_path(segments: &[String], input: &Value) -> usize {
+    if segments.is_empty() {
+        return match input {
+            Value::Undefined => 0,
+            Value::Array(arr) => arr.len(),
+            _ => 1,
+        };
+    }
+
+    let segment = &segments[0];
+    let rest = &segments[1..];
+
+    match input {
+        Value::Object(obj) => match obj.get(segment.as_str()) {
+            Some(v) if !v.is_undefined() => count_pure_path(rest, v),
+            _ => 0,
+        },
+        Value::Array(arr) => {
+            let mut total = 0;
+            for item in arr.iter() {
+                if let Value::Object(obj) = item
+                    && let Some(v) = obj.get(segment.as_str())
+                {
+                    if rest.is_empty() {
+                        match v {
+                            Value::Array(inner) => total += inner.len(),
+                            Value::Undefined => {}
+                            _ => total += 1,
+                        }
+                    } else {
+                        total += count_pure_path(rest, v);
+                    }
+                }
+            }
+            total
+        }
+        _ => 0,
+    }
+}
+
+/// Visit each leaf value along a pure path without cloning.
+/// Calls `f` with a borrowed reference to each matching value.
+fn fold_pure_path<'a>(segments: &[String], input: &'a Value, f: &mut impl FnMut(&'a Value)) {
+    if segments.is_empty() {
+        match input {
+            Value::Array(arr) => {
+                for item in arr.iter() {
+                    f(item);
+                }
+            }
+            Value::Undefined => {}
+            other => f(other),
+        }
+        return;
+    }
+
+    let segment = &segments[0];
+    let rest = &segments[1..];
+
+    match input {
+        Value::Object(obj) => {
+            if let Some(v) = obj.get(segment.as_str()) {
+                fold_pure_path(rest, v, f);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter() {
+                if let Value::Object(obj) = item
+                    && let Some(v) = obj.get(segment.as_str())
+                {
+                    if rest.is_empty() {
+                            match v {
+                                Value::Array(inner) => {
+                                    for elem in inner.iter() {
+                                        f(elem);
+                                    }
+                                }
+                                Value::Undefined => {}
+                                other => f(other),
+                            }
+                        } else {
+                            fold_pure_path(rest, v, f);
+                        }
+                    }
+                }
+            }
+        _ => {}
+    }
+}
+
 /// Evaluate a comparison fast path.
 fn eval_comparison(cmp: &ComparisonFastPath, input: &Value) -> Option<Value> {
     let lhs = eval_pure_path(&cmp.path, input);
@@ -359,11 +451,76 @@ fn eval_comparison(cmp: &ComparisonFastPath, input: &Value) -> Option<Value> {
 
 /// Evaluate a function fast path.
 fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
+    // Aggregations that don't need materialized values — traverse and accumulate.
+    match func.kind {
+        FuncFastKind::Count => {
+            let n = count_pure_path(&func.path, input);
+            return Some(Value::Number(n as f64));
+        }
+        FuncFastKind::Exists => {
+            let n = count_pure_path(&func.path, input);
+            return Some(Value::Bool(n > 0));
+        }
+        FuncFastKind::Sum => {
+            let mut total = 0.0_f64;
+            let mut found = false;
+            fold_pure_path(&func.path, input, &mut |v| {
+                if let Value::Number(n) = v {
+                    total += n;
+                    found = true;
+                }
+            });
+            return Some(if found { Value::Number(total) } else { Value::Number(0.0) });
+        }
+        FuncFastKind::Max => {
+            let mut result: Option<f64> = None;
+            fold_pure_path(&func.path, input, &mut |v| {
+                if let Value::Number(n) = v {
+                    result = Some(result.map_or(*n, |cur| cur.max(*n)));
+                }
+            });
+            return Some(result.map_or(Value::Undefined, Value::Number));
+        }
+        FuncFastKind::Min => {
+            let mut result: Option<f64> = None;
+            fold_pure_path(&func.path, input, &mut |v| {
+                if let Value::Number(n) = v {
+                    result = Some(result.map_or(*n, |cur| cur.min(*n)));
+                }
+            });
+            return Some(result.map_or(Value::Undefined, Value::Number));
+        }
+        FuncFastKind::Average => {
+            let mut total = 0.0_f64;
+            let mut count = 0_usize;
+            fold_pure_path(&func.path, input, &mut |v| {
+                if let Value::Number(n) = v {
+                    total += n;
+                    count += 1;
+                }
+            });
+            return Some(if count == 0 {
+                Value::Undefined
+            } else {
+                Value::Number(total / count as f64)
+            });
+        }
+        FuncFastKind::Length => {
+            // $length on array path = count. On string path = char count (single value only).
+            let n = count_pure_path(&func.path, input);
+            if n != 1 {
+                return Some(Value::Number(n as f64));
+            }
+            // Single value — could be string length. Fall through to materialize.
+        }
+        _ => {}
+    }
+
     let val = eval_pure_path(&func.path, input);
 
     // If path resolved to undefined, most functions should fall through
     // to full eval for proper error handling, except $exists.
-    if val.is_undefined() && func.kind != FuncFastKind::Exists {
+    if val.is_undefined() {
         return Some(apply_func_undefined(func.kind));
     }
 
@@ -669,7 +826,7 @@ fn tape_to_value(val: tape::Value<'_, '_>) -> Value {
         return Value::Array(Rc::from(items));
     }
     if let Some(obj) = val.as_object() {
-        let mut map = crate::value::ObjectMap::new();
+        let mut map = crate::value::ObjectMap::default();
         for (k, v) in &obj {
             map.insert(CompactString::from(k), tape_to_value(v));
         }
