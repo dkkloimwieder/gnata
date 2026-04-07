@@ -1683,6 +1683,11 @@ fn eval_binary(
         return eval_subscript_binary(arena, node, lhs, rhs, input, env);
     }
 
+    // Fast path: flatten chained concat (a & b & c) into a single buffer.
+    if op == BinaryOp::Concat {
+        return eval_concat_chain(arena, node, input, env);
+    }
+
     // Only use stacker check when lhs is a Binary (could recurse into another
     // eval_binary creating a deep chain). Leaf nodes (Name, Number, Variable, etc.)
     // are evaluated directly without the closure overhead.
@@ -1692,6 +1697,39 @@ fn eval_binary(
         eval_no_stack_check(arena, lhs, input, env)?
     };
     apply_binary_op(arena, op, left, rhs, lhs, input, env)
+}
+
+/// Flatten and evaluate a chain of `&` concat operators into a single buffer.
+/// Turns `a & b & c & d` (left-recursive tree) into a linear sequence of evals
+/// with a single String allocation.
+fn eval_concat_chain(
+    arena: &AstArena,
+    node: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    // Collect leaf operands by walking the left-recursive concat tree.
+    let mut operands: Vec<NodeId> = Vec::new();
+    collect_concat_operands(arena, node, &mut operands);
+
+    let mut buf = String::new();
+    for &operand in &operands {
+        let val = eval_no_stack_check(arena, operand, input, env)?;
+        if !val.is_undefined() {
+            val.stringify_into(&mut buf)?;
+        }
+    }
+    Ok(Value::String(buf.into()))
+}
+
+/// Walk a left-recursive Concat tree and collect non-Concat leaf nodes.
+fn collect_concat_operands(arena: &AstArena, node: NodeId, out: &mut Vec<NodeId>) {
+    if let Expr::Binary { op: BinaryOp::Concat, lhs, rhs, .. } = arena.get(node) {
+        collect_concat_operands(arena, *lhs, out);
+        out.push(*rhs);
+    } else {
+        out.push(node);
+    }
 }
 
 /// Subscript/filter binary `[` — needs AST-level access to lhs for
@@ -1796,20 +1834,14 @@ fn apply_binary_op(
             let right = eval_no_stack_check(arena, rhs, input, env)?;
             apply_arithmetic(op, &left, &right)
         }
-        // String concatenation.
+        // String concatenation — handled by eval_concat_chain before reaching here.
+        // This fallback exists only if somehow reached directly (shouldn't happen).
         BinaryOp::Concat => {
             let right = eval_no_stack_check(arena, rhs, input, env)?;
-            let ls = if left.is_undefined() {
-                String::new()
-            } else {
-                left.stringify(false)?
-            };
-            let rs = if right.is_undefined() {
-                String::new()
-            } else {
-                right.stringify(false)?
-            };
-            Ok(Value::String(format!("{ls}{rs}").into()))
+            let mut buf = String::new();
+            if !left.is_undefined() { left.stringify_into(&mut buf)?; }
+            if !right.is_undefined() { right.stringify_into(&mut buf)?; }
+            Ok(Value::String(buf.into()))
         }
         // Equality.
         BinaryOp::Eq => {

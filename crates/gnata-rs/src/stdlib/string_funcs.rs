@@ -484,17 +484,25 @@ pub fn fn_join(args: &[Value], _focus: &Value) -> JsonataResult {
             ));
         }
     };
-    let strings: Result<Vec<&str>, _> = arr
-        .iter()
-        .map(|v| match v {
-            Value::String(s) => Ok(s as &str),
-            _ => Err(JsonataError::new(
-                "T0412",
-                "$join: array must contain only strings",
-            )),
-        })
-        .collect();
-    Ok(Value::String(strings?.join(sep).into()))
+    // Build result directly into a single buffer.
+    let mut buf = String::new();
+    for (i, v) in arr.iter().enumerate() {
+        match v {
+            Value::String(s) => {
+                if i > 0 && !sep.is_empty() {
+                    buf.push_str(sep);
+                }
+                buf.push_str(s);
+            }
+            _ => {
+                return Err(JsonataError::new(
+                    "T0412",
+                    "$join: array must contain only strings",
+                ));
+            }
+        }
+    }
+    Ok(Value::String(buf.into()))
 }
 
 pub fn fn_base64_encode(args: &[Value], _focus: &Value) -> JsonataResult {

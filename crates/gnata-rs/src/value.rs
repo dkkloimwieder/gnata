@@ -317,6 +317,31 @@ impl Value {
     /// Convert a value to its string representation.
     /// If `prettify` is true, objects and arrays are pretty-printed with 2-space indent.
     ///
+    /// Append the stringified form of this value to `buf`.
+    /// Zero-allocation for primitive types (String, Number, Bool).
+    ///
+    /// # Errors
+    /// Returns `D1001` if the value contains non-finite numbers.
+    pub fn stringify_into(&self, buf: &mut String) -> JsonataResult<()> {
+        match self {
+            Value::Undefined | Value::Function(_) | Value::TailCall(_) => Ok(()),
+            Value::String(s) => { buf.push_str(s); Ok(()) }
+            Value::Number(n) => { buf.push_str(&format_float(*n)); Ok(()) }
+            Value::Bool(true) => { buf.push_str("true"); Ok(()) }
+            Value::Bool(false) => { buf.push_str("false"); Ok(()) }
+            other => {
+                if other.contains_non_finite() {
+                    return Err(JsonataError::new("D1001", "Number out of range"));
+                }
+                let json_val = other.to_json();
+                let json = serde_json::to_string(&json_val)
+                    .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))?;
+                buf.push_str(&json);
+                Ok(())
+            }
+        }
+    }
+
     /// # Errors
     /// Returns `D1001` if the value contains non-finite numbers.
     pub fn stringify(&self, prettify: bool) -> JsonataResult<String> {
