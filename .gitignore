@@ -6,6 +6,17 @@ target/
 # Large benchmark fixtures (>10MB, regenerate via python3 script in run_scaled.sh header)
 bench/data_100k*.json
 
+# Benchmark results (transient, per-run)
+bench/results/
+
+# Large generated fixtures (regenerate with: python3 bench/generate_fixtures.py --sizes 10k,100k)
+bench/fixtures/logs/10k.json
+bench/fixtures/logs/100k.json
+bench/fixtures/strings/10k.json
+bench/fixtures/strings/100k.json
+bench/fixtures/datetime/10k.json
+bench/fixtures/datetime/100k.json
+
 # npm package build artifacts
 npm/dist/
 npm/node_modules/

@@ -1,0 +1,516 @@
+# Benchmark catalog for gnata JSONata engine.
+# Defines all benchmark expressions, organized by category.
+# Read by bench/run_bench.py.
+
+[meta]
+version = 1
+
+# Defaults inherited by all categories unless overridden per-category or per-bench.
+[defaults]
+fixture = "account"
+sizes = ["tiny", "1k", "10k"]
+iters = { tiny = 10000, "1k" = 1000, "10k" = 100, "100k" = 10, full = 10 }
+
+# ── PATH ─────────────────────────────────────────────────────────────────────
+[categories.path]
+description = "Path navigation and access patterns"
+
+[[categories.path.bench]]
+id = "path.simple"
+expr = "Account.Name"
+tags = ["quick"]
+sizes = ["tiny", "1k", "10k", "100k"]
+
+[[categories.path.bench]]
+id = "path.nested"
+expr = "Account.Order.Product.SKU"
+tags = ["quick"]
+sizes = ["tiny", "1k", "10k", "100k"]
+
+[[categories.path.bench]]
+id = "path.wildcard"
+expr = "Account.Order.*"
+
+[[categories.path.bench]]
+id = "path.descendant"
+expr = "**[SKU]"
+
+[[categories.path.bench]]
+id = "path.parent"
+expr = "Account.Order.Product.%.OrderID"
+sizes = ["tiny", "1k"]
+
+[[categories.path.bench]]
+id = "path.filter"
+expr = "Account.Order.Product[UnitPrice > 50].SKU"
+tags = ["quick"]
+sizes = ["tiny", "1k", "10k", "100k"]
+
+[[categories.path.bench]]
+id = "path.index"
+expr = "Account.Order[0].Product[0].SKU"
+
+[[categories.path.bench]]
+id = "path.keep_array"
+expr = "Account.Order[].Product.SKU"
+
+# ── STRING ───────────────────────────────────────────────────────────────────
+[categories.string]
+description = "String manipulation functions"
+fixture = "strings"
+
+[[categories.string.bench]]
+id = "string.substring"
+expr = "$substring(items[0].text, 0, 10)"
+tags = ["quick"]
+
+[[categories.string.bench]]
+id = "string.replace"
+expr = "$replace(items[0].text, 'error', 'warning')"
+
+[[categories.string.bench]]
+id = "string.split"
+expr = "$split(items[0].text, ' ')"
+
+[[categories.string.bench]]
+id = "string.join"
+expr = "$join($split(items[0].text, ' '), '-')"
+
+[[categories.string.bench]]
+id = "string.trim"
+expr = "$trim(items[0].text)"
+
+[[categories.string.bench]]
+id = "string.pad"
+expr = "$pad(items[0].code, 10, '#')"
+
+[[categories.string.bench]]
+id = "string.match"
+expr = "$match(items[0].text, /[A-Z][a-z]+/)"
+
+[[categories.string.bench]]
+id = "string.contains"
+expr = "$contains(items[0].text, 'critical')"
+
+[[categories.string.bench]]
+id = "string.lowercase"
+expr = "$lowercase(items[0].text)"
+
+[[categories.string.bench]]
+id = "string.uppercase"
+expr = "$uppercase(items[0].text)"
+
+[[categories.string.bench]]
+id = "string.length"
+expr = "$length(items[0].text)"
+
+[[categories.string.bench]]
+id = "string.before"
+expr = "$substringBefore(items[0].text, ' ')"
+
+[[categories.string.bench]]
+id = "string.after"
+expr = "$substringAfter(items[0].text, ' ')"
+
+# ── NUMERIC ──────────────────────────────────────────────────────────────────
+[categories.numeric]
+description = "Numeric functions and math"
+
+[[categories.numeric.bench]]
+id = "numeric.abs"
+expr = "$abs(Account.Order.Product[0].UnitPrice - 50)"
+
+[[categories.numeric.bench]]
+id = "numeric.floor"
+expr = "$floor(Account.Order.Product[0].UnitPrice)"
+
+[[categories.numeric.bench]]
+id = "numeric.ceil"
+expr = "$ceil(Account.Order.Product[0].UnitPrice)"
+
+[[categories.numeric.bench]]
+id = "numeric.round"
+expr = "$round(Account.Order.Product[0].UnitPrice, 1)"
+
+[[categories.numeric.bench]]
+id = "numeric.power"
+expr = "$power(Account.Order.Product[0].Quantity, 2)"
+
+[[categories.numeric.bench]]
+id = "numeric.sqrt"
+expr = "$sqrt(Account.Order.Product[0].UnitPrice)"
+
+[[categories.numeric.bench]]
+id = "numeric.sum"
+expr = "$sum(Account.Order.Product.(UnitPrice * Quantity))"
+tags = ["quick"]
+
+[[categories.numeric.bench]]
+id = "numeric.max"
+expr = "$max(Account.Order.Product.UnitPrice)"
+
+[[categories.numeric.bench]]
+id = "numeric.min"
+expr = "$min(Account.Order.Product.UnitPrice)"
+
+[[categories.numeric.bench]]
+id = "numeric.average"
+expr = "$average(Account.Order.Product.UnitPrice)"
+
+[[categories.numeric.bench]]
+id = "numeric.formatNumber"
+expr = "$formatNumber(Account.Order.Product[0].UnitPrice, '#,##0.00')"
+
+[[categories.numeric.bench]]
+id = "numeric.formatBase"
+expr = "$formatBase(255, 16)"
+
+# ── ARRAY ────────────────────────────────────────────────────────────────────
+[categories.array]
+description = "Array manipulation functions"
+
+[[categories.array.bench]]
+id = "array.append"
+expr = "$append(Account.Order[0].Product, Account.Order[1].Product)"
+
+[[categories.array.bench]]
+id = "array.sort"
+expr = "$sort(Account.Order.Product, function($a,$b){$a.UnitPrice > $b.UnitPrice})"
+tags = ["quick"]
+
+[[categories.array.bench]]
+id = "array.reverse"
+expr = "$reverse(Account.Order.Product)"
+
+[[categories.array.bench]]
+id = "array.distinct"
+expr = "$distinct(Account.Order.Product.SKU)"
+
+[[categories.array.bench]]
+id = "array.flatten"
+expr = "$flatten([Account.Order.Product])"
+
+[[categories.array.bench]]
+id = "array.zip"
+expr = "$zip(Account.Order.Product.SKU, Account.Order.Product.UnitPrice)"
+
+[[categories.array.bench]]
+id = "array.count"
+expr = "$count(Account.Order.Product)"
+
+[[categories.array.bench]]
+id = "array.shuffle"
+expr = "$shuffle(Account.Order.Product)"
+
+# ── OBJECT ───────────────────────────────────────────────────────────────────
+[categories.object]
+description = "Object manipulation functions"
+
+[[categories.object.bench]]
+id = "object.keys"
+expr = "$keys(Account.Order[0].Product[0])"
+
+[[categories.object.bench]]
+id = "object.values"
+expr = "$values(Account.Order[0].Product[0])"
+
+[[categories.object.bench]]
+id = "object.spread"
+expr = "$spread(Account.Order[0].Product[0])"
+
+[[categories.object.bench]]
+id = "object.merge"
+expr = "$merge(Account.Order.Product)"
+
+[[categories.object.bench]]
+id = "object.lookup"
+expr = "$lookup(Account.Order[0].Product[0], 'SKU')"
+
+[[categories.object.bench]]
+id = "object.each"
+expr = "$each(Account.Order[0].Product[0], function($v, $k) { $k & '=' & $string($v) })"
+
+[[categories.object.bench]]
+id = "object.sift"
+expr = "$sift(Account.Order[0].Product[0], function($v) { $type($v) = 'number' })"
+
+# ── HOF ──────────────────────────────────────────────────────────────────────
+[categories.hof]
+description = "Higher-order functions (lambda-heavy, performance-critical)"
+
+[[categories.hof.bench]]
+id = "hof.map"
+expr = "$map(Account.Order.Product, function($v){$v.SKU & ': $' & $string($v.UnitPrice)})"
+tags = ["quick"]
+
+[[categories.hof.bench]]
+id = "hof.filter"
+expr = "$filter(Account.Order.Product, function($v){$v.UnitPrice > 50})"
+tags = ["quick"]
+
+[[categories.hof.bench]]
+id = "hof.reduce"
+expr = "$reduce(Account.Order.Product, function($prev,$curr){$prev + $curr.UnitPrice}, 0)"
+tags = ["quick"]
+
+[[categories.hof.bench]]
+id = "hof.each"
+expr = "$each(Account.Order[0].Product[0], function($v,$k){$k})"
+
+[[categories.hof.bench]]
+id = "hof.sort_cmp"
+expr = "$sort(Account.Order.Product, function($a,$b){$a.Quantity > $b.Quantity})"
+
+[[categories.hof.bench]]
+id = "hof.single"
+expr = "$single(Account.Order.Product, function($v){$v.SKU = '040657863'})"
+
+[[categories.hof.bench]]
+id = "hof.sift"
+expr = "$sift(Account.Order[0].Product[0], function($v){$type($v) = 'string'})"
+
+# ── TYPE ─────────────────────────────────────────────────────────────────────
+[categories.type]
+description = "Type checking and coercion"
+
+[[categories.type.bench]]
+id = "type.type"
+expr = "$type(Account.Order)"
+
+[[categories.type.bench]]
+id = "type.string"
+expr = "$string(Account.Order[0].Product[0])"
+tags = ["quick"]
+
+[[categories.type.bench]]
+id = "type.number"
+expr = "$number(Account.Order[0].Product[0].UnitPrice)"
+
+[[categories.type.bench]]
+id = "type.boolean"
+expr = "$boolean(Account.Order)"
+
+[[categories.type.bench]]
+id = "type.exists"
+expr = "$exists(Account.Order.Product)"
+
+# ── DATETIME ─────────────────────────────────────────────────────────────────
+[categories.datetime]
+description = "Date/time functions"
+fixture = "datetime"
+sizes = ["1k"]
+
+[[categories.datetime.bench]]
+id = "datetime.now"
+expr = "$now()"
+fixture = "account"
+sizes = ["tiny"]
+
+[[categories.datetime.bench]]
+id = "datetime.toMillis"
+expr = "$toMillis(events[0].timestamp)"
+
+[[categories.datetime.bench]]
+id = "datetime.fromMillis"
+expr = "$fromMillis(events[0].epoch_ms, '[Y]-[M01]-[D01]')"
+
+# ── REGEX ────────────────────────────────────────────────────────────────────
+[categories.regex]
+description = "Regular expression operations"
+fixture = "strings"
+sizes = ["1k"]
+
+[[categories.regex.bench]]
+id = "regex.match"
+expr = "$match(items[0].text, /\\b[A-Z]{2,}\\b/)"
+tags = ["quick"]
+
+[[categories.regex.bench]]
+id = "regex.replace"
+expr = "$replace(items[0].text, /[0-9]+/, 'N')"
+
+[[categories.regex.bench]]
+id = "regex.split"
+expr = "$split(items[0].text, /\\s+/)"
+
+[[categories.regex.bench]]
+id = "regex.contains"
+expr = "$contains(items[0].text, /error|fail/i)"
+
+# ── ENCODING ─────────────────────────────────────────────────────────────────
+[categories.encoding]
+description = "Base64 and URL encoding/decoding"
+fixture = "strings"
+sizes = ["1k"]
+
+[[categories.encoding.bench]]
+id = "encoding.b64enc"
+expr = "$base64encode(items[0].text)"
+
+[[categories.encoding.bench]]
+id = "encoding.b64dec"
+expr = "$base64decode(items[0].b64)"
+
+[[categories.encoding.bench]]
+id = "encoding.urlenc"
+expr = "$encodeUrlComponent(items[0].text)"
+
+[[categories.encoding.bench]]
+id = "encoding.urldec"
+expr = "$decodeUrlComponent(items[0].urlencoded)"
+
+[[categories.encoding.bench]]
+id = "encoding.urlenc_full"
+expr = "$encodeUrl(items[0].url)"
+
+[[categories.encoding.bench]]
+id = "encoding.urldec_full"
+expr = "$decodeUrl(items[0].urlencoded_full)"
+
+# ── OPERATOR ─────────────────────────────────────────────────────────────────
+[categories.operator]
+description = "Arithmetic, comparison, logical, and miscellaneous operators"
+
+[[categories.operator.bench]]
+id = "op.arithmetic"
+expr = "Account.Order.Product[0].(UnitPrice * Quantity * (1 - Discount))"
+tags = ["quick"]
+
+[[categories.operator.bench]]
+id = "op.comparison"
+expr = "Account.Name = 'Firefly'"
+
+[[categories.operator.bench]]
+id = "op.lt_chain"
+expr = "Account.Order.Product[UnitPrice > 20 and UnitPrice < 100]"
+
+[[categories.operator.bench]]
+id = "op.logical"
+expr = "$exists(Account.Order) and $count(Account.Order.Product) > 0"
+
+[[categories.operator.bench]]
+id = "op.concat"
+expr = "Account.Name & ' - ' & Account.Order[0].OrderID"
+
+[[categories.operator.bench]]
+id = "op.range"
+expr = "[1..10]"
+
+[[categories.operator.bench]]
+id = "op.coalesce"
+expr = "Account.Missing ?? 'default'"
+
+[[categories.operator.bench]]
+id = "op.in"
+expr = "Account.Order[0].Product[0].SKU in Account.Order.Product.SKU"
+
+[[categories.operator.bench]]
+id = "op.ternary"
+expr = "$count(Account.Order) > 1 ? 'multi' : 'single'"
+
+[[categories.operator.bench]]
+id = "op.compound"
+expr = "$sum([1..100])"
+
+# ── LAMBDA ───────────────────────────────────────────────────────────────────
+[categories.lambda]
+description = "Lambda definition, closures, partial application"
+
+[[categories.lambda.bench]]
+id = "lambda.basic"
+expr = "($f := function($x){$x * 2}; $f(21))"
+tags = ["quick"]
+
+[[categories.lambda.bench]]
+id = "lambda.closure"
+expr = "($factor := 1.1; $map(Account.Order.Product.UnitPrice, function($p){$p * $factor}))"
+
+[[categories.lambda.bench]]
+id = "lambda.nested"
+expr = "$map(Account.Order, function($o){$map($o.Product, function($p){$p.SKU})})"
+
+[[categories.lambda.bench]]
+id = "lambda.partial"
+expr = "($add := function($a,$b){$a+$b}; $p := $add(10, ?); $p(5))"
+
+# ── TRANSFORM ────────────────────────────────────────────────────────────────
+[categories.transform]
+description = "Transform expressions"
+
+[[categories.transform.bench]]
+id = "transform.chain"
+expr = "Account.Order.Product ~> $map(function($v){$v.UnitPrice}) ~> $sum()"
+tags = ["quick"]
+
+[[categories.transform.bench]]
+id = "transform.pipe_filter"
+expr = "Account.Order.Product ~> $filter(function($v){$v.UnitPrice > 30}) ~> $count()"
+
+# ── BLOCK ────────────────────────────────────────────────────────────────────
+[categories.block]
+description = "Variable binding, conditionals, block expressions"
+
+[[categories.block.bench]]
+id = "block.binding"
+expr = "($x := Account.Name; $y := $count(Account.Order); $x & ': ' & $string($y) & ' orders')"
+
+[[categories.block.bench]]
+id = "block.conditional"
+expr = "Account.Order.Product.(UnitPrice > 50 ? 'expensive' : 'cheap')"
+
+[[categories.block.bench]]
+id = "block.compound"
+expr = "($items := Account.Order.Product; $total := $sum($items.UnitPrice); $avg := $total / $count($items); {'total': $total, 'avg': $avg})"
+tags = ["quick"]
+
+# ── COMPLEX ──────────────────────────────────────────────────────────────────
+[categories.complex]
+description = "Real-world multi-step workflows"
+
+[[categories.complex.bench]]
+id = "complex.chained_hof"
+expr = "Account.Order.Product ~> $filter(function($v){$v.UnitPrice > 30}) ~> $map(function($v){$v.SKU}) ~> $count()"
+tags = ["quick"]
+
+[[categories.complex.bench]]
+id = "complex.group_by"
+expr = "Account.Order{OrderID: $sum(Product.UnitPrice)}"
+tags = ["quick"]
+
+[[categories.complex.bench]]
+id = "complex.nested_group"
+expr = "Account.Order{OrderID: Product{SKU: UnitPrice}}"
+
+[[categories.complex.bench]]
+id = "complex.multi_sort"
+expr = "$sort(Account.Order.Product, function($a,$b){$a.UnitPrice > $b.UnitPrice})"
+
+[[categories.complex.bench]]
+id = "complex.recur_agg"
+expr = "$sum(**.UnitPrice)"
+
+# ── INVENTORY ────────────────────────────────────────────────────────────────
+[categories.inventory]
+description = "Real-world inventory queries against inv.json (21MB)"
+fixture = "inventory"
+sizes = ["full"]
+
+[[categories.inventory.bench]]
+id = "inv.deep_path"
+expr = "data.inventory.edges.node.grn.grnPurchaseOrders.edges.node.purchaseOrder.number"
+
+[[categories.inventory.bench]]
+id = "inv.filter_active"
+expr = "data.inventory.edges[node.active = true].node.number"
+
+[[categories.inventory.bench]]
+id = "inv.weight_sum"
+expr = "$sum(data.inventory.edges.node.grossWeight)"
+
+[[categories.inventory.bench]]
+id = "inv.group_status"
+expr = "data.inventory.edges.node{inventoryStatusId: $count($)}"
+
+[[categories.inventory.bench]]
+id = "inv.address"
+expr = "data.inventory.edges.node.grn.grnPurchaseOrders.edges.node.purchaseOrder.shipToAddress.city"
