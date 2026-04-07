@@ -52,6 +52,21 @@ pub enum SimpleLambda {
         field: String,
         op: BinaryOp,
     },
+    /// function($v) { $v.A & "lit" & $string($v.B) & ... } — concat template
+    ConcatTemplate {
+        pieces: Vec<TemplatePiece>,
+    },
+}
+
+/// A piece of a concat template — evaluated into a string buffer.
+#[derive(Debug, Clone)]
+pub enum TemplatePiece {
+    /// A string literal known at analysis time.
+    Literal(String),
+    /// A field access on the lambda parameter — appends the string value.
+    Field(String),
+    /// $string(field) — stringify the field value into the buffer.
+    StringifyField(String),
 }
 
 /// Try to analyze a lambda body into a SimpleLambda for fast dispatch.
@@ -63,6 +78,14 @@ pub fn analyze_lambda(params: &[String], body: NodeId, arena: &AstArena) -> Opti
             analyze_field_access(params, &steps[0], &steps[1], arena)
         }
         // Body is a binary op
+        Expr::Binary { op: BinaryOp::Concat, .. } if !params.is_empty() => {
+            // Try concat template first, fall back to generic binary analysis
+            analyze_concat_template(params, body, arena)
+                .or_else(|| {
+                    let Expr::Binary { op, lhs, rhs, .. } = arena.get(body) else { return None; };
+                    analyze_binary(params, *op, *lhs, *rhs, arena)
+                })
+        }
         Expr::Binary { op, lhs, rhs, .. } => {
             analyze_binary(params, *op, *lhs, *rhs, arena)
         }
@@ -232,6 +255,87 @@ fn analyze_binary(
     None
 }
 
+/// Analyze a concat chain in a lambda body into a ConcatTemplate.
+/// Flattens left-recursive Concat(Concat(a, b), c) → [a, b, c] and
+/// classifies each operand as Literal, Field, or StringifyField.
+fn analyze_concat_template(
+    params: &[String],
+    body: NodeId,
+    arena: &AstArena,
+) -> Option<SimpleLambda> {
+    let param = &params[0];
+    let mut operand_nodes = Vec::new();
+    collect_concat_nodes(arena, body, &mut operand_nodes);
+
+    if operand_nodes.len() < 2 {
+        return None;
+    }
+
+    let mut pieces = Vec::with_capacity(operand_nodes.len());
+    for &node in &operand_nodes {
+        if let Some(piece) = classify_template_operand(node, arena, param) {
+            pieces.push(piece);
+        } else {
+            return None; // unsupported operand, bail
+        }
+    }
+
+    Some(SimpleLambda::ConcatTemplate { pieces })
+}
+
+/// Walk a left-recursive Concat tree and collect leaf nodes.
+fn collect_concat_nodes(arena: &AstArena, node: NodeId, out: &mut Vec<NodeId>) {
+    if let Expr::Binary { op: BinaryOp::Concat, lhs, rhs, .. } = arena.get(node) {
+        collect_concat_nodes(arena, *lhs, out);
+        out.push(*rhs);
+    } else {
+        out.push(node);
+    }
+}
+
+/// Classify a single concat operand into a TemplatePiece.
+fn classify_template_operand(
+    node: NodeId,
+    arena: &AstArena,
+    param: &str,
+) -> Option<TemplatePiece> {
+    match arena.get(node) {
+        // String literal
+        Expr::StringLit { value, .. } => Some(TemplatePiece::Literal(value.clone())),
+
+        // $param.field — direct field access (value should be a string)
+        Expr::Path { steps, .. } if steps.len() == 2 => {
+            if let Some(field) = extract_param_field(steps, arena, param) {
+                Some(TemplatePiece::Field(field))
+            } else {
+                None
+            }
+        }
+
+        // $string($param.field) — stringify a field value
+        Expr::Function { procedure, arguments, .. } if arguments.len() == 1 => {
+            // Check procedure is $string
+            let is_string_fn = matches!(
+                arena.get(*procedure),
+                Expr::Variable { name, .. } if name == "string"
+            );
+            if !is_string_fn {
+                return None;
+            }
+            // Check argument is $param.field
+            match arena.get(arguments[0]) {
+                Expr::Path { steps, .. } if steps.len() == 2 => {
+                    extract_param_field(steps, arena, param)
+                        .map(TemplatePiece::StringifyField)
+                }
+                _ => None,
+            }
+        }
+
+        _ => None,
+    }
+}
+
 fn is_relational(op: BinaryOp) -> bool {
     matches!(op, BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Ge | BinaryOp::Le | BinaryOp::Eq | BinaryOp::Ne)
 }
@@ -316,4 +420,35 @@ pub fn compare_by_field(a: &Value, b: &Value, field: &str) -> std::cmp::Ordering
         (_, Value::Undefined) => std::cmp::Ordering::Less,
         _ => std::cmp::Ordering::Equal,
     }
+}
+
+/// Evaluate a ConcatTemplate against an item, writing into a single buffer.
+pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
+    use crate::error::JsonataResult;
+    let mut buf = String::new();
+    for piece in pieces {
+        match piece {
+            TemplatePiece::Literal(s) => buf.push_str(s),
+            TemplatePiece::Field(field) => {
+                let v = get_field(item, field);
+                if let Value::String(s) = &v {
+                    buf.push_str(s);
+                } else if !v.is_undefined() {
+                    // Non-string field in concat — stringify it
+                    if v.stringify_into(&mut buf).is_err() {
+                        return Value::Undefined;
+                    }
+                }
+            }
+            TemplatePiece::StringifyField(field) => {
+                let v = get_field(item, field);
+                if !v.is_undefined() {
+                    if v.stringify_into(&mut buf).is_err() {
+                        return Value::Undefined;
+                    }
+                }
+            }
+        }
+    }
+    Value::String(buf.into())
 }

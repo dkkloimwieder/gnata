@@ -61,15 +61,28 @@ pub fn fn_map(
     let func = args[1].require_function("$map")?;
 
     // Fast path: simple field access — function($v){$v.field}
-    if let Some(SimpleLambda::FieldAccess { field, .. }) = try_fast_lambda(&func, arena) {
-        let mut seq = Sequence::new();
-        for item in arr.iter() {
-            let val = hof_fast::get_field(item, &field);
-            if !val.is_undefined() {
-                seq.values.push(val);
+    match try_fast_lambda(&func, arena) {
+        Some(SimpleLambda::FieldAccess { field, .. }) => {
+            let mut seq = Sequence::new();
+            for item in arr.iter() {
+                let val = hof_fast::get_field(item, &field);
+                if !val.is_undefined() {
+                    seq.values.push(val);
+                }
             }
+            return Ok(Value::Sequence(Box::new(seq)));
         }
-        return Ok(Value::Sequence(Box::new(seq)));
+        Some(SimpleLambda::ConcatTemplate { ref pieces }) => {
+            let mut seq = Sequence::new();
+            for item in arr.iter() {
+                let val = hof_fast::eval_concat_template(item, pieces);
+                if !val.is_undefined() {
+                    seq.values.push(val);
+                }
+            }
+            return Ok(Value::Sequence(Box::new(seq)));
+        }
+        _ => {}
     }
 
     let arr_val = Value::Array(arr.clone()); // clone once, reuse
