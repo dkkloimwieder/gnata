@@ -28,7 +28,7 @@ ITERS=10
 WARMUP=5
 MIN_RUNS=20
 DRY_RUN=false
-RUNNERS="go rust"
+RUNNERS="go rust js"
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -267,6 +267,12 @@ if ! $DRY_RUN; then
     echo "=== Building Rust benchmark CLI (release) ==="
     cd "$RUST_DIR"
     cargo build --release --bin gnata-bench 2>&1 | tail -1
+
+    echo "=== Checking JS (jsonata-js) dependency ==="
+    cd "$BENCH_DIR"
+    if [[ ! -d node_modules/jsonata ]]; then
+        npm install 2>&1 | tail -1
+    fi
     cd "$ROOT"
     echo ""
 fi

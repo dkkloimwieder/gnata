@@ -21,6 +21,9 @@ bench/fixtures/datetime/100k.json
 npm/dist/
 npm/node_modules/
 
+# Bench JS dependencies
+bench/node_modules/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

@@ -15,6 +15,7 @@ BENCH_DIR="$ROOT/bench"
 RUST_DIR="$ROOT/crates/gnata-rs"
 GO_BIN="$BENCH_DIR/go_bench"
 RS_BIN="$RUST_DIR/target/release/gnata-bench"
+JS_BIN="$BENCH_DIR/js_bench.js"
 
 echo "=== Building Go benchmark CLI ==="
 cd "$ROOT"
@@ -23,6 +24,12 @@ go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
 echo "=== Building Rust benchmark CLI (release) ==="
 cd "$RUST_DIR"
 cargo build --release --bin gnata-bench 2>&1 | tail -1
+
+echo "=== Checking JS (jsonata-js) dependency ==="
+cd "$BENCH_DIR"
+if [[ ! -d node_modules/jsonata ]]; then
+    npm install 2>&1 | tail -1
+fi
 
 # Short-key expressions (for short + mixed fixtures)
 declare -A EXPRS_SHORT
@@ -66,14 +73,19 @@ EOF
 #!/bin/sh
 exec "$RS_BIN" -expr '$EXPR' -datafile "$DATAFILE" -n $ITERS
 EOF
-        chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh"
+        cat > "$BENCH_DIR/_js.sh" << EOF
+#!/bin/sh
+exec node "$JS_BIN" -expr '$EXPR' -datafile "$DATAFILE" -n $ITERS
+EOF
+        chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh" "$BENCH_DIR/_js.sh"
 
         hyperfine \
             --warmup 5 \
             --min-runs 30 \
             --export-json "$BENCH_DIR/result_${TAG}_${NAME}.json" \
             -n "go"   "$BENCH_DIR/_go.sh" \
-            -n "rust"  "$BENCH_DIR/_rs.sh"
+            -n "rust"  "$BENCH_DIR/_rs.sh" \
+            -n "js"    "$BENCH_DIR/_js.sh"
         echo ""
     done
 }
@@ -93,31 +105,37 @@ for name in order:
     if not os.path.exists(f):
         continue
     data = json.load(open(f))
-    go_s = rust_s = 0
+    go_s = rust_s = js_s = 0
     for r in data['results']:
-        if r['command'] == 'go':
+        cmd = r['command']
+        if cmd == 'go':
             go_s = r['mean']
+        elif cmd == 'js':
+            js_s = r['mean']
         else:
             rust_s = r['mean']
     iters = $ITERS
     go_us = (go_s * 1e6) / iters
     rust_us = (rust_s * 1e6) / iters
-    ratio = rust_us / go_us if go_us > 0 else 0
-    results.append((name, go_us, rust_us, ratio))
+    js_us = (js_s * 1e6) / iters
+    rs_go = rust_us / go_us if go_us > 0 else 0
+    js_go = js_us / go_us if go_us > 0 else 0
+    results.append((name, go_us, rust_us, js_us, rs_go, js_go))
+
+def fmt_time(us):
+    if us > 1000:
+        return f'{us/1000:>9.1f}ms'
+    return f'{us:>9.1f}µs'
 
 print()
 print(f'=== $TAG payload ({$ITERS} iters) ===')
 print()
-print(f'{\"Benchmark\":<16} {\"Go µs/op\":>12} {\"Rust µs/op\":>12} {\"Ratio\":>8}')
-print('─' * 52)
-for name, go_us, rust_us, ratio in results:
-    winner = '✓ Rs' if ratio < 1.0 else ('✓ Go' if ratio > 1.0 else '')
-    if go_us > 1000:
-        print(f'{name:<16} {go_us/1000:>11.1f}ms {rust_us/1000:>11.1f}ms {ratio:>7.2f}x {winner}')
-    else:
-        print(f'{name:<16} {go_us:>11.1f}µs {rust_us:>11.1f}µs {ratio:>7.2f}x {winner}')
+print(f'{\"Benchmark\":<16} {\"Go\":>11} {\"Rust\":>11} {\"JS\":>11} {\"Rs/Go\":>7} {\"JS/Go\":>7}')
+print('─' * 67)
+for name, go_us, rust_us, js_us, rs_go, js_go in results:
+    print(f'{name:<16} {fmt_time(go_us)} {fmt_time(rust_us)} {fmt_time(js_us)} {rs_go:>6.2f}x {js_go:>6.2f}x')
 print()
-print('Ratio < 1.0 = Rust faster. Ratio > 1.0 = Go faster.')
+print('Ratio < 1.0 = faster than Go. Ratio > 1.0 = slower than Go.')
 "
 }
 

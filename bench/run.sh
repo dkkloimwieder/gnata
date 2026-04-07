@@ -14,6 +14,7 @@ RUST_DIR="$ROOT/crates/gnata-rs"
 DATAFILE="$BENCH_DIR/data.json"
 GO_BIN="$BENCH_DIR/go_bench"
 RS_BIN="$RUST_DIR/target/release/gnata-bench"
+JS_BIN="$BENCH_DIR/js_bench.js"
 
 echo "=== Building Go benchmark CLI ==="
 cd "$ROOT"
@@ -22,6 +23,12 @@ go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
 echo "=== Building Rust benchmark CLI (release) ==="
 cd "$RUST_DIR"
 cargo build --release --bin gnata-bench 2>&1 | tail -1
+
+echo "=== Checking JS (jsonata-js) dependency ==="
+cd "$BENCH_DIR"
+if [[ ! -d node_modules/jsonata ]]; then
+    npm install 2>&1 | tail -1
+fi
 
 echo ""
 echo "=== Benchmark: $ITERS eval iterations per run ==="
@@ -48,14 +55,17 @@ for NAME in "${ORDER[@]}"; do
     echo "exec \"$GO_BIN\" -expr '$EXPR' -datafile \"$DATAFILE\" -n $ITERS" >> "$BENCH_DIR/_go.sh"
     echo "#!/bin/sh" > "$BENCH_DIR/_rs.sh"
     echo "exec \"$RS_BIN\" -expr '$EXPR' -datafile \"$DATAFILE\" -n $ITERS" >> "$BENCH_DIR/_rs.sh"
-    chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh"
+    echo "#!/bin/sh" > "$BENCH_DIR/_js.sh"
+    echo "exec node \"$JS_BIN\" -expr '$EXPR' -datafile \"$DATAFILE\" -n $ITERS" >> "$BENCH_DIR/_js.sh"
+    chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh" "$BENCH_DIR/_js.sh"
 
     hyperfine \
         --warmup 5 \
         --min-runs 20 \
         --export-json "$BENCH_DIR/result_${NAME}.json" \
         -n "go"   "$BENCH_DIR/_go.sh" \
-        -n "rust"  "$BENCH_DIR/_rs.sh"
+        -n "rust"  "$BENCH_DIR/_rs.sh" \
+        -n "js"    "$BENCH_DIR/_js.sh"
     echo ""
 done
 
@@ -82,25 +92,28 @@ for name in order:
     if not os.path.exists(f):
         continue
     data = json.load(open(f))
-    go_s = rust_s = 0
+    go_s = rust_s = js_s = 0
     for r in data['results']:
-        if r['command'] == 'go' or 'go_bench' in r.get('command',''):
+        cmd = r['command']
+        if cmd == 'go' or 'go_bench' in cmd:
             go_s = r['mean']
+        elif cmd == 'js' or 'js_bench' in cmd:
+            js_s = r['mean']
         else:
             rust_s = r['mean']
-    # Convert total time to per-iteration ns
     iters = $ITERS
     go_ns = (go_s * 1e9) / iters
     rust_ns = (rust_s * 1e9) / iters
-    ratio = rust_ns / go_ns if go_ns > 0 else 0
-    results.append((name, exprs.get(name,''), go_ns, rust_ns, ratio))
+    js_ns = (js_s * 1e9) / iters
+    rs_go = rust_ns / go_ns if go_ns > 0 else 0
+    js_go = js_ns / go_ns if go_ns > 0 else 0
+    results.append((name, exprs.get(name,''), go_ns, rust_ns, js_ns, rs_go, js_go))
 
 print()
-print(f'{\"Benchmark\":<16} {\"Expression\":<50} {\"Go ns/op\":>10} {\"Rust ns/op\":>10} {\"Ratio\":>8}')
-print('─' * 100)
-for name, expr, go_ns, rust_ns, ratio in results:
-    winner = '✓ Rs' if ratio < 1.0 else ''
-    print(f'{name:<16} {expr[:48]:<50} {go_ns:>10.0f} {rust_ns:>10.0f} {ratio:>7.2f}x {winner}')
+print(f'{\"Benchmark\":<16} {\"Expression\":<42} {\"Go ns/op\":>10} {\"Rust ns/op\":>10} {\"JS ns/op\":>10} {\"Rs/Go\":>7} {\"JS/Go\":>7}')
+print('─' * 108)
+for name, expr, go_ns, rust_ns, js_ns, rs_go, js_go in results:
+    print(f'{name:<16} {expr[:40]:<42} {go_ns:>10.0f} {rust_ns:>10.0f} {js_ns:>10.0f} {rs_go:>6.2f}x {js_go:>6.2f}x')
 print()
-print('Ratio < 1.0 = Rust faster. Ratio > 1.0 = Go faster.')
+print('Ratio < 1.0 = faster than Go. Ratio > 1.0 = slower than Go.')
 "
