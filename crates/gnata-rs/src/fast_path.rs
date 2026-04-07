@@ -490,6 +490,29 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
             });
             return Some(result.map_or(Value::Undefined, Value::Number));
         }
+        FuncFastKind::Average => {
+            let mut total = 0.0_f64;
+            let mut count = 0_usize;
+            fold_pure_path(&func.path, input, &mut |v| {
+                if let Value::Number(n) = v {
+                    total += n;
+                    count += 1;
+                }
+            });
+            return Some(if count == 0 {
+                Value::Undefined
+            } else {
+                Value::Number(total / count as f64)
+            });
+        }
+        FuncFastKind::Length => {
+            // $length on array path = count. On string path = char count (single value only).
+            let n = count_pure_path(&func.path, input);
+            if n != 1 {
+                return Some(Value::Number(n as f64));
+            }
+            // Single value — could be string length. Fall through to materialize.
+        }
         _ => {}
     }
 
