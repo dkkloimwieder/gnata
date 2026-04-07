@@ -15,6 +15,7 @@ BENCH_DIR="$ROOT/bench"
 RUST_DIR="$ROOT/crates/gnata-rs"
 GO_BIN="$BENCH_DIR/go_bench"
 RS_BIN="$RUST_DIR/target/release/gnata-bench"
+WASI_BIN="$RUST_DIR/target/wasm32-wasip2/release/gnata-bench.wasm"
 JS_BIN="$BENCH_DIR/js_bench.js"
 
 echo "=== Building Go benchmark CLI ==="
@@ -24,6 +25,10 @@ go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
 echo "=== Building Rust benchmark CLI (release) ==="
 cd "$RUST_DIR"
 cargo build --release --bin gnata-bench 2>&1 | tail -1
+
+echo "=== Building WASI benchmark CLI (release) ==="
+cd "$RUST_DIR"
+cargo build --release --target wasm32-wasip2 --bin gnata-bench 2>&1 | tail -1
 
 echo "=== Checking JS (jsonata-js) dependency ==="
 cd "$BENCH_DIR"
@@ -73,11 +78,16 @@ EOF
 #!/bin/sh
 exec "$RS_BIN" -expr '$EXPR' -datafile "$DATAFILE" -n $ITERS
 EOF
+        WASI_DATAFILE="/bench/$(basename "$DATAFILE")"
+        cat > "$BENCH_DIR/_wasi.sh" << EOF
+#!/bin/sh
+exec wasmtime --dir "$BENCH_DIR"::/bench "$WASI_BIN" -- -expr '$EXPR' -datafile '$WASI_DATAFILE' -n $ITERS
+EOF
         cat > "$BENCH_DIR/_js.sh" << EOF
 #!/bin/sh
 exec node "$JS_BIN" -expr '$EXPR' -datafile "$DATAFILE" -n $ITERS
 EOF
-        chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh" "$BENCH_DIR/_js.sh"
+        chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh" "$BENCH_DIR/_wasi.sh" "$BENCH_DIR/_js.sh"
 
         hyperfine \
             --warmup 5 \
@@ -85,6 +95,7 @@ EOF
             --export-json "$BENCH_DIR/result_${TAG}_${NAME}.json" \
             -n "go"   "$BENCH_DIR/_go.sh" \
             -n "rust"  "$BENCH_DIR/_rs.sh" \
+            -n "wasi"  "$BENCH_DIR/_wasi.sh" \
             -n "js"    "$BENCH_DIR/_js.sh"
         echo ""
     done
@@ -105,11 +116,13 @@ for name in order:
     if not os.path.exists(f):
         continue
     data = json.load(open(f))
-    go_s = rust_s = js_s = 0
+    go_s = rust_s = wasi_s = js_s = 0
     for r in data['results']:
         cmd = r['command']
         if cmd == 'go':
             go_s = r['mean']
+        elif cmd == 'wasi':
+            wasi_s = r['mean']
         elif cmd == 'js':
             js_s = r['mean']
         else:
@@ -117,10 +130,12 @@ for name in order:
     iters = $ITERS
     go_us = (go_s * 1e6) / iters
     rust_us = (rust_s * 1e6) / iters
+    wasi_us = (wasi_s * 1e6) / iters
     js_us = (js_s * 1e6) / iters
     rs_go = rust_us / go_us if go_us > 0 else 0
+    wasi_go = wasi_us / go_us if go_us > 0 else 0
     js_go = js_us / go_us if go_us > 0 else 0
-    results.append((name, go_us, rust_us, js_us, rs_go, js_go))
+    results.append((name, go_us, rust_us, wasi_us, js_us, rs_go, wasi_go, js_go))
 
 def fmt_time(us):
     if us > 1000:
@@ -130,10 +145,10 @@ def fmt_time(us):
 print()
 print(f'=== $TAG payload ({$ITERS} iters) ===')
 print()
-print(f'{\"Benchmark\":<16} {\"Go\":>11} {\"Rust\":>11} {\"JS\":>11} {\"Rs/Go\":>7} {\"JS/Go\":>7}')
-print('─' * 67)
-for name, go_us, rust_us, js_us, rs_go, js_go in results:
-    print(f'{name:<16} {fmt_time(go_us)} {fmt_time(rust_us)} {fmt_time(js_us)} {rs_go:>6.2f}x {js_go:>6.2f}x')
+print(f'{\"Benchmark\":<16} {\"Go\":>11} {\"Rust\":>11} {\"WASI\":>11} {\"JS\":>11} {\"Rs/Go\":>7} {\"WASI/Go\":>8} {\"JS/Go\":>7}')
+print('─' * 84)
+for name, go_us, rust_us, wasi_us, js_us, rs_go, wasi_go, js_go in results:
+    print(f'{name:<16} {fmt_time(go_us)} {fmt_time(rust_us)} {fmt_time(wasi_us)} {fmt_time(js_us)} {rs_go:>6.2f}x {wasi_go:>7.2f}x {js_go:>6.2f}x')
 print()
 print('Ratio < 1.0 = faster than Go. Ratio > 1.0 = slower than Go.')
 "

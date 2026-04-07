@@ -18,6 +18,7 @@ RUST_DIR="$ROOT/crates/gnata-rs"
 FIXTURES_DIR="$BENCH_DIR/fixtures"
 GO_BIN="$BENCH_DIR/go_bench"
 RS_BIN="$RUST_DIR/target/release/gnata-bench"
+WASI_BIN="$RUST_DIR/target/wasm32-wasip2/release/gnata-bench.wasm"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 SECTIONS=""
@@ -28,7 +29,7 @@ ITERS=10
 WARMUP=5
 MIN_RUNS=20
 DRY_RUN=false
-RUNNERS="go rust js"
+RUNNERS="go rust wasi js"
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -268,6 +269,10 @@ if ! $DRY_RUN; then
     cd "$RUST_DIR"
     cargo build --release --bin gnata-bench 2>&1 | tail -1
 
+    echo "=== Building WASI benchmark CLI (release) ==="
+    cd "$RUST_DIR"
+    cargo build --release --target wasm32-wasip2 --bin gnata-bench 2>&1 | tail -1
+
     echo "=== Checking JS (jsonata-js) dependency ==="
     cd "$BENCH_DIR"
     if [[ ! -d node_modules/jsonata ]]; then
@@ -335,6 +340,14 @@ SCRIPT
                     cat > "$WRAPPER" <<SCRIPT
 #!/bin/sh
 exec '$RS_BIN' -expr "\$(cat '$EXPR_FILE')" -datafile '$datafile' -n $iters
+SCRIPT
+                    ;;
+                wasi)
+                    # Map bench dir as /bench; convert absolute datafile path to /bench/...
+                    WASI_DF="/bench${datafile#"$BENCH_DIR"}"
+                    cat > "$WRAPPER" <<SCRIPT
+#!/bin/sh
+exec wasmtime --dir '$BENCH_DIR'::/bench '$WASI_BIN' -- -expr "\$(cat '$EXPR_FILE')" -datafile '$WASI_DF' -n $iters
 SCRIPT
                     ;;
                 js)

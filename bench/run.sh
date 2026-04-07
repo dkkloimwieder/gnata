@@ -14,6 +14,7 @@ RUST_DIR="$ROOT/crates/gnata-rs"
 DATAFILE="$BENCH_DIR/data.json"
 GO_BIN="$BENCH_DIR/go_bench"
 RS_BIN="$RUST_DIR/target/release/gnata-bench"
+WASI_BIN="$RUST_DIR/target/wasm32-wasip2/release/gnata-bench.wasm"
 JS_BIN="$BENCH_DIR/js_bench.js"
 
 echo "=== Building Go benchmark CLI ==="
@@ -23,6 +24,10 @@ go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
 echo "=== Building Rust benchmark CLI (release) ==="
 cd "$RUST_DIR"
 cargo build --release --bin gnata-bench 2>&1 | tail -1
+
+echo "=== Building WASI benchmark CLI (release) ==="
+cd "$RUST_DIR"
+cargo build --release --target wasm32-wasip2 --bin gnata-bench 2>&1 | tail -1
 
 echo "=== Checking JS (jsonata-js) dependency ==="
 cd "$BENCH_DIR"
@@ -55,9 +60,11 @@ for NAME in "${ORDER[@]}"; do
     echo "exec \"$GO_BIN\" -expr '$EXPR' -datafile \"$DATAFILE\" -n $ITERS" >> "$BENCH_DIR/_go.sh"
     echo "#!/bin/sh" > "$BENCH_DIR/_rs.sh"
     echo "exec \"$RS_BIN\" -expr '$EXPR' -datafile \"$DATAFILE\" -n $ITERS" >> "$BENCH_DIR/_rs.sh"
+    echo "#!/bin/sh" > "$BENCH_DIR/_wasi.sh"
+    echo "exec wasmtime --dir \"$BENCH_DIR\"::/bench \"$WASI_BIN\" -- -expr '$EXPR' -datafile /bench/data.json -n $ITERS" >> "$BENCH_DIR/_wasi.sh"
     echo "#!/bin/sh" > "$BENCH_DIR/_js.sh"
     echo "exec node \"$JS_BIN\" -expr '$EXPR' -datafile \"$DATAFILE\" -n $ITERS" >> "$BENCH_DIR/_js.sh"
-    chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh" "$BENCH_DIR/_js.sh"
+    chmod +x "$BENCH_DIR/_go.sh" "$BENCH_DIR/_rs.sh" "$BENCH_DIR/_wasi.sh" "$BENCH_DIR/_js.sh"
 
     hyperfine \
         --warmup 5 \
@@ -65,6 +72,7 @@ for NAME in "${ORDER[@]}"; do
         --export-json "$BENCH_DIR/result_${NAME}.json" \
         -n "go"   "$BENCH_DIR/_go.sh" \
         -n "rust"  "$BENCH_DIR/_rs.sh" \
+        -n "wasi"  "$BENCH_DIR/_wasi.sh" \
         -n "js"    "$BENCH_DIR/_js.sh"
     echo ""
 done
@@ -92,11 +100,13 @@ for name in order:
     if not os.path.exists(f):
         continue
     data = json.load(open(f))
-    go_s = rust_s = js_s = 0
+    go_s = rust_s = wasi_s = js_s = 0
     for r in data['results']:
         cmd = r['command']
         if cmd == 'go' or 'go_bench' in cmd:
             go_s = r['mean']
+        elif cmd == 'wasi' or 'wasmtime' in cmd:
+            wasi_s = r['mean']
         elif cmd == 'js' or 'js_bench' in cmd:
             js_s = r['mean']
         else:
@@ -104,16 +114,18 @@ for name in order:
     iters = $ITERS
     go_ns = (go_s * 1e9) / iters
     rust_ns = (rust_s * 1e9) / iters
+    wasi_ns = (wasi_s * 1e9) / iters
     js_ns = (js_s * 1e9) / iters
     rs_go = rust_ns / go_ns if go_ns > 0 else 0
+    wasi_go = wasi_ns / go_ns if go_ns > 0 else 0
     js_go = js_ns / go_ns if go_ns > 0 else 0
-    results.append((name, exprs.get(name,''), go_ns, rust_ns, js_ns, rs_go, js_go))
+    results.append((name, exprs.get(name,''), go_ns, rust_ns, wasi_ns, js_ns, rs_go, wasi_go, js_go))
 
 print()
-print(f'{\"Benchmark\":<16} {\"Expression\":<42} {\"Go ns/op\":>10} {\"Rust ns/op\":>10} {\"JS ns/op\":>10} {\"Rs/Go\":>7} {\"JS/Go\":>7}')
-print('─' * 108)
-for name, expr, go_ns, rust_ns, js_ns, rs_go, js_go in results:
-    print(f'{name:<16} {expr[:40]:<42} {go_ns:>10.0f} {rust_ns:>10.0f} {js_ns:>10.0f} {rs_go:>6.2f}x {js_go:>6.2f}x')
+print(f'{\"Benchmark\":<16} {\"Expression\":<35} {\"Go ns/op\":>10} {\"Rust ns/op\":>10} {\"WASI ns/op\":>10} {\"JS ns/op\":>10} {\"Rs/Go\":>7} {\"WASI/Go\":>8} {\"JS/Go\":>7}')
+print('─' * 120)
+for name, expr, go_ns, rust_ns, wasi_ns, js_ns, rs_go, wasi_go, js_go in results:
+    print(f'{name:<16} {expr[:33]:<35} {go_ns:>10.0f} {rust_ns:>10.0f} {wasi_ns:>10.0f} {js_ns:>10.0f} {rs_go:>6.2f}x {wasi_go:>7.2f}x {js_go:>6.2f}x')
 print()
 print('Ratio < 1.0 = faster than Go. Ratio > 1.0 = slower than Go.')
 "
