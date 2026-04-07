@@ -1583,6 +1583,28 @@ fn eval_path_step(
     };
 
     let is_group_step = matches!(expr, Expr::Unary { op, .. } if *op == UnaryOp::ArrayCons);
+
+    // Lifted dispatch: analyze the step once, execute N times.
+    // In .() path mapping, there's no explicit param — fields are resolved from scope.
+    if !is_group_step {
+        if let Some(mc) = crate::stdlib::hof_fast::analyze_mapped_call(step, arena, None, env) {
+            let mut seq = Sequence::with_capacity(arr.len());
+            for item in arr.iter() {
+                let val = crate::stdlib::hof_fast::exec_mapped_call(&mc, item, env, arena)?;
+                if val.is_undefined() { continue; }
+                match val {
+                    Value::Array(inner) => seq.values.extend(inner.iter().cloned()),
+                    Value::Sequence(s) => seq.values.extend(s.values),
+                    other => seq.append(other),
+                }
+            }
+            if seq.values.is_empty() {
+                return Ok(Value::Undefined);
+            }
+            return Ok(seq.into_value());
+        }
+    }
+
     let mut seq = Sequence::with_capacity(arr.len());
 
     for item in arr.iter() {

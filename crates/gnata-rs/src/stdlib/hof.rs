@@ -85,6 +85,23 @@ pub fn fn_map(
         _ => {}
     }
 
+    // Lifted dispatch: if the lambda body is a function call with field/const args,
+    // resolve the inner function once and dispatch directly per item.
+    if let FunctionValue::Lambda(ref lambda) = *func {
+        if let Some(mc) = hof_fast::analyze_mapped_call(
+            lambda.body, arena, Some(&lambda.params[0]), env,
+        ) {
+            let mut seq = Sequence::new();
+            for item in arr.iter() {
+                let val = hof_fast::exec_mapped_call(&mc, item, env, arena)?;
+                if !val.is_undefined() {
+                    seq.values.push(val);
+                }
+            }
+            return Ok(Value::Sequence(Box::new(seq)));
+        }
+    }
+
     let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut seq = Sequence::new();
     for (i, item) in arr.iter().enumerate() {

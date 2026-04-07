@@ -7,6 +7,11 @@
 //! This eliminates per-call overhead: environment creation, parameter binding,
 //! Value cloning for function args, and stack checks.
 
+use std::rc::Rc;
+
+use crate::error::JsonataResult;
+use crate::evaluator::{Environment, call_function};
+use crate::evaluator::functions::FunctionValue;
 use crate::parser::ast::{AstArena, BinaryOp, Expr, NodeId};
 use crate::value::Value;
 
@@ -451,4 +456,155 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
         }
     }
     Value::String(buf.into())
+}
+
+// ── Lifted dispatch for mapped expressions ──────────────────────────────────
+
+/// A pre-analyzed function call that can be dispatched efficiently per item.
+/// Function resolution and constant arg evaluation happen once at analysis time.
+#[derive(Debug)]
+pub struct MappedCall {
+    pub func: Box<FunctionValue>,
+    pub arg_template: Vec<CallArg>,
+}
+
+/// Classification of a function argument for lifted dispatch.
+#[derive(Debug, Clone)]
+pub enum CallArg {
+    /// $param.field — resolved per item via get_field
+    Field(String),
+    /// A constant value — evaluated once at analysis time
+    Const(Value),
+    /// A complex expression that can't be lifted — falls back to per-item eval
+    Expr(NodeId),
+}
+
+/// Analyze a function call node in a mapped context.
+/// `param` is the mapping variable name (e.g., the implicit scope in `.()` or the lambda param).
+///
+/// Returns Some(MappedCall) if the call can be lifted, None otherwise.
+pub fn analyze_mapped_call(
+    node: NodeId,
+    arena: &AstArena,
+    param: Option<&str>,
+    env: &Rc<Environment>,
+) -> Option<MappedCall> {
+    // The node should be a Function call, possibly wrapped in a Block.
+    let func_node = unwrap_block(node, arena);
+
+    let (procedure, arguments) = match arena.get(func_node) {
+        Expr::Function { procedure, arguments, .. } => (*procedure, arguments.clone()),
+        _ => return None,
+    };
+
+    // Resolve the function from the environment.
+    // procedure is typically a Variable node ($formatNumber → Variable { name: "formatNumber" })
+    let func_name = match arena.get(procedure) {
+        Expr::Variable { name, .. } => name.as_str(),
+        _ => return None,
+    };
+    let func_val = env.lookup(func_name)?;
+    let func = match func_val {
+        Value::Function(f) => f,
+        _ => return None,
+    };
+
+    // Classify each argument.
+    let mut arg_template = Vec::with_capacity(arguments.len());
+    for &arg_node in &arguments {
+        arg_template.push(classify_call_arg(arg_node, arena, param));
+    }
+
+    // Only worth lifting if at least one arg is a Field (otherwise nothing varies per item).
+    let has_field = arg_template.iter().any(|a| matches!(a, CallArg::Field(_)));
+    if !has_field {
+        return None;
+    }
+
+    // Bail if any arg is a complex Expr — we can't fully lift.
+    // (Could still partially lift, but keep it simple for now.)
+    let has_complex = arg_template.iter().any(|a| matches!(a, CallArg::Expr(_)));
+    if has_complex {
+        return None;
+    }
+
+    Some(MappedCall {
+        func,
+        arg_template,
+    })
+}
+
+/// Unwrap a single-expression Block to get the inner expression.
+fn unwrap_block(node: NodeId, arena: &AstArena) -> NodeId {
+    if let Expr::Block { expressions, .. } = arena.get(node) {
+        if expressions.len() == 1 {
+            return expressions[0];
+        }
+    }
+    node
+}
+
+/// Classify a function argument as Field, Const, or Expr.
+fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> CallArg {
+    match arena.get(node) {
+        // String literal
+        Expr::StringLit { value, .. } => CallArg::Const(Value::String(value.clone().into())),
+
+        // Number literal
+        Expr::NumberLit { value, .. } => CallArg::Const(Value::Number(*value)),
+
+        // Boolean/null literal
+        Expr::ValueLit { value, .. } => match value.as_str() {
+            "true" => CallArg::Const(Value::Bool(true)),
+            "false" => CallArg::Const(Value::Bool(false)),
+            "null" => CallArg::Const(Value::Null),
+            _ => CallArg::Expr(node),
+        },
+
+        // $param.field or just FieldName (implicit scope)
+        Expr::Path { steps, .. } if steps.len() == 2 => {
+            if let Some(p) = param {
+                if let Some(field) = extract_param_field(steps, arena, p) {
+                    return CallArg::Field(field);
+                }
+            }
+            CallArg::Expr(node)
+        }
+
+        // Bare field name (in .() mapping context, no explicit param)
+        Expr::Name { value, stages, group, focus, index, .. }
+            if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none()
+                && param.is_none() =>
+        {
+            CallArg::Field(value.clone())
+        }
+
+        // Bare $param reference (the whole object)
+        Expr::Variable { name, .. } if param.is_some() && name == param.unwrap() => {
+            // Pass the entire item — represented as Field("") which we handle specially
+            CallArg::Expr(node) // TODO: could add a WholeItem variant
+        }
+
+        _ => CallArg::Expr(node),
+    }
+}
+
+/// Execute a MappedCall for a single item. Function is already resolved,
+/// constant args are already evaluated. Only field args need per-item work.
+pub fn exec_mapped_call(
+    mc: &MappedCall,
+    item: &Value,
+    env: &Rc<Environment>,
+    arena: &AstArena,
+) -> JsonataResult {
+    // Build args from template — small vec, no heap alloc for <=4 args.
+    let mut args: Vec<Value> = Vec::with_capacity(mc.arg_template.len());
+    for arg in &mc.arg_template {
+        match arg {
+            CallArg::Field(name) => args.push(get_field(item, name)),
+            CallArg::Const(val) => args.push(val.clone()),
+            CallArg::Expr(_node) => unreachable!("complex args filtered out in analysis"),
+        }
+    }
+    call_function(&mc.func, &args, item, env, arena)
 }
