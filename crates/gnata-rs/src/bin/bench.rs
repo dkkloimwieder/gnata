@@ -2,7 +2,7 @@
 // Usage: gnata-bench -expr 'Account.Name' -data '{"Account":{"Name":"Firefly"}}' [-n 1000]
 //        gnata-bench -stream -datafile data.json -n 1000   (evaluates 4 expressions per iter)
 
-#[cfg(feature = "mimalloc-alloc")]
+#[cfg(all(feature = "mimalloc-alloc", not(target_arch = "wasm32")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
