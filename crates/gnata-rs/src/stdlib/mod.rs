@@ -9,6 +9,7 @@ mod eval_fn;
 mod format_integer;
 mod format_number;
 mod hof;
+pub mod hof_fast;
 mod numeric;
 mod object;
 mod parse_integer;

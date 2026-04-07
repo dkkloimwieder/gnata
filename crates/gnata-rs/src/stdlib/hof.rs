@@ -4,8 +4,31 @@ use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
 use crate::evaluator::{Environment, FunctionValue, call_function};
+use crate::parser::ast::BinaryOp;
 use crate::parser::AstArena;
 use crate::value::{Sequence, Value};
+
+use super::hof_fast::{self, SimpleLambda, analyze_lambda};
+
+/// Collapse a filtered result array per JSONata semantics.
+fn collapse_array(result: Vec<Value>) -> Value {
+    if result.is_empty() {
+        Value::Undefined
+    } else if result.len() == 1 {
+        result.into_iter().next().unwrap()
+    } else {
+        Value::Array(Rc::from(result))
+    }
+}
+
+/// Try to analyze a FunctionValue into a SimpleLambda for fast dispatch.
+fn try_fast_lambda(func: &FunctionValue, arena: &AstArena) -> Option<SimpleLambda> {
+    if let FunctionValue::Lambda(lambda) = func {
+        analyze_lambda(&lambda.params, lambda.body, arena)
+    } else {
+        None
+    }
+}
 
 /// Build HOF callback args trimmed to the lambda's declared arity.
 /// Mirrors Go's `hofArgs`: avoids passing index/array when the lambda doesn't use them.
@@ -36,6 +59,19 @@ pub fn fn_map(
     }
     let arr = args[0].coerce_to_array();
     let func = args[1].require_function("$map")?;
+
+    // Fast path: simple field access — function($v){$v.field}
+    if let Some(SimpleLambda::FieldAccess { field, .. }) = try_fast_lambda(&func, arena) {
+        let mut seq = Sequence::new();
+        for item in arr.iter() {
+            let val = hof_fast::get_field(item, &field);
+            if !val.is_undefined() {
+                seq.values.push(val);
+            }
+        }
+        return Ok(Value::Sequence(Box::new(seq)));
+    }
+
     let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut seq = Sequence::new();
     for (i, item) in arr.iter().enumerate() {
@@ -63,6 +99,37 @@ pub fn fn_filter(
     }
     let arr = args[0].coerce_to_array();
     let func = args[1].require_function("$filter")?;
+
+    // Fast path: field predicate — function($v){$v.field op literal}
+    if let Some(ref fast) = try_fast_lambda(&func, arena) {
+        match fast {
+            SimpleLambda::FieldPredicate { field, op, literal, .. } => {
+                let mut result = Vec::new();
+                for item in arr.iter() {
+                    let fv = hof_fast::get_field(item, field);
+                    let val = hof_fast::eval_binary_simple(&fv, *op, literal);
+                    if val.to_boolean() {
+                        result.push(item.clone());
+                    }
+                }
+                return Ok(collapse_array(result));
+            }
+            SimpleLambda::TwoFieldPredicate { field1, op, field2, .. } => {
+                let mut result = Vec::new();
+                for item in arr.iter() {
+                    let fv1 = hof_fast::get_field(item, field1);
+                    let fv2 = hof_fast::get_field(item, field2);
+                    let val = hof_fast::eval_binary_simple(&fv1, *op, &fv2);
+                    if val.to_boolean() {
+                        result.push(item.clone());
+                    }
+                }
+                return Ok(collapse_array(result));
+            }
+            _ => {}
+        }
+    }
+
     let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut result = Vec::new();
     for (i, item) in arr.iter().enumerate() {
@@ -111,6 +178,16 @@ pub fn fn_reduce(
         Some(v) => (v, 0),
         None => (arr[0].clone(), 1),
     };
+
+    // Fast path: simple reduce — function($prev,$curr){$prev + $curr.field}
+    if let Some(SimpleLambda::ReduceAccum { field, op, .. }) = try_fast_lambda(&func, arena) {
+        for item in arr[start..].iter() {
+            let fv = hof_fast::get_field(item, &field);
+            acc = hof_fast::eval_binary_simple(&acc, op, &fv);
+        }
+        return Ok(acc);
+    }
+
     // Determine arity for passing index/array like Go does.
     let param_count = if let FunctionValue::Lambda(ref lam) = *func {
         lam.params.len()
@@ -248,6 +325,15 @@ pub fn fn_sort(
     if arr.len() <= 1 {
         return Ok(Value::Array(Rc::from(arr)));
     }
+
+    // Fast path: sort by field — function($a,$b){$a.field > $b.field}
+    if let Some(func) = &comparator {
+        if let Some(SimpleLambda::SortComparator { field, .. } | SimpleLambda::SortComparatorOp { field, op: BinaryOp::Gt, .. }) = try_fast_lambda(func, arena) {
+            arr.sort_by(|a, b| hof_fast::compare_by_field(a, b, &field));
+            return Ok(Value::Array(Rc::from(arr)));
+        }
+    }
+
     // Sort with optional comparator.
     let mut error: Option<JsonataError> = None;
     arr.sort_by(|a, b| {
@@ -319,15 +405,36 @@ pub fn fn_single(
         Value::Function(f) => Some(f.clone()),
         _ => None,
     });
+
+    // Fast path: field predicate — function($v){$v.field op literal}
+    if let Some(f) = &func {
+        if let Some(SimpleLambda::FieldPredicate { field, op, literal, .. }) = try_fast_lambda(f, arena) {
+            let mut matches = Vec::new();
+            for item in arr.iter() {
+                let fv = hof_fast::get_field(item, &field);
+                if hof_fast::eval_binary_simple(&fv, op, &literal).to_boolean() {
+                    matches.push(item.clone());
+                    if matches.len() > 1 {
+                        return Err(JsonataError::new(
+                            "D3138",
+                            "$single: expected 1 match, found multiple",
+                        ));
+                    }
+                }
+            }
+            return match matches.len() {
+                0 => Err(JsonataError::new("D3139", "$single: expected 1 match, found 0")),
+                _ => Ok(matches.swap_remove(0)),
+            };
+        }
+    }
+
     let mut matches = Vec::new();
+    let arr_val = Value::Array(arr.clone());
     for (i, item) in arr.iter().enumerate() {
         let keep = match &func {
             Some(f) => {
-                let call_args = vec![
-                    item.clone(),
-                    Value::Number(i as f64),
-                    Value::Array(arr.clone()),
-                ];
+                let call_args = hof_args(f, item.clone(), i as f64, &arr_val);
                 call_function(f, &call_args, item, env, arena)?.to_boolean()
             }
             None => true,
