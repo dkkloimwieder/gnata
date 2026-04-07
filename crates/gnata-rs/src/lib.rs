@@ -27,7 +27,7 @@ pub mod parser;
 pub mod stdlib;
 pub mod stream;
 pub mod value;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm;
 
 pub use error::JsonataError;

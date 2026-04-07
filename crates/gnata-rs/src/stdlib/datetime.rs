@@ -7,11 +7,11 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
 /// Get current time as milliseconds since Unix epoch.
-/// Uses jiff on native, js_sys::Date::now() on WASM.
+/// Uses jiff on native/WASI, js_sys::Date::now() on browser WASM.
 fn current_millis() -> i64 {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     { jiff::Timestamp::now().as_millisecond() }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     { js_sys::Date::now() as i64 }
 }
 
