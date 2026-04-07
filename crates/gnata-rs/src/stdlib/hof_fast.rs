@@ -80,7 +80,7 @@ pub fn analyze_lambda(params: &[String], body: NodeId, arena: &AstArena) -> Opti
     match expr {
         // Body is a path: $v.field
         Expr::Path { steps, .. } if steps.len() == 2 => {
-            analyze_field_access(params, &steps[0], &steps[1], arena)
+            analyze_field_access(params, steps[0], steps[1], arena)
         }
         // Body is a binary op
         Expr::Binary { op: BinaryOp::Concat, .. } if !params.is_empty() => {
@@ -124,18 +124,18 @@ fn extract_param_field(steps: &[NodeId], arena: &AstArena, param: &str) -> Optio
 /// Try to extract a field access pattern: function($v) { $v.field }
 fn analyze_field_access(
     params: &[String],
-    step0: &NodeId,
-    step1: &NodeId,
+    step0: NodeId,
+    step1: NodeId,
     arena: &AstArena,
 ) -> Option<SimpleLambda> {
     if params.is_empty() {
         return None;
     }
     let param = &params[0];
-    if !is_param_ref(*step0, arena, param) {
+    if !is_param_ref(step0, arena, param) {
         return None;
     }
-    match arena.get(*step1) {
+    match arena.get(step1) {
         Expr::Name { value, stages, group, focus, index, .. }
             if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none() =>
         {
@@ -207,8 +207,8 @@ fn analyze_binary(
     if params.len() >= 2 && is_arithmetic(op) {
         let param_prev = &params[0];
         let param_curr = &params[1];
-        if is_param_ref(lhs, arena, param_prev) {
-            if let Some(field) = extract_param_dot_field(rhs, arena, param_curr) {
+        if is_param_ref(lhs, arena, param_prev)
+            && let Some(field) = extract_param_dot_field(rhs, arena, param_curr) {
                 return Some(SimpleLambda::ReduceAccum {
                     param_prev: param_prev.clone(),
                     param_curr: param_curr.clone(),
@@ -216,7 +216,6 @@ fn analyze_binary(
                     op,
                 });
             }
-        }
     }
 
     // Field predicate: function($v) { $v.field op literal }
@@ -245,8 +244,8 @@ fn analyze_binary(
         }
 
         // literal op $v.field (reversed)
-        if let Some(lit) = extract_literal(lhs, arena) {
-            if let Some(field) = extract_param_dot_field(rhs, arena, param) {
+        if let Some(lit) = extract_literal(lhs, arena)
+            && let Some(field) = extract_param_dot_field(rhs, arena, param) {
                 return Some(SimpleLambda::FieldPredicate {
                     param: param.clone(),
                     field,
@@ -254,7 +253,6 @@ fn analyze_binary(
                     literal: lit,
                 });
             }
-        }
     }
 
     None
@@ -310,11 +308,7 @@ fn classify_template_operand(
 
         // $param.field — direct field access (value should be a string)
         Expr::Path { steps, .. } if steps.len() == 2 => {
-            if let Some(field) = extract_param_field(steps, arena, param) {
-                Some(TemplatePiece::Field(field))
-            } else {
-                None
-            }
+            extract_param_field(steps, arena, param).map(TemplatePiece::Field)
         }
 
         // $string($param.field) — stringify a field value
@@ -383,8 +377,8 @@ pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> Value {
         BinaryOp::Add => arithmetic_simple(lhs, rhs, |a, b| a + b),
         BinaryOp::Sub => arithmetic_simple(lhs, rhs, |a, b| a - b),
         BinaryOp::Mul => arithmetic_simple(lhs, rhs, |a, b| a * b),
-        BinaryOp::Div => arithmetic_simple(lhs, rhs, |a, b| if b != 0.0 { a / b } else { f64::NAN }),
-        BinaryOp::Mod => arithmetic_simple(lhs, rhs, |a, b| if b != 0.0 { a % b } else { f64::NAN }),
+        BinaryOp::Div => arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a / b }),
+        BinaryOp::Mod => arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a % b }),
         _ => Value::Undefined,
     }
 }
@@ -429,7 +423,7 @@ pub fn compare_by_field(a: &Value, b: &Value, field: &str) -> std::cmp::Ordering
 
 /// Evaluate a ConcatTemplate against an item, writing into a single buffer.
 pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
-    use crate::error::JsonataResult;
+    
     let mut buf = String::new();
     for piece in pieces {
         match piece {
@@ -447,11 +441,10 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
             }
             TemplatePiece::StringifyField(field) => {
                 let v = get_field(item, field);
-                if !v.is_undefined() {
-                    if v.stringify_into(&mut buf).is_err() {
+                if !v.is_undefined()
+                    && v.stringify_into(&mut buf).is_err() {
                         return Value::Undefined;
                     }
-                }
             }
         }
     }
@@ -462,7 +455,8 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
 
 /// Pre-computed function-specific state for lifted dispatch.
 /// Each variant captures what a specific function needs to skip per-call setup.
-pub enum PreparedState {
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum PreparedState {
     /// $formatNumber: pre-parsed picture into SubPicture + FmtChars
     FormatNumber {
         pos_pic: super::format_number::SubPicture,
@@ -500,10 +494,10 @@ impl std::fmt::Debug for PreparedState {
 /// A pre-analyzed function call that can be dispatched efficiently per item.
 /// Function resolution and constant arg evaluation happen once at analysis time.
 #[derive(Debug)]
-pub struct MappedCall {
-    pub func: Box<FunctionValue>,
-    pub arg_template: Vec<CallArg>,
-    pub prepared: Option<PreparedState>,
+pub(crate) struct MappedCall {
+    func: Box<FunctionValue>,
+    arg_template: Vec<CallArg>,
+    prepared: Option<PreparedState>,
 }
 
 /// Classification of a function argument for lifted dispatch.
@@ -521,7 +515,7 @@ pub enum CallArg {
 /// `param` is the mapping variable name (e.g., the implicit scope in `.()` or the lambda param).
 ///
 /// Returns Some(MappedCall) if the call can be lifted, None otherwise.
-pub fn analyze_mapped_call(
+pub(crate) fn analyze_mapped_call(
     node: NodeId,
     arena: &AstArena,
     param: Option<&str>,
@@ -542,9 +536,8 @@ pub fn analyze_mapped_call(
         _ => return None,
     };
     let func_val = env.lookup(func_name)?;
-    let func = match func_val {
-        Value::Function(f) => f,
-        _ => return None,
+    let Value::Function(func) = func_val else {
+        return None;
     };
 
     // Classify each argument.
@@ -578,11 +571,10 @@ pub fn analyze_mapped_call(
 
 /// Unwrap a single-expression Block to get the inner expression.
 fn unwrap_block(node: NodeId, arena: &AstArena) -> NodeId {
-    if let Expr::Block { expressions, .. } = arena.get(node) {
-        if expressions.len() == 1 {
+    if let Expr::Block { expressions, .. } = arena.get(node)
+        && expressions.len() == 1 {
             return expressions[0];
         }
-    }
     node
 }
 
@@ -605,11 +597,10 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
 
         // $param.field or just FieldName (implicit scope)
         Expr::Path { steps, .. } if steps.len() == 2 => {
-            if let Some(p) = param {
-                if let Some(field) = extract_param_field(steps, arena, p) {
+            if let Some(p) = param
+                && let Some(field) = extract_param_field(steps, arena, p) {
                     return CallArg::Field(field);
                 }
-            }
             CallArg::Expr(node)
         }
 
@@ -622,9 +613,8 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
         }
 
         // Bare $param reference (the whole object)
-        Expr::Variable { name, .. } if param.is_some() && name == param.unwrap() => {
-            // Pass the entire item — represented as Field("") which we handle specially
-            CallArg::Expr(node) // TODO: could add a WholeItem variant
+        Expr::Variable { name, .. } if param.is_some_and(|p| name == p) => {
+            CallArg::Expr(node)
         }
 
         _ => CallArg::Expr(node),
@@ -632,6 +622,7 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
 }
 
 /// Try to pre-compute function-specific state from the argument template.
+#[allow(clippy::too_many_lines)]
 fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
     match func_name {
         "formatNumber" => {
@@ -757,9 +748,8 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
             Some(Ok(Value::Number(rounded)))
         }
         PreparedState::Contains { needle } => {
-            let s = match field_val {
-                Value::String(s) => s,
-                _ => return None,
+            let Value::String(s) = field_val else {
+                return None;
             };
             Some(Ok(Value::Bool(s.contains(needle.as_str()))))
         }
@@ -777,7 +767,7 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
                     if n == 0 { return Some(Ok(Value::String("0".into()))); }
                     let mut result = String::new();
                     let mut val = n.unsigned_abs();
-                    let r = *radix as u64;
+                    let r = u64::from(*radix);
                     while val > 0 {
                         let digit = (val % r) as u32;
                         result.push(char::from_digit(digit, *radix).unwrap_or('?'));
@@ -797,7 +787,10 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
 
 /// Execute a MappedCall for a single item. Function is already resolved,
 /// constant args are already evaluated. Only field args need per-item work.
-pub fn exec_mapped_call(
+///
+/// # Errors
+/// Returns evaluation errors from the underlying function call.
+pub(crate) fn exec_mapped_call(
     mc: &MappedCall,
     item: &Value,
     env: &Rc<Environment>,

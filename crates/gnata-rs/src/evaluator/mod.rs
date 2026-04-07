@@ -1503,6 +1503,7 @@ fn eval_path_simple(
 }
 
 /// Evaluate a single path step, handling auto-mapping over arrays.
+#[allow(clippy::too_many_lines)]
 fn eval_path_step(
     arena: &AstArena,
     step: NodeId,
@@ -1586,8 +1587,8 @@ fn eval_path_step(
 
     // Lifted dispatch: analyze the step once, execute N times.
     // In .() path mapping, there's no explicit param — fields are resolved from scope.
-    if !is_group_step {
-        if let Some(mc) = crate::stdlib::hof_fast::analyze_mapped_call(step, arena, None, env) {
+    if !is_group_step
+        && let Some(mc) = crate::stdlib::hof_fast::analyze_mapped_call(step, arena, None, env) {
             let mut seq = Sequence::with_capacity(arr.len());
             for item in arr.iter() {
                 let val = crate::stdlib::hof_fast::exec_mapped_call(&mc, item, env, arena)?;
@@ -1603,7 +1604,6 @@ fn eval_path_step(
             }
             return Ok(seq.into_value());
         }
-    }
 
     let mut seq = Sequence::with_capacity(arr.len());
 

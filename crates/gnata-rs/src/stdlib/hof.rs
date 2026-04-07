@@ -11,13 +11,11 @@ use crate::value::{Sequence, Value};
 use super::hof_fast::{self, SimpleLambda, analyze_lambda};
 
 /// Collapse a filtered result array per JSONata semantics.
-fn collapse_array(result: Vec<Value>) -> Value {
-    if result.is_empty() {
-        Value::Undefined
-    } else if result.len() == 1 {
-        result.into_iter().next().unwrap()
-    } else {
-        Value::Array(Rc::from(result))
+fn collapse_array(mut result: Vec<Value>) -> Value {
+    match result.len() {
+        0 => Value::Undefined,
+        1 => result.swap_remove(0),
+        _ => Value::Array(Rc::from(result)),
     }
 }
 
@@ -87,8 +85,8 @@ pub fn fn_map(
 
     // Lifted dispatch: if the lambda body is a function call with field/const args,
     // resolve the inner function once and dispatch directly per item.
-    if let FunctionValue::Lambda(ref lambda) = *func {
-        if let Some(mc) = hof_fast::analyze_mapped_call(
+    if let FunctionValue::Lambda(ref lambda) = *func
+        && let Some(mc) = hof_fast::analyze_mapped_call(
             lambda.body, arena, Some(&lambda.params[0]), env,
         ) {
             let mut seq = Sequence::new();
@@ -100,7 +98,6 @@ pub fn fn_map(
             }
             return Ok(Value::Sequence(Box::new(seq)));
         }
-    }
 
     let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut seq = Sequence::new();
@@ -211,7 +208,7 @@ pub fn fn_reduce(
 
     // Fast path: simple reduce — function($prev,$curr){$prev + $curr.field}
     if let Some(SimpleLambda::ReduceAccum { field, op, .. }) = try_fast_lambda(&func, arena) {
-        for item in arr[start..].iter() {
+        for item in &arr[start..] {
             let fv = hof_fast::get_field(item, &field);
             acc = hof_fast::eval_binary_simple(&acc, op, &fv);
         }
@@ -357,12 +354,11 @@ pub fn fn_sort(
     }
 
     // Fast path: sort by field — function($a,$b){$a.field > $b.field}
-    if let Some(func) = &comparator {
-        if let Some(SimpleLambda::SortComparator { field, .. } | SimpleLambda::SortComparatorOp { field, op: BinaryOp::Gt, .. }) = try_fast_lambda(func, arena) {
+    if let Some(func) = &comparator
+        && let Some(SimpleLambda::SortComparator { field, .. } | SimpleLambda::SortComparatorOp { field, op: BinaryOp::Gt, .. }) = try_fast_lambda(func, arena) {
             arr.sort_by(|a, b| hof_fast::compare_by_field(a, b, &field));
             return Ok(Value::Array(Rc::from(arr)));
         }
-    }
 
     // Sort with optional comparator.
     let mut error: Option<JsonataError> = None;
@@ -437,8 +433,8 @@ pub fn fn_single(
     });
 
     // Fast path: field predicate — function($v){$v.field op literal}
-    if let Some(f) = &func {
-        if let Some(SimpleLambda::FieldPredicate { field, op, literal, .. }) = try_fast_lambda(f, arena) {
+    if let Some(f) = &func
+        && let Some(SimpleLambda::FieldPredicate { field, op, literal, .. }) = try_fast_lambda(f, arena) {
             let mut matches = Vec::new();
             for item in arr.iter() {
                 let fv = hof_fast::get_field(item, &field);
@@ -457,7 +453,6 @@ pub fn fn_single(
                 _ => Ok(matches.swap_remove(0)),
             };
         }
-    }
 
     let mut matches = Vec::new();
     let arr_val = Value::Array(arr.clone());
