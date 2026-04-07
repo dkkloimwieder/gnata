@@ -37,13 +37,13 @@ pub fn fn_format_number(args: &[Value], _focus: &Value) -> JsonataResult {
     };
 
     // Collect options from optional third argument (object).
-    let mut opts: Vec<(String, String)> = Vec::new();
+    let mut opts: Vec<(&str, &str)> = Vec::new();
     if args.len() >= 3
         && let Value::Object(map) = &args[2]
     {
         for (k, v) in map.iter() {
             if let Value::String(s) = v {
-                opts.push((k.to_string(), s.to_string()));
+                opts.push((k.as_str(), s.as_str()));
             }
         }
     }
@@ -84,16 +84,16 @@ impl Default for FmtChars {
 }
 
 impl FmtChars {
-    fn from_opts(opts: &[(String, String)]) -> Self {
+    fn from_opts(opts: &[(&str, &str)]) -> Self {
         let mut fc = FmtChars::default();
-        for (key, val) in opts {
+        for &(key, val) in opts {
             let chars: Vec<char> = val.chars().collect();
-            match key.as_str() {
+            match key {
                 "decimal-separator" if chars.len() == 1 => fc.decimal_sep = chars[0],
                 "grouping-separator" if chars.len() == 1 => fc.grouping_sep = chars[0],
                 "percent" if chars.len() == 1 => fc.percent = chars[0],
                 "per-mille" if !val.is_empty() => {
-                    fc.per_mille_str.clone_from(val);
+                    fc.per_mille_str = val.to_string();
                     fc.per_mille = chars[0];
                 }
                 "zero-digit" if chars.len() == 1 => fc.zero_digit = chars[0],
@@ -397,25 +397,23 @@ fn parse_sub_picture(pic: &str, fc: &FmtChars) -> Result<SubPicture, JsonataErro
 fn compute_int_group_positions(
     grp_pos: &[usize],
     int_len: usize,
-) -> std::collections::HashSet<usize> {
-    let mut result = std::collections::HashSet::new();
+) -> Vec<usize> {
     if grp_pos.is_empty() {
-        return result;
+        return Vec::new();
     }
     let primary = grp_pos[0];
     let all_equal = grp_pos.windows(2).all(|w| w[1] - w[0] == primary);
-
+    let mut result = Vec::new();
     if grp_pos.len() == 1 || all_equal {
         let mut pos = primary;
         while pos < int_len {
-            result.insert(pos);
+            result.push(pos);
             pos += primary;
         }
     } else {
-        for &pos in grp_pos {
-            result.insert(pos);
-        }
+        result.extend_from_slice(grp_pos);
     }
+    result.sort_unstable();
     result
 }
 
@@ -436,14 +434,14 @@ fn apply_digit_family(s: &str, zero_digit: char) -> String {
 
 fn apply_int_grouping(int_str: &str, grp_pos: &[usize], sep: char) -> String {
     let runes: Vec<char> = int_str.chars().collect();
-    let group_map = compute_int_group_positions(grp_pos, runes.len());
-    if group_map.is_empty() {
+    let group_positions = compute_int_group_positions(grp_pos, runes.len());
+    if group_positions.is_empty() {
         return int_str.to_string();
     }
-    let mut result = String::with_capacity(int_str.len() + group_map.len());
+    let mut result = String::with_capacity(int_str.len() + group_positions.len());
     for (i, &c) in runes.iter().enumerate() {
         let pos_from_right = runes.len() - i;
-        if group_map.contains(&pos_from_right) {
+        if group_positions.binary_search(&pos_from_right).is_ok() {
             result.push(sep);
         }
         result.push(c);
@@ -452,12 +450,11 @@ fn apply_int_grouping(int_str: &str, grp_pos: &[usize], sep: char) -> String {
 }
 
 fn apply_frac_grouping(frac_str: &str, grp_pos: &[usize], sep: char) -> String {
-    let pos_set: std::collections::HashSet<usize> = grp_pos.iter().copied().collect();
     let runes: Vec<char> = frac_str.chars().collect();
     let mut result = String::with_capacity(frac_str.len() + grp_pos.len());
     for (i, &c) in runes.iter().enumerate() {
         result.push(c);
-        if pos_set.contains(&(i + 1)) && i + 1 < runes.len() {
+        if grp_pos.contains(&(i + 1)) && i + 1 < runes.len() {
             result.push(sep);
         }
     }
@@ -608,7 +605,7 @@ fn split_on_pattern_sep(picture: &str, sep: char) -> Vec<String> {
 fn format_number_picture(
     n: f64,
     picture: &str,
-    opts: &[(String, String)],
+    opts: &[(&str, &str)],
 ) -> Result<String, JsonataError> {
     let fc = FmtChars::from_opts(opts);
 

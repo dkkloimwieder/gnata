@@ -7,6 +7,21 @@ use crate::evaluator::{Environment, FunctionValue, call_function};
 use crate::parser::AstArena;
 use crate::value::{Sequence, Value};
 
+/// Build HOF callback args trimmed to the lambda's declared arity.
+/// Mirrors Go's `hofArgs`: avoids passing index/array when the lambda doesn't use them.
+fn hof_args(func: &FunctionValue, item: Value, index: f64, arr: &Value) -> Vec<Value> {
+    let arity = match func {
+        FunctionValue::Lambda(lam) => lam.params.len(),
+        _ => 1, // builtins get (value) only to avoid arity rejections
+    };
+    match arity {
+        0 => vec![],
+        1 => vec![item],
+        2 => vec![item, Value::Number(index)],
+        _ => vec![item, Value::Number(index), arr.clone()],
+    }
+}
+
 pub fn fn_map(
     args: &[Value],
     _focus: &Value,
@@ -21,13 +36,10 @@ pub fn fn_map(
     }
     let arr = args[0].coerce_to_array();
     let func = args[1].require_function("$map")?;
+    let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut seq = Sequence::new();
     for (i, item) in arr.iter().enumerate() {
-        let call_args = vec![
-            item.clone(),
-            Value::Number(i as f64),
-            Value::Array(arr.clone()),
-        ];
+        let call_args = hof_args(&func, item.clone(), i as f64, &arr_val);
         let val = call_function(&func, &call_args, item, env, arena)?;
         if !val.is_undefined() {
             seq.values.push(val);
@@ -51,13 +63,10 @@ pub fn fn_filter(
     }
     let arr = args[0].coerce_to_array();
     let func = args[1].require_function("$filter")?;
+    let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut result = Vec::new();
     for (i, item) in arr.iter().enumerate() {
-        let call_args = vec![
-            item.clone(),
-            Value::Number(i as f64),
-            Value::Array(arr.clone()),
-        ];
+        let call_args = hof_args(&func, item.clone(), i as f64, &arr_val);
         let val = call_function(&func, &call_args, item, env, arena)?;
         if val.to_boolean() {
             result.push(item.clone());
