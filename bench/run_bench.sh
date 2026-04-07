@@ -24,6 +24,7 @@ SECTIONS=""
 BENCH_ID=""
 TAG=""
 SIZES="tiny"
+ITERS=10
 WARMUP=5
 MIN_RUNS=20
 DRY_RUN=false
@@ -38,6 +39,7 @@ while [[ $# -gt 0 ]]; do
         --size)     SIZES="$2"; shift 2 ;;
         --warmup)   WARMUP="$2"; shift 2 ;;
         --min-runs) MIN_RUNS="$2"; shift 2 ;;
+        --iters)    ITERS="$2"; shift 2 ;;
         --runner)   RUNNERS="${2//,/ }"; shift 2 ;;
         --dry-run)  DRY_RUN=true; shift ;;
         --quick)    TAG="quick"; SIZES="tiny"; WARMUP=3; MIN_RUNS=10; shift ;;
@@ -45,18 +47,6 @@ while [[ $# -gt 0 ]]; do
         *)          echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
-
-# ── Iteration counts per size ────────────────────────────────────────────────
-iters_for_size() {
-    case "$1" in
-        tiny)  echo 10000 ;;
-        1k)    echo 1000 ;;
-        10k)   echo 100 ;;
-        100k)  echo 10 ;;
-        full)  echo 10 ;;
-        *)     echo 100 ;;
-    esac
-}
 
 # ── Fixture resolution ───────────────────────────────────────────────────────
 # Returns the fixture file path for a given fixture type and size.
@@ -115,17 +105,17 @@ bench "string.before"    string strings "1k" ""      '$substringBefore(items[0].
 bench "string.after"     string strings "1k" ""      '$substringAfter(items[0].text, '\'' '\'')'
 
 # ── NUMERIC ──────────────────────────────────────────────────────────────────
-bench "numeric.abs"          numeric account "tiny;1k;10k" ""      '$abs(Account.Order.Product[0].UnitPrice - 50)'
-bench "numeric.floor"        numeric account "tiny;1k;10k" ""      '$floor(Account.Order.Product[0].UnitPrice)'
-bench "numeric.ceil"         numeric account "tiny;1k;10k" ""      '$ceil(Account.Order.Product[0].UnitPrice)'
-bench "numeric.round"        numeric account "tiny;1k;10k" ""      '$round(Account.Order.Product[0].UnitPrice, 1)'
-bench "numeric.power"        numeric account "tiny;1k;10k" ""      '$power(Account.Order.Product[0].Quantity, 2)'
-bench "numeric.sqrt"         numeric account "tiny;1k;10k" ""      '$sqrt(Account.Order.Product[0].UnitPrice)'
+bench "numeric.abs"          numeric account "tiny;1k;10k" ""      'Account.Order.Product.($abs(UnitPrice - 50))'
+bench "numeric.floor"        numeric account "tiny;1k;10k" ""      'Account.Order.Product.($floor(UnitPrice))'
+bench "numeric.ceil"         numeric account "tiny;1k;10k" ""      'Account.Order.Product.($ceil(UnitPrice))'
+bench "numeric.round"        numeric account "tiny;1k;10k" ""      'Account.Order.Product.($round(UnitPrice, 1))'
+bench "numeric.power"        numeric account "tiny;1k;10k" ""      'Account.Order.Product.($power(Quantity, 2))'
+bench "numeric.sqrt"         numeric account "tiny;1k;10k" ""      'Account.Order.Product.($sqrt(UnitPrice))'
 bench "numeric.sum"          numeric account "tiny;1k;10k" "quick" '$sum(Account.Order.Product.(UnitPrice * Quantity))'
 bench "numeric.max"          numeric account "tiny;1k;10k" ""      '$max(Account.Order.Product.UnitPrice)'
 bench "numeric.min"          numeric account "tiny;1k;10k" ""      '$min(Account.Order.Product.UnitPrice)'
 bench "numeric.average"      numeric account "tiny;1k;10k" ""      '$average(Account.Order.Product.UnitPrice)'
-bench "numeric.formatNumber" numeric account "tiny;1k;10k" ""      '$formatNumber(Account.Order.Product[0].UnitPrice, '\''#,##0.00'\'')'
+bench "numeric.formatNumber" numeric account "tiny;1k;10k" ""      'Account.Order.Product.($formatNumber(UnitPrice, '\''#,##0.00'\''))'
 bench "numeric.formatBase"   numeric account "tiny;1k;10k" ""      '$formatBase(255, 16)'
 
 # ── ARRAY ────────────────────────────────────────────────────────────────────
@@ -153,13 +143,13 @@ bench "hof.filter"   hof account "tiny;1k;10k" "quick" '$filter(Account.Order.Pr
 bench "hof.reduce"   hof account "tiny;1k;10k" "quick" '$reduce(Account.Order.Product, function($prev,$curr){$prev + $curr.UnitPrice}, 0)'
 bench "hof.each"     hof account "tiny;1k;10k" ""      '$each(Account.Order[0].Product[0], function($v,$k){$k})'
 bench "hof.sort_cmp" hof account "tiny;1k;10k" ""      '$sort(Account.Order.Product, function($a,$b){$a.Quantity > $b.Quantity})'
-bench "hof.single"   hof account "tiny;1k;10k" ""      '$single(Account.Order.Product, function($v){$v.SKU = '\''040657863'\''})'
+bench "hof.single"   hof account "tiny" ""      '$single(Account.Order.Product, function($v){$v.SKU = '\''040657863'\''})'
 bench "hof.sift"     hof account "tiny;1k;10k" ""      '$sift(Account.Order[0].Product[0], function($v){$type($v) = '\''string'\''})'
 
 # ── TYPE ─────────────────────────────────────────────────────────────────────
 bench "type.type"    type account "tiny;1k;10k" ""      '$type(Account.Order)'
-bench "type.string"  type account "tiny;1k;10k" "quick" '$string(Account.Order[0].Product[0])'
-bench "type.number"  type account "tiny;1k;10k" ""      '$number(Account.Order[0].Product[0].UnitPrice)'
+bench "type.string"  type account "tiny;1k;10k" "quick" 'Account.Order.Product.($string($))'
+bench "type.number"  type account "tiny;1k;10k" ""      'Account.Order.Product.($number(UnitPrice))'
 bench "type.boolean" type account "tiny;1k;10k" ""      '$boolean(Account.Order)'
 bench "type.exists"  type account "tiny;1k;10k" ""      '$exists(Account.Order.Product)'
 
@@ -183,11 +173,11 @@ bench "encoding.urlenc_full" encoding strings "1k" "" '$encodeUrl(items[0].url)'
 bench "encoding.urldec_full" encoding strings "1k" "" '$decodeUrl(items[0].urlencoded_full)'
 
 # ── OPERATOR ─────────────────────────────────────────────────────────────────
-bench "op.arithmetic" operator account "tiny;1k;10k" "quick" 'Account.Order.Product[0].(UnitPrice * Quantity * (1 - Discount))'
+bench "op.arithmetic" operator account "tiny;1k;10k" "quick" 'Account.Order.Product.(UnitPrice * Quantity * (1 - Discount))'
 bench "op.comparison" operator account "tiny;1k;10k" ""      'Account.Name = '\''Firefly'\'''
 bench "op.lt_chain"   operator account "tiny;1k;10k" ""      'Account.Order.Product[UnitPrice > 20 and UnitPrice < 100]'
 bench "op.logical"    operator account "tiny;1k;10k" ""      '$exists(Account.Order) and $count(Account.Order.Product) > 0'
-bench "op.concat"     operator account "tiny;1k;10k" ""      'Account.Name & '\'' - '\'' & Account.Order[0].OrderID'
+bench "op.concat"     operator account "tiny;1k;10k" ""      'Account.Order.Product.(Description & '\'' (SKU: '\'' & SKU & '\'')'\'')'
 bench "op.range"      operator account "tiny;1k;10k" ""      '[1..10]'
 bench "op.coalesce"   operator account "tiny;1k;10k" ""      'Account.Missing ?? '\''default'\'''
 bench "op.in"         operator account "tiny;1k;10k" ""      'Account.Order[0].Product[0].SKU in Account.Order.Product.SKU'
@@ -309,7 +299,7 @@ for entry in "${FILTERED[@]}"; do
             echo "  [$run_count/$total_filtered] $id ($size) — SKIPPED: no fixture" >&2
             continue
         fi
-        iters=$(iters_for_size "$size")
+        iters=$ITERS
 
         echo "── [$run_count/$total_filtered] $id ($size, $iters iters) ──"
 
