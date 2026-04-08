@@ -93,6 +93,17 @@ impl Parser {
     // ── Core Pratt parser ────────────────────────────────────────────
 
     fn expression(&mut self, rbp: i32) -> Result<NodeId, JsonataError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            stacker::maybe_grow(128 * 1024, 1024 * 1024, || self.expression_inner(rbp))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.expression_inner(rbp)
+        }
+    }
+
+    fn expression_inner(&mut self, rbp: i32) -> Result<NodeId, JsonataError> {
         let mut left = self.nud()?;
         while binding_power(self.token.typ) > rbp {
             left = self.led(left)?;
