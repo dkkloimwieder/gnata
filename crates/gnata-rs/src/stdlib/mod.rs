@@ -117,7 +117,7 @@ pub fn register_all(env: &mut Environment) {
     bind_builtin(env, "toMillis", datetime::fn_to_millis);
 }
 
-/// Register stdlib on an Rc<Environment> (for $eval child envs).
+/// Register stdlib on an `Rc<Environment>` (for `$eval` child envs).
 pub fn register_all_on_rc(env: &Rc<Environment>) {
     // String
     env.bind("string", _mk_sb(string_funcs::fn_string, "x-b?"));

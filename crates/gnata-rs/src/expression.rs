@@ -90,7 +90,7 @@ impl Expression {
     /// - Pure dotted paths (`a.b.c`) use simd-json's tape — no Value tree built
     /// - All other expressions parse to Value, then use the full evaluator
     ///
-    /// This is the primary API. Use [`evaluate_value`] if you already have a
+    /// This is the primary API. Use [`Self::evaluate_value`] if you already have a
     /// parsed `Value` (e.g., shared across multiple expression evaluations).
     ///
     /// # Errors
@@ -133,7 +133,7 @@ impl Expression {
         crate::eval(&self.arena, self.root, input, &env)
     }
 
-    /// Evaluate against raw bytes. Equivalent to [`evaluate`] but takes `&[u8]`.
+    /// Evaluate against raw bytes. Equivalent to [`Self::evaluate`] but takes `&[u8]`.
     ///
     /// # Errors
     /// Returns JSON parse errors or JSONata evaluation errors.

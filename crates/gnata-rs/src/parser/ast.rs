@@ -302,7 +302,7 @@ pub enum Expr {
         pos: usize,
     },
 
-    /// Lambda: function($params) <signature> { body }.
+    /// Lambda: `function($params) <signature> { body }`.
     Lambda {
         params: Vec<NodeId>,
         body: NodeId,

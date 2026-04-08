@@ -1,14 +1,14 @@
 //! DHAT allocation profiler for gnata.
 //!
 //! Usage:
-//!   cargo run --features dhat-heap --bin gnata-dhat -- <mode> [options]
+//!   cargo run --features dhat-heap --bin gnata-dhat -- &lt;mode&gt; \[options\]
 //!
 //! Modes:
 //!   parse  -datafile FILE          Profile JSON parsing
 //!   eval   -expr EXPR -datafile FILE [-n ITERS]  Profile evaluation
 //!
 //! Produces dhat-heap.json in the working directory.
-//! View at https://nnethercote.github.io/dh_view/dh_view.html
+//! View at <https://nnethercote.github.io/dh_view/dh_view.html>
 
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
