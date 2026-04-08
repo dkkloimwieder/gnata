@@ -14,9 +14,13 @@ use crate::lexer::{Lexer, Token, TokenType};
 ///
 /// Direct port of Go `internal/parser/parser.go`.
 /// Takes `&mut AstArena`, returns `NodeId` for the root expression.
-/// Maximum nesting depth for expressions. Prevents OOM from deeply nested
-/// input like `-(-(-(-(...)))) ` which allocates an AST node per level.
+/// Maximum nesting depth for expressions. Prevents stack overflow from deeply
+/// nested input like `-(-(-(-(...)))) `.
 const MAX_PARSE_DEPTH: usize = 500;
+
+/// Maximum AST nodes before the parser bails. Prevents OOM from expressions
+/// that are wide + deep (many siblings at each nesting level).
+const MAX_AST_NODES: usize = 100_000;
 
 pub struct Parser {
     lex: Lexer,
@@ -115,6 +119,13 @@ impl Parser {
             return Err(parse_error(
                 "S0210",
                 "expression is too deeply nested",
+                self.token.pos,
+            ));
+        }
+        if self.arena.len() > MAX_AST_NODES {
+            return Err(parse_error(
+                "S0210",
+                "expression too complex (too many nodes)",
                 self.token.pos,
             ));
         }
