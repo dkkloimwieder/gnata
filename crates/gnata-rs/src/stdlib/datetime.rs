@@ -21,7 +21,10 @@ fn current_millis() -> i64 {
 
 // ── Public entry points ─────────────────────────────────────────────────────
 
-#[allow(clippy::missing_errors_doc)]
+/// `$now(picture?, timezone?)`
+///
+/// # Errors
+/// Returns `T0410` for invalid picture/timezone arguments and `D3137` for date formatting errors.
 pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
     let millis = current_millis();
     if !args.is_empty() && !args[0].is_undefined() {
@@ -49,12 +52,18 @@ pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::String(format_default_iso(millis, 0).into()))
 }
 
-#[allow(clippy::missing_errors_doc)]
+/// `$millis()`
+///
+/// # Errors
+/// This function does not return errors under normal operation.
 pub fn fn_millis(_args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::Number(current_millis() as f64))
 }
 
-#[allow(clippy::missing_errors_doc)]
+/// `$fromMillis(millis, picture?, timezone?)`
+///
+/// # Errors
+/// Returns `T0410` for type mismatches and `D3137` for date formatting errors.
 pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
     // With no args, use focus as millis argument.
     let effective_args: &[Value];
@@ -111,7 +120,10 @@ pub fn fn_from_millis(args: &[Value], focus: &Value) -> JsonataResult {
     Ok(Value::String(format_default_iso(ms, tz_offset).into()))
 }
 
-#[allow(clippy::missing_errors_doc)]
+/// `$toMillis(str, picture?, timezone?)`
+///
+/// # Errors
+/// Returns `T0410` for type mismatches and `D3137` for date parsing errors.
 pub fn fn_to_millis(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.is_empty() || args[0].is_undefined() {
         return Ok(Value::Undefined);
@@ -258,8 +270,9 @@ fn format_default_iso(ms: i64, tz_offset_secs: i32) -> String {
 // ── Picture-format formatting ────────────────────────────────────────────────
 
 /// Format epoch milliseconds using an XPath picture string.
-/// Returns an error for invalid picture strings.
-#[allow(clippy::missing_errors_doc)]
+///
+/// # Errors
+/// Returns `D3130`/`D3132` for invalid picture tokens and `D3137` for date construction errors.
 pub fn format_with_picture(
     ms: i64,
     picture: &str,

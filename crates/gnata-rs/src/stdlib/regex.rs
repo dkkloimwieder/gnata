@@ -12,7 +12,9 @@ use crate::parser::AstArena;
 use crate::value::Value;
 
 /// Compile a regex from a pattern string and flags.
-#[allow(clippy::missing_errors_doc)]
+///
+/// # Errors
+/// Returns `D3137` if the pattern is not a valid regular expression.
 pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, JsonataError> {
     let mut inline = String::new();
     if flags.contains('i') {
@@ -80,8 +82,10 @@ fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Valu
     Value::Object(Rc::new(obj))
 }
 
-/// $match(str, pattern, limit?)
-#[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+/// `$match(str, pattern, limit?)`
+///
+/// # Errors
+/// Returns `T0410` for type mismatches and `D3137` for invalid regex patterns.
 pub fn fn_match(
     args: &[Value],
     _focus: &Value,
@@ -196,8 +200,10 @@ fn match_with_custom_matcher(
     Ok(Value::Array(Rc::from(result)))
 }
 
-/// $replace(str, pattern, replacement, limit?)
-#[allow(clippy::missing_errors_doc)]
+/// `$replace(str, pattern, replacement, limit?)`
+///
+/// # Errors
+/// Returns `T0410` for type mismatches, `D3137` for invalid regex, and `D1004` on match failure.
 pub fn fn_replace(
     args: &[Value],
     _focus: &Value,
