@@ -2143,11 +2143,12 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
     if start > end {
         return Ok(Value::Undefined);
     }
-    let count = (i128::from(end) - i128::from(start) + 1) as usize;
-    if count > 10_000_000 {
+    let count_wide = i128::from(end) - i128::from(start) + 1;
+    if count_wide > 10_000_000 {
         return Err(JsonataError::new("D2014", "range operator too large"));
     }
-    let arr: Vec<Value> = (start..=end).map(|i| Value::Number(i as f64)).collect();
+    let mut arr = Vec::with_capacity(count_wide as usize);
+    arr.extend((start..=end).map(|i| Value::Number(i as f64)));
     Ok(Value::Array(Rc::from(arr)))
 }
 
