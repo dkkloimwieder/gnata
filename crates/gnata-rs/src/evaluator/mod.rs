@@ -2143,7 +2143,7 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
     if start > end {
         return Ok(Value::Undefined);
     }
-    let count = (end - start + 1) as usize;
+    let count = (i128::from(end) - i128::from(start) + 1) as usize;
     if count > 10_000_000 {
         return Err(JsonataError::new("D2014", "range operator too large"));
     }
