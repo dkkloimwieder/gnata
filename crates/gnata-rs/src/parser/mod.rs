@@ -14,11 +14,16 @@ use crate::lexer::{Lexer, Token, TokenType};
 ///
 /// Direct port of Go `internal/parser/parser.go`.
 /// Takes `&mut AstArena`, returns `NodeId` for the root expression.
+/// Maximum nesting depth for expressions. Prevents OOM from deeply nested
+/// input like `-(-(-(-(...)))) ` which allocates an AST node per level.
+const MAX_PARSE_DEPTH: usize = 500;
+
 pub struct Parser {
     lex: Lexer,
     token: Token,
     infix: bool,
     arena: AstArena,
+    depth: usize,
 }
 
 impl Parser {
@@ -33,6 +38,7 @@ impl Parser {
             token: Token::eof(),
             infix: false,
             arena: AstArena::new(),
+            depth: 0,
         };
         // Prime the token stream
         parser.advance()?;
@@ -104,10 +110,19 @@ impl Parser {
     }
 
     fn expression_inner(&mut self, rbp: i32) -> Result<NodeId, JsonataError> {
+        self.depth += 1;
+        if self.depth > MAX_PARSE_DEPTH {
+            return Err(parse_error(
+                "S0210",
+                "expression is too deeply nested",
+                self.token.pos,
+            ));
+        }
         let mut left = self.nud()?;
         while binding_power(self.token.typ) > rbp {
             left = self.led(left)?;
         }
+        self.depth -= 1;
         Ok(left)
     }
 
