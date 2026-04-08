@@ -405,7 +405,10 @@ mod tests {
         assert!(type_matches(&Value::Undefined, b'l'));
         assert!(type_matches(&Value::Null, b'l'));
         assert!(type_matches(&Value::Array(Rc::from(vec![])), b'a'));
-        assert!(type_matches(&Value::Object(Rc::new(Default::default())), b'o'));
+        assert!(type_matches(
+            &Value::Object(Rc::new(Default::default())),
+            b'o'
+        ));
         assert!(type_matches(&Value::Number(1.0), b'x'));
         assert!(type_matches(&Value::Number(1.0), b'j'));
     }
@@ -422,7 +425,10 @@ mod tests {
     fn singleton_coercion() {
         let specs = parse_signature("a<n>").unwrap();
         let (coerced, _) = process_call_args(&specs, &[Value::Number(42.0)]).unwrap();
-        assert_eq!(coerced[0], Value::Array(Rc::from(vec![Value::Number(42.0)])));
+        assert_eq!(
+            coerced[0],
+            Value::Array(Rc::from(vec![Value::Number(42.0)]))
+        );
     }
 
     #[test]

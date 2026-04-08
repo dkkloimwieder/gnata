@@ -394,10 +394,7 @@ pub(crate) fn parse_sub_picture(pic: &str, fc: &FmtChars) -> Result<SubPicture, 
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
-fn compute_int_group_positions(
-    grp_pos: &[usize],
-    int_len: usize,
-) -> Vec<usize> {
+fn compute_int_group_positions(grp_pos: &[usize], int_len: usize) -> Vec<usize> {
     if grp_pos.is_empty() {
         return Vec::new();
     }

@@ -34,8 +34,7 @@ struct PreparedInput {
 
 impl PreparedInput {
     fn from_file(path: &str) -> Self {
-        let json_str = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let json_str = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let value = Value::from_json_str(&json_str).unwrap();
         let mut env = Environment::new();
         gnata::stdlib::register_all(&mut env);
@@ -50,16 +49,31 @@ fn bench_eval(c: &mut Criterion) {
         ("path_simple", "Account.Name"),
         ("path_nested", "Account.Order.Product.SKU"),
         ("filter", "Account.Order.Product[UnitPrice > 50].SKU"),
-        ("aggregation", "$sum(Account.Order.Product.(UnitPrice * Quantity * (1 - Discount)))"),
+        (
+            "aggregation",
+            "$sum(Account.Order.Product.(UnitPrice * Quantity * (1 - Discount)))",
+        ),
         ("comparison", "Account.Name = \"Firefly\""),
         ("func_count", "$count(Account.Order.Product.SKU)"),
     ];
 
     let long_expressions: &[(&str, &str)] = &[
-        ("path_nested", "Account.Order.Product.StockKeepingUnitIdentifier"),
-        ("filter", "Account.Order.Product[UnitPriceWithTaxIncluded > 50].StockKeepingUnitIdentifier"),
-        ("aggregation", "$sum(Account.Order.Product.(UnitPriceWithTaxIncluded * QuantityInWarehouseStock * (1 - ApplicableDiscountPercentage)))"),
-        ("func_count", "$count(Account.Order.Product.StockKeepingUnitIdentifier)"),
+        (
+            "path_nested",
+            "Account.Order.Product.StockKeepingUnitIdentifier",
+        ),
+        (
+            "filter",
+            "Account.Order.Product[UnitPriceWithTaxIncluded > 50].StockKeepingUnitIdentifier",
+        ),
+        (
+            "aggregation",
+            "$sum(Account.Order.Product.(UnitPriceWithTaxIncluded * QuantityInWarehouseStock * (1 - ApplicableDiscountPercentage)))",
+        ),
+        (
+            "func_count",
+            "$count(Account.Order.Product.StockKeepingUnitIdentifier)",
+        ),
     ];
 
     // Short-key fixtures with short expressions
@@ -69,16 +83,14 @@ fn bench_eval(c: &mut Criterion) {
 
         for &(size_name, path) in FIXTURES_SHORT {
             let input = PreparedInput::from_file(path);
-            group.bench_with_input(
-                BenchmarkId::new("rust", size_name),
-                &(),
-                |b, _| {
-                    b.iter(|| {
-                        let result = compiled.evaluate_with_env(&input.value, &input.env).unwrap();
-                        criterion::black_box(result);
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("rust", size_name), &(), |b, _| {
+                b.iter(|| {
+                    let result = compiled
+                        .evaluate_with_env(&input.value, &input.env)
+                        .unwrap();
+                    criterion::black_box(result);
+                });
+            });
         }
         group.finish();
     }
@@ -90,16 +102,14 @@ fn bench_eval(c: &mut Criterion) {
 
         for &(size_name, path) in FIXTURES_LONG {
             let input = PreparedInput::from_file(path);
-            group.bench_with_input(
-                BenchmarkId::new("rust", size_name),
-                &(),
-                |b, _| {
-                    b.iter(|| {
-                        let result = compiled.evaluate_with_env(&input.value, &input.env).unwrap();
-                        criterion::black_box(result);
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("rust", size_name), &(), |b, _| {
+                b.iter(|| {
+                    let result = compiled
+                        .evaluate_with_env(&input.value, &input.env)
+                        .unwrap();
+                    criterion::black_box(result);
+                });
+            });
         }
         group.finish();
     }
@@ -112,8 +122,7 @@ fn bench_end_to_end(c: &mut Criterion) {
     // Short-key fixtures
     let compiled_short = Expression::compile("Account.Order.Product.SKU").unwrap();
     for &(size_name, path) in FIXTURES_SHORT {
-        let json_str = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let json_str = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
 
         group.bench_with_input(
             BenchmarkId::new("parse_and_eval", size_name),
@@ -133,10 +142,10 @@ fn bench_end_to_end(c: &mut Criterion) {
     }
 
     // Long-key fixtures
-    let compiled_long = Expression::compile("Account.Order.Product.StockKeepingUnitIdentifier").unwrap();
+    let compiled_long =
+        Expression::compile("Account.Order.Product.StockKeepingUnitIdentifier").unwrap();
     for &(size_name, path) in FIXTURES_LONG {
-        let json_str = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let json_str = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
 
         group.bench_with_input(
             BenchmarkId::new("parse_and_eval", size_name),

@@ -144,10 +144,9 @@ impl Expression {
             });
         }
 
-        let input = Value::from_json_str(
-            std::str::from_utf8(json_bytes)
-                .map_err(|e| crate::error::JsonataError::new("D0000", format!("invalid UTF-8: {e}")))?
-        )
+        let input = Value::from_json_str(std::str::from_utf8(json_bytes).map_err(|e| {
+            crate::error::JsonataError::new("D0000", format!("invalid UTF-8: {e}"))
+        })?)
         .map_err(|e| crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}")))?;
         self.evaluate_value(&input)
     }
@@ -185,11 +184,7 @@ impl Expression {
     ///
     /// # Errors
     /// Returns JSONata evaluation errors.
-    pub fn evaluate_with_vars(
-        &self,
-        json: &str,
-        vars: &[(String, Value)],
-    ) -> JsonataResult {
+    pub fn evaluate_with_vars(&self, json: &str, vars: &[(String, Value)]) -> JsonataResult {
         let input = Self::parse_input(json)?;
         if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
@@ -214,11 +209,7 @@ impl Expression {
     ///
     /// # Errors
     /// Returns `D3001` if cancelled, or other JSONata evaluation errors.
-    pub fn evaluate_with_cancel(
-        &self,
-        json: &str,
-        cancel: Arc<AtomicBool>,
-    ) -> JsonataResult {
+    pub fn evaluate_with_cancel(&self, json: &str, cancel: Arc<AtomicBool>) -> JsonataResult {
         let input = Self::parse_input(json)?;
         if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
@@ -378,10 +369,7 @@ mod tests {
         });
         let expr = Expression::compile("$mul($add(2, 3), 4)").unwrap();
         let result = expr
-            .evaluate_with_custom_funcs(
-                "",
-                &[("add".into(), add), ("mul".into(), mul)],
-            )
+            .evaluate_with_custom_funcs("", &[("add".into(), add), ("mul".into(), mul)])
             .unwrap();
         assert_eq!(result.as_f64(), Some(20.0));
     }
@@ -396,10 +384,7 @@ mod tests {
     fn cancel_stops_evaluation() {
         use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(true));
-        let expr = Expression::compile(
-            "$reduce([1,2,3], function($a,$b){$a+$b}, 0)",
-        )
-        .unwrap();
+        let expr = Expression::compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)").unwrap();
         let err = expr.evaluate_with_cancel("", cancel).unwrap_err();
         assert_eq!(err.code, "D3001");
     }
@@ -432,7 +417,10 @@ mod tests {
     fn eval_with_vars_and_input() {
         let expr = Expression::compile("name & ' ' & $suffix").unwrap();
         let result = expr
-            .evaluate_with_vars(r#"{"name":"Alice"}"#, &[("suffix".into(), Value::String("Smith".into()))])
+            .evaluate_with_vars(
+                r#"{"name":"Alice"}"#,
+                &[("suffix".into(), Value::String("Smith".into()))],
+            )
             .unwrap();
         assert_eq!(result.as_str(), Some("Alice Smith"));
     }
@@ -441,10 +429,7 @@ mod tests {
     fn eval_with_vars_uses_stdlib() {
         let expr = Expression::compile("$uppercase($greeting)").unwrap();
         let result = expr
-            .evaluate_with_vars(
-                "",
-                &[("greeting".into(), Value::String("hello".into()))],
-            )
+            .evaluate_with_vars("", &[("greeting".into(), Value::String("hello".into()))])
             .unwrap();
         assert_eq!(result.as_str(), Some("HELLO"));
     }

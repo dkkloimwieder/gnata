@@ -23,10 +23,10 @@ fn main() {
 
     #[cfg(feature = "dhat-heap")]
     {
-        use std::rc::Rc;
         use gnata::evaluator::Environment;
         use gnata::expression::Expression;
         use gnata::value::Value;
+        use std::rc::Rc;
 
         let _profiler = dhat::Profiler::new_heap();
 
@@ -47,31 +47,40 @@ fn main() {
         match args[1].as_str() {
             "parse" => {
                 let datafile = find_arg(&args[2..], "-datafile").unwrap_or_else(|| {
-                    eprintln!("-datafile required"); std::process::exit(1);
+                    eprintln!("-datafile required");
+                    std::process::exit(1);
                 });
                 let data = std::fs::read_to_string(&datafile).unwrap_or_else(|e| {
-                    eprintln!("read {datafile}: {e}"); std::process::exit(1);
+                    eprintln!("read {datafile}: {e}");
+                    std::process::exit(1);
                 });
                 eprintln!("parsing {} bytes...", data.len());
                 let value = Value::from_json_str(&data).unwrap();
-                eprintln!("done. type: {}", if value.is_object() { "object" } else { "other" });
+                eprintln!(
+                    "done. type: {}",
+                    if value.is_object() { "object" } else { "other" }
+                );
             }
             "eval" => {
                 let expr_str = find_arg(&args[2..], "-expr").unwrap_or_else(|| {
-                    eprintln!("-expr required"); std::process::exit(1);
+                    eprintln!("-expr required");
+                    std::process::exit(1);
                 });
                 let datafile = find_arg(&args[2..], "-datafile").unwrap_or_else(|| {
-                    eprintln!("-datafile required"); std::process::exit(1);
+                    eprintln!("-datafile required");
+                    std::process::exit(1);
                 });
                 let n: u64 = find_arg(&args[2..], "-n")
                     .map(|s| s.parse().unwrap_or(1))
                     .unwrap_or(1);
                 let data = std::fs::read_to_string(&datafile).unwrap_or_else(|e| {
-                    eprintln!("read {datafile}: {e}"); std::process::exit(1);
+                    eprintln!("read {datafile}: {e}");
+                    std::process::exit(1);
                 });
                 let input = Value::from_json_str(&data).unwrap_or(Value::Undefined);
                 let expr = Expression::compile(&expr_str).unwrap_or_else(|e| {
-                    eprintln!("compile: {e}"); std::process::exit(1);
+                    eprintln!("compile: {e}");
+                    std::process::exit(1);
                 });
                 let mut env = Environment::new();
                 gnata::stdlib::register_all(&mut env);
@@ -84,7 +93,10 @@ fn main() {
                 for _ in 0..n {
                     result = expr.evaluate_with_env(&input, &env).unwrap();
                 }
-                eprintln!("result type: {}", if result.is_array() { "array" } else { "scalar" });
+                eprintln!(
+                    "result type: {}",
+                    if result.is_array() { "array" } else { "scalar" }
+                );
             }
             other => {
                 eprintln!("unknown mode: {other}");

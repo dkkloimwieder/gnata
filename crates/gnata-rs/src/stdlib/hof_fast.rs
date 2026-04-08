@@ -10,8 +10,8 @@
 use std::rc::Rc;
 
 use crate::error::JsonataResult;
-use crate::evaluator::{Environment, call_function};
 use crate::evaluator::functions::FunctionValue;
+use crate::evaluator::{Environment, call_function};
 use crate::parser::ast::{AstArena, BinaryOp, Expr, NodeId};
 use crate::value::Value;
 
@@ -19,10 +19,7 @@ use crate::value::Value;
 #[derive(Debug)]
 pub enum SimpleLambda {
     /// function($v) { $v.field } — direct field access
-    FieldAccess {
-        param: String,
-        field: String,
-    },
+    FieldAccess { param: String, field: String },
     /// function($v) { $v.field op literal } — field compared to constant
     FieldPredicate {
         param: String,
@@ -58,9 +55,7 @@ pub enum SimpleLambda {
         op: BinaryOp,
     },
     /// function($v) { $v.A & "lit" & $string($v.B) & ... } — concat template
-    ConcatTemplate {
-        pieces: Vec<TemplatePiece>,
-    },
+    ConcatTemplate { pieces: Vec<TemplatePiece> },
 }
 
 /// A piece of a concat template — evaluated into a string buffer.
@@ -83,17 +78,19 @@ pub fn analyze_lambda(params: &[String], body: NodeId, arena: &AstArena) -> Opti
             analyze_field_access(params, steps[0], steps[1], arena)
         }
         // Body is a binary op
-        Expr::Binary { op: BinaryOp::Concat, .. } if !params.is_empty() => {
+        Expr::Binary {
+            op: BinaryOp::Concat,
+            ..
+        } if !params.is_empty() => {
             // Try concat template first, fall back to generic binary analysis
-            analyze_concat_template(params, body, arena)
-                .or_else(|| {
-                    let Expr::Binary { op, lhs, rhs, .. } = arena.get(body) else { return None; };
-                    analyze_binary(params, *op, *lhs, *rhs, arena)
-                })
+            analyze_concat_template(params, body, arena).or_else(|| {
+                let Expr::Binary { op, lhs, rhs, .. } = arena.get(body) else {
+                    return None;
+                };
+                analyze_binary(params, *op, *lhs, *rhs, arena)
+            })
         }
-        Expr::Binary { op, lhs, rhs, .. } => {
-            analyze_binary(params, *op, *lhs, *rhs, arena)
-        }
+        Expr::Binary { op, lhs, rhs, .. } => analyze_binary(params, *op, *lhs, *rhs, arena),
         _ => None,
     }
 }
@@ -112,9 +109,14 @@ fn extract_param_field(steps: &[NodeId], arena: &AstArena, param: &str) -> Optio
         return None;
     }
     match arena.get(steps[1]) {
-        Expr::Name { value, stages, group, focus, index, .. }
-            if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none() =>
-        {
+        Expr::Name {
+            value,
+            stages,
+            group,
+            focus,
+            index,
+            ..
+        } if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none() => {
             Some(value.clone())
         }
         _ => None,
@@ -136,9 +138,14 @@ fn analyze_field_access(
         return None;
     }
     match arena.get(step1) {
-        Expr::Name { value, stages, group, focus, index, .. }
-            if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none() =>
-        {
+        Expr::Name {
+            value,
+            stages,
+            group,
+            focus,
+            index,
+            ..
+        } if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none() => {
             Some(SimpleLambda::FieldAccess {
                 param: param.clone(),
                 field: value.clone(),
@@ -208,14 +215,15 @@ fn analyze_binary(
         let param_prev = &params[0];
         let param_curr = &params[1];
         if is_param_ref(lhs, arena, param_prev)
-            && let Some(field) = extract_param_dot_field(rhs, arena, param_curr) {
-                return Some(SimpleLambda::ReduceAccum {
-                    param_prev: param_prev.clone(),
-                    param_curr: param_curr.clone(),
-                    field,
-                    op,
-                });
-            }
+            && let Some(field) = extract_param_dot_field(rhs, arena, param_curr)
+        {
+            return Some(SimpleLambda::ReduceAccum {
+                param_prev: param_prev.clone(),
+                param_curr: param_curr.clone(),
+                field,
+                op,
+            });
+        }
     }
 
     // Field predicate: function($v) { $v.field op literal }
@@ -245,14 +253,15 @@ fn analyze_binary(
 
         // literal op $v.field (reversed)
         if let Some(lit) = extract_literal(lhs, arena)
-            && let Some(field) = extract_param_dot_field(rhs, arena, param) {
-                return Some(SimpleLambda::FieldPredicate {
-                    param: param.clone(),
-                    field,
-                    op: flip_relational(op),
-                    literal: lit,
-                });
-            }
+            && let Some(field) = extract_param_dot_field(rhs, arena, param)
+        {
+            return Some(SimpleLambda::FieldPredicate {
+                param: param.clone(),
+                field,
+                op: flip_relational(op),
+                literal: lit,
+            });
+        }
     }
 
     None
@@ -288,7 +297,13 @@ fn analyze_concat_template(
 
 /// Walk a left-recursive Concat tree and collect leaf nodes.
 fn collect_concat_nodes(arena: &AstArena, node: NodeId, out: &mut Vec<NodeId>) {
-    if let Expr::Binary { op: BinaryOp::Concat, lhs, rhs, .. } = arena.get(node) {
+    if let Expr::Binary {
+        op: BinaryOp::Concat,
+        lhs,
+        rhs,
+        ..
+    } = arena.get(node)
+    {
         collect_concat_nodes(arena, *lhs, out);
         out.push(*rhs);
     } else {
@@ -297,11 +312,7 @@ fn collect_concat_nodes(arena: &AstArena, node: NodeId, out: &mut Vec<NodeId>) {
 }
 
 /// Classify a single concat operand into a TemplatePiece.
-fn classify_template_operand(
-    node: NodeId,
-    arena: &AstArena,
-    param: &str,
-) -> Option<TemplatePiece> {
+fn classify_template_operand(node: NodeId, arena: &AstArena, param: &str) -> Option<TemplatePiece> {
     match arena.get(node) {
         // String literal
         Expr::StringLit { value, .. } => Some(TemplatePiece::Literal(value.clone())),
@@ -312,7 +323,11 @@ fn classify_template_operand(
         }
 
         // $string($param.field) — stringify a field value
-        Expr::Function { procedure, arguments, .. } if arguments.len() == 1 => {
+        Expr::Function {
+            procedure,
+            arguments,
+            ..
+        } if arguments.len() == 1 => {
             // Check procedure is $string
             let is_string_fn = matches!(
                 arena.get(*procedure),
@@ -324,8 +339,7 @@ fn classify_template_operand(
             // Check argument is $param.field
             match arena.get(arguments[0]) {
                 Expr::Path { steps, .. } if steps.len() == 2 => {
-                    extract_param_field(steps, arena, param)
-                        .map(TemplatePiece::StringifyField)
+                    extract_param_field(steps, arena, param).map(TemplatePiece::StringifyField)
                 }
                 _ => None,
             }
@@ -336,11 +350,17 @@ fn classify_template_operand(
 }
 
 fn is_relational(op: BinaryOp) -> bool {
-    matches!(op, BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Ge | BinaryOp::Le | BinaryOp::Eq | BinaryOp::Ne)
+    matches!(
+        op,
+        BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Ge | BinaryOp::Le | BinaryOp::Eq | BinaryOp::Ne
+    )
 }
 
 fn is_arithmetic(op: BinaryOp) -> bool {
-    matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod)
+    matches!(
+        op,
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+    )
 }
 
 fn flip_relational(op: BinaryOp) -> BinaryOp {
@@ -377,8 +397,12 @@ pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> Value {
         BinaryOp::Add => arithmetic_simple(lhs, rhs, |a, b| a + b),
         BinaryOp::Sub => arithmetic_simple(lhs, rhs, |a, b| a - b),
         BinaryOp::Mul => arithmetic_simple(lhs, rhs, |a, b| a * b),
-        BinaryOp::Div => arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a / b }),
-        BinaryOp::Mod => arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a % b }),
+        BinaryOp::Div => {
+            arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a / b })
+        }
+        BinaryOp::Mod => {
+            arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a % b })
+        }
         _ => Value::Undefined,
     }
 }
@@ -412,7 +436,9 @@ pub fn compare_by_field(a: &Value, b: &Value, field: &str) -> std::cmp::Ordering
     let va = get_field(a, field);
     let vb = get_field(b, field);
     match (&va, &vb) {
-        (Value::Number(na), Value::Number(nb)) => na.partial_cmp(nb).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Number(na), Value::Number(nb)) => {
+            na.partial_cmp(nb).unwrap_or(std::cmp::Ordering::Equal)
+        }
         (Value::String(sa), Value::String(sb)) => sa.cmp(sb),
         (Value::Undefined, Value::Undefined) => std::cmp::Ordering::Equal,
         (Value::Undefined, _) => std::cmp::Ordering::Greater,
@@ -423,7 +449,6 @@ pub fn compare_by_field(a: &Value, b: &Value, field: &str) -> std::cmp::Ordering
 
 /// Evaluate a ConcatTemplate against an item, writing into a single buffer.
 pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
-    
     let mut buf = String::new();
     for piece in pieces {
         match piece {
@@ -441,10 +466,9 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
             }
             TemplatePiece::StringifyField(field) => {
                 let v = get_field(item, field);
-                if !v.is_undefined()
-                    && v.stringify_into(&mut buf).is_err() {
-                        return Value::Undefined;
-                    }
+                if !v.is_undefined() && v.stringify_into(&mut buf).is_err() {
+                    return Value::Undefined;
+                }
             }
         }
     }
@@ -472,7 +496,10 @@ pub(crate) enum PreparedState {
     /// $contains with string arg: pre-extracted needle
     Contains { needle: String },
     /// $split with string arg: pre-extracted separator and optional limit
-    Split { separator: String, limit: Option<usize> },
+    Split {
+        separator: String,
+        limit: Option<usize>,
+    },
     /// $formatBase: pre-extracted radix
     FormatBase { radix: u32 },
 }
@@ -525,7 +552,11 @@ pub(crate) fn analyze_mapped_call(
     let func_node = unwrap_block(node, arena);
 
     let (procedure, arguments) = match arena.get(func_node) {
-        Expr::Function { procedure, arguments, .. } => (*procedure, arguments.clone()),
+        Expr::Function {
+            procedure,
+            arguments,
+            ..
+        } => (*procedure, arguments.clone()),
         _ => return None,
     };
 
@@ -572,9 +603,10 @@ pub(crate) fn analyze_mapped_call(
 /// Unwrap a single-expression Block to get the inner expression.
 fn unwrap_block(node: NodeId, arena: &AstArena) -> NodeId {
     if let Expr::Block { expressions, .. } = arena.get(node)
-        && expressions.len() == 1 {
-            return expressions[0];
-        }
+        && expressions.len() == 1
+    {
+        return expressions[0];
+    }
     node
 }
 
@@ -598,24 +630,32 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
         // $param.field or just FieldName (implicit scope)
         Expr::Path { steps, .. } if steps.len() == 2 => {
             if let Some(p) = param
-                && let Some(field) = extract_param_field(steps, arena, p) {
-                    return CallArg::Field(field);
-                }
+                && let Some(field) = extract_param_field(steps, arena, p)
+            {
+                return CallArg::Field(field);
+            }
             CallArg::Expr(node)
         }
 
         // Bare field name (in .() mapping context, no explicit param)
-        Expr::Name { value, stages, group, focus, index, .. }
-            if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none()
-                && param.is_none() =>
+        Expr::Name {
+            value,
+            stages,
+            group,
+            focus,
+            index,
+            ..
+        } if stages.is_empty()
+            && group.is_none()
+            && focus.is_none()
+            && index.is_none()
+            && param.is_none() =>
         {
             CallArg::Field(value.clone())
         }
 
         // Bare $param reference (the whole object)
-        Expr::Variable { name, .. } if param.is_some_and(|p| name == p) => {
-            CallArg::Expr(node)
-        }
+        Expr::Variable { name, .. } if param.is_some_and(|p| name == p) => CallArg::Expr(node),
 
         _ => CallArg::Expr(node),
     }
@@ -633,7 +673,9 @@ fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
             };
             let fc = super::format_number::FmtChars::default(); // TODO: handle opts arg
             let pics = super::format_number::split_on_pattern_sep(&picture, fc.pattern_sep);
-            if pics.len() > 2 { return None; }
+            if pics.len() > 2 {
+                return None;
+            }
             let pos_pic = super::format_number::parse_sub_picture(&pics[0], &fc).ok()?;
             let neg_pic = if pics.len() == 2 {
                 super::format_number::parse_sub_picture(&pics[1], &fc).ok()?
@@ -642,7 +684,11 @@ fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
                 np.prefix = format!("-{}", pos_pic.prefix);
                 np
             };
-            Some(PreparedState::FormatNumber { pos_pic, neg_pic, fc })
+            Some(PreparedState::FormatNumber {
+                pos_pic,
+                neg_pic,
+                fc,
+            })
         }
         "round" => {
             let precision = match args.get(1) {
@@ -700,7 +746,9 @@ fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
                 Some(CallArg::Const(Value::Number(n))) => *n as u32,
                 _ => return None,
             };
-            if !(2..=36).contains(&radix) { return None; }
+            if !(2..=36).contains(&radix) {
+                return None;
+            }
             Some(PreparedState::FormatBase { radix })
         }
         _ => None,
@@ -710,7 +758,11 @@ fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
 /// Execute a prepared function call directly, skipping internal parsing.
 fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataResult> {
     match prepared {
-        PreparedState::FormatNumber { pos_pic, neg_pic, fc } => {
+        PreparedState::FormatNumber {
+            pos_pic,
+            neg_pic,
+            fc,
+        } => {
             let n = match field_val {
                 Value::Number(f) => *f,
                 _ => return None,
@@ -729,7 +781,9 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
                 super::format_number::format_fixed(value, sp, fc)
             };
             let inner = super::format_number::apply_digit_family(&inner, fc.zero_digit);
-            Some(Ok(Value::String(format!("{}{}{}", sp.prefix, inner, sp.suffix).into())))
+            Some(Ok(Value::String(
+                format!("{}{}{}", sp.prefix, inner, sp.suffix).into(),
+            )))
         }
         PreparedState::Round { precision } => {
             let n = match field_val {
@@ -764,7 +818,9 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
                 16 => format!("{n:x}"),
                 _ => {
                     // Generic radix formatting
-                    if n == 0 { return Some(Ok(Value::String("0".into()))); }
+                    if n == 0 {
+                        return Some(Ok(Value::String("0".into())));
+                    }
                     let mut result = String::new();
                     let mut val = n.unsigned_abs();
                     let r = u64::from(*radix);
@@ -773,7 +829,9 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
                         result.push(char::from_digit(digit, *radix).unwrap_or('?'));
                         val /= r;
                     }
-                    if n < 0 { result.push('-'); }
+                    if n < 0 {
+                        result.push('-');
+                    }
                     let s: String = result.chars().rev().collect();
                     return Some(Ok(Value::String(s.into())));
                 }

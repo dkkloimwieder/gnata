@@ -25,8 +25,7 @@ fn bench_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
 
     for &(name, path) in FIXTURES {
-        let json_str = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let json_str = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let bytes = json_str.len() as u64;
 
         group.throughput(Throughput::Bytes(bytes));

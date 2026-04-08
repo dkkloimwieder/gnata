@@ -68,7 +68,10 @@ static UNICODE_ZEROS: &[char] = &[
 ];
 
 fn unicode_digit_zero(c: char) -> Option<char> {
-    UNICODE_ZEROS.iter().find(|&&z| c >= z && c <= char::from_u32(z as u32 + 9).unwrap_or(z)).copied()
+    UNICODE_ZEROS
+        .iter()
+        .find(|&&z| c >= z && c <= char::from_u32(z as u32 + 9).unwrap_or(z))
+        .copied()
 }
 
 fn parse_integer_with_picture(s: &str, picture: &str) -> Result<i64, JsonataError> {
@@ -326,10 +329,11 @@ fn from_roman(s: &str) -> Result<i64, JsonataError> {
 
         if i + 1 < chars.len()
             && let Some(next) = roman_val(chars[i + 1])
-                && next > v {
-                    total -= v;
-                    continue;
-                }
+            && next > v
+        {
+            total -= v;
+            continue;
+        }
         total += v;
     }
 

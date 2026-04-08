@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
 use crate::evaluator::{Environment, FunctionValue, call_function};
-use crate::parser::ast::BinaryOp;
 use crate::parser::AstArena;
+use crate::parser::ast::BinaryOp;
 use crate::value::{Sequence, Value};
 
 use super::hof_fast::{self, SimpleLambda, analyze_lambda};
@@ -86,18 +86,18 @@ pub fn fn_map(
     // Lifted dispatch: if the lambda body is a function call with field/const args,
     // resolve the inner function once and dispatch directly per item.
     if let FunctionValue::Lambda(ref lambda) = *func
-        && let Some(mc) = hof_fast::analyze_mapped_call(
-            lambda.body, arena, Some(&lambda.params[0]), env,
-        ) {
-            let mut seq = Sequence::new();
-            for item in arr.iter() {
-                let val = hof_fast::exec_mapped_call(&mc, item, env, arena)?;
-                if !val.is_undefined() {
-                    seq.values.push(val);
-                }
+        && let Some(mc) =
+            hof_fast::analyze_mapped_call(lambda.body, arena, Some(&lambda.params[0]), env)
+    {
+        let mut seq = Sequence::new();
+        for item in arr.iter() {
+            let val = hof_fast::exec_mapped_call(&mc, item, env, arena)?;
+            if !val.is_undefined() {
+                seq.values.push(val);
             }
-            return Ok(Value::Sequence(Box::new(seq)));
         }
+        return Ok(Value::Sequence(Box::new(seq)));
+    }
 
     let arr_val = Value::Array(arr.clone()); // clone once, reuse
     let mut seq = Sequence::new();
@@ -130,7 +130,9 @@ pub fn fn_filter(
     // Fast path: field predicate — function($v){$v.field op literal}
     if let Some(ref fast) = try_fast_lambda(&func, arena) {
         match fast {
-            SimpleLambda::FieldPredicate { field, op, literal, .. } => {
+            SimpleLambda::FieldPredicate {
+                field, op, literal, ..
+            } => {
                 let mut result = Vec::new();
                 for item in arr.iter() {
                     let fv = hof_fast::get_field(item, field);
@@ -141,7 +143,9 @@ pub fn fn_filter(
                 }
                 return Ok(collapse_array(result));
             }
-            SimpleLambda::TwoFieldPredicate { field1, op, field2, .. } => {
+            SimpleLambda::TwoFieldPredicate {
+                field1, op, field2, ..
+            } => {
                 let mut result = Vec::new();
                 for item in arr.iter() {
                     let fv1 = hof_fast::get_field(item, field1);
@@ -191,12 +195,13 @@ pub fn fn_reduce(
     let func = args[1].require_function("$reduce")?;
     // Check that the function accepts at least 2 parameters.
     if let crate::evaluator::functions::FunctionValue::Lambda(lambda) = &*func
-        && lambda.params.len() < 2 {
-            return Err(JsonataError::new(
-                "D3050",
-                "$reduce: function argument must accept at least 2 parameters",
-            ));
-        }
+        && lambda.params.len() < 2
+    {
+        return Err(JsonataError::new(
+            "D3050",
+            "$reduce: function argument must accept at least 2 parameters",
+        ));
+    }
     let init = args.get(2).cloned();
     if arr.is_empty() {
         return Ok(init.unwrap_or(Value::Undefined));
@@ -355,10 +360,18 @@ pub fn fn_sort(
 
     // Fast path: sort by field — function($a,$b){$a.field > $b.field}
     if let Some(func) = &comparator
-        && let Some(SimpleLambda::SortComparator { field, .. } | SimpleLambda::SortComparatorOp { field, op: BinaryOp::Gt, .. }) = try_fast_lambda(func, arena) {
-            arr.sort_by(|a, b| hof_fast::compare_by_field(a, b, &field));
-            return Ok(Value::Array(Rc::from(arr)));
-        }
+        && let Some(
+            SimpleLambda::SortComparator { field, .. }
+            | SimpleLambda::SortComparatorOp {
+                field,
+                op: BinaryOp::Gt,
+                ..
+            },
+        ) = try_fast_lambda(func, arena)
+    {
+        arr.sort_by(|a, b| hof_fast::compare_by_field(a, b, &field));
+        return Ok(Value::Array(Rc::from(arr)));
+    }
 
     // Sort with optional comparator.
     let mut error: Option<JsonataError> = None;
@@ -434,25 +447,31 @@ pub fn fn_single(
 
     // Fast path: field predicate — function($v){$v.field op literal}
     if let Some(f) = &func
-        && let Some(SimpleLambda::FieldPredicate { field, op, literal, .. }) = try_fast_lambda(f, arena) {
-            let mut matches = Vec::new();
-            for item in arr.iter() {
-                let fv = hof_fast::get_field(item, &field);
-                if hof_fast::eval_binary_simple(&fv, op, &literal).to_boolean() {
-                    matches.push(item.clone());
-                    if matches.len() > 1 {
-                        return Err(JsonataError::new(
-                            "D3138",
-                            "$single: expected 1 match, found multiple",
-                        ));
-                    }
+        && let Some(SimpleLambda::FieldPredicate {
+            field, op, literal, ..
+        }) = try_fast_lambda(f, arena)
+    {
+        let mut matches = Vec::new();
+        for item in arr.iter() {
+            let fv = hof_fast::get_field(item, &field);
+            if hof_fast::eval_binary_simple(&fv, op, &literal).to_boolean() {
+                matches.push(item.clone());
+                if matches.len() > 1 {
+                    return Err(JsonataError::new(
+                        "D3138",
+                        "$single: expected 1 match, found multiple",
+                    ));
                 }
             }
-            return match matches.len() {
-                0 => Err(JsonataError::new("D3139", "$single: expected 1 match, found 0")),
-                _ => Ok(matches.swap_remove(0)),
-            };
         }
+        return match matches.len() {
+            0 => Err(JsonataError::new(
+                "D3139",
+                "$single: expected 1 match, found 0",
+            )),
+            _ => Ok(matches.swap_remove(0)),
+        };
+    }
 
     let mut matches = Vec::new();
     let arr_val = Value::Array(arr.clone());
@@ -493,7 +512,11 @@ fn sift_object(
 ) -> JsonataResult {
     let mut result = crate::value::ObjectMap::new();
     for (key, val) in obj.iter() {
-        let call_args = vec![val.clone(), Value::String(key.as_str().into()), obj_val.clone()];
+        let call_args = vec![
+            val.clone(),
+            Value::String(key.as_str().into()),
+            obj_val.clone(),
+        ];
         let keep = call_function(func, &call_args, val, env, arena)?;
         if keep.to_boolean() {
             result.insert(key.clone(), val.clone());

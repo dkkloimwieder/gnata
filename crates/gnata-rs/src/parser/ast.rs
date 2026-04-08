@@ -1,32 +1,32 @@
 /// Binary operator tag — replaces String for zero-cost match dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
-    Add,        // +
-    Sub,        // -
-    Mul,        // *
-    Div,        // /
-    Mod,        // %
-    Pow,        // **
-    Concat,     // &
-    Eq,         // =
-    Ne,         // !=
-    Lt,         // <
-    Le,         // <=
-    Gt,         // >
-    Ge,         // >=
-    And,        // and
-    Or,         // or
-    In,         // in
-    Chain,      // ~>
-    NullCoal,   // ??
-    CondTern,   // ?:
-    Subscript,  // [
-    Range,      // ..
-    ObjConst,   // {
-    Dot,        // . (before process_ast flattens to Path)
-    Sort,       // ^  (before process_ast converts)
-    Assign,     // :=
-    Pipe,       // | (transform)
+    Add,       // +
+    Sub,       // -
+    Mul,       // *
+    Div,       // /
+    Mod,       // %
+    Pow,       // **
+    Concat,    // &
+    Eq,        // =
+    Ne,        // !=
+    Lt,        // <
+    Le,        // <=
+    Gt,        // >
+    Ge,        // >=
+    And,       // and
+    Or,        // or
+    In,        // in
+    Chain,     // ~>
+    NullCoal,  // ??
+    CondTern,  // ?:
+    Subscript, // [
+    Range,     // ..
+    ObjConst,  // {
+    Dot,       // . (before process_ast flattens to Path)
+    Sort,      // ^  (before process_ast converts)
+    Assign,    // :=
+    Pipe,      // | (transform)
 }
 
 impl BinaryOp {
@@ -104,9 +104,9 @@ impl std::fmt::Display for BinaryOp {
 /// Unary operator tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
-    Negate,     // -
-    ArrayCons,  // [
-    ObjCons,    // {
+    Negate,    // -
+    ArrayCons, // [
+    ObjCons,   // {
 }
 
 impl UnaryOp {

@@ -95,7 +95,10 @@ impl StreamEvaluator {
         if idx >= self.exprs.len() {
             return Err(JsonataError::new(
                 "D0000",
-                format!("expression index {idx} out of range [0, {})", self.exprs.len()),
+                format!(
+                    "expression index {idx} out of range [0, {})",
+                    self.exprs.len()
+                ),
             ));
         }
         self.exprs[idx] = Some(expr);
@@ -110,7 +113,10 @@ impl StreamEvaluator {
         if idx >= self.exprs.len() {
             return Err(JsonataError::new(
                 "D0000",
-                format!("expression index {idx} out of range [0, {})", self.exprs.len()),
+                format!(
+                    "expression index {idx} out of range [0, {})",
+                    self.exprs.len()
+                ),
             ));
         }
         self.exprs[idx] = None;
@@ -277,10 +283,8 @@ mod tests {
     fn compile_and_eval_one() {
         let mut se = StreamEvaluator::new(Vec::new());
         let idx = se.compile("Account.Name").unwrap();
-        let input = crate::value::Value::from_json_str(
-            r#"{"Account": {"Name": "Firefly"}}"#,
-        )
-        .unwrap();
+        let input =
+            crate::value::Value::from_json_str(r#"{"Account": {"Name": "Firefly"}}"#).unwrap();
         let result = se.eval_one(&input, idx).unwrap();
         assert_eq!(result, Value::String("Firefly".into()));
     }
@@ -296,10 +300,7 @@ mod tests {
         .unwrap();
         let results = se.eval_many(&input, &[i0, i1]).unwrap();
         assert_eq!(results[0], Some(Value::String("Firefly".into())));
-        assert_eq!(
-            results[1],
-            Some(Value::String("order103".into()))
-        );
+        assert_eq!(results[1], Some(Value::String("order103".into())));
     }
 
     #[test]
@@ -383,7 +384,10 @@ mod tests {
             ("data.user_type != 99", Value::Bool(true)),
             ("data.user_type", Value::Number(2.0)),
             ("data.user_type > 1", Value::Bool(true)),
-            ("data.user_type = 2 and metadata.is_admin = true", Value::Bool(true)),
+            (
+                "data.user_type = 2 and metadata.is_admin = true",
+                Value::Bool(true),
+            ),
         ];
         let input = test_input();
         for (expr, want) in cases {
@@ -416,7 +420,8 @@ mod tests {
         let i1 = se.compile("data.user_type = 2").unwrap();
 
         for i in 0..100 {
-            se.compile(&format!("data.user_type = {}", i + 1000)).unwrap();
+            se.compile(&format!("data.user_type = {}", i + 1000))
+                .unwrap();
         }
         assert_eq!(se.len(), 102);
 
@@ -476,8 +481,8 @@ mod tests {
             let n = args.first().and_then(Value::as_f64).unwrap_or(0.0);
             Ok(Value::Number(n * 2.0))
         });
-        let mut se = StreamEvaluator::new(Vec::new())
-            .with_custom_functions(vec![("double".into(), double)]);
+        let mut se =
+            StreamEvaluator::new(Vec::new()).with_custom_functions(vec![("double".into(), double)]);
         let idx = se.compile("$double(data.user_type)").unwrap();
         let result = se.eval_one(&test_input(), idx).unwrap();
         assert_eq!(result, Value::Number(4.0));
@@ -489,8 +494,8 @@ mod tests {
             let name = args.first().and_then(Value::as_str).unwrap_or("?");
             Ok(Value::String(format!("hi {name}").into()))
         });
-        let mut se = StreamEvaluator::new(Vec::new())
-            .with_custom_functions(vec![("greet".into(), greet)]);
+        let mut se =
+            StreamEvaluator::new(Vec::new()).with_custom_functions(vec![("greet".into(), greet)]);
         let idx = se.compile("$uppercase($greet(data.action))").unwrap();
         let result = se.eval_one(&test_input(), idx).unwrap();
         assert_eq!(result, Value::String("HI GRANT-ACCESS".into()));
@@ -531,13 +536,10 @@ mod tests {
     fn expression_cancel_returns_d3001() {
         use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(true));
-        let expr = crate::expression::Expression::compile(
-            "$reduce([1,2,3], function($a,$b){$a+$b}, 0)",
-        )
-        .unwrap();
-        let err = expr
-            .evaluate_with_cancel("", cancel)
-            .unwrap_err();
+        let expr =
+            crate::expression::Expression::compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)")
+                .unwrap();
+        let err = expr.evaluate_with_cancel("", cancel).unwrap_err();
         assert_eq!(err.code, "D3001");
     }
 
@@ -546,7 +548,9 @@ mod tests {
         use std::sync::atomic::AtomicBool;
         let cancel = Arc::new(AtomicBool::new(true));
         let mut se = StreamEvaluator::new(Vec::new());
-        let idx = se.compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)").unwrap();
+        let idx = se
+            .compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)")
+            .unwrap();
         let err = se
             .eval_many_with_cancel(&test_input(), &[idx], cancel)
             .unwrap_err();
@@ -559,9 +563,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let mut se = StreamEvaluator::new(Vec::new());
         let idx = se.compile("data.user_type + 1").unwrap();
-        let result = se
-            .eval_one_with_cancel(&test_input(), idx, cancel)
-            .unwrap();
+        let result = se.eval_one_with_cancel(&test_input(), idx, cancel).unwrap();
         assert_eq!(result, Value::Number(3.0));
     }
 }

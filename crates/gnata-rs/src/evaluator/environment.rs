@@ -111,7 +111,9 @@ impl Environment {
         while let Some(env) = current {
             if let Some(v) = env.bindings.borrow().get(name) {
                 let result = v.clone();
-                self.cache.borrow_mut().push((CompactString::from(name), result.clone()));
+                self.cache
+                    .borrow_mut()
+                    .push((CompactString::from(name), result.clone()));
                 return Some(result);
             }
             current = env.parent.as_ref();

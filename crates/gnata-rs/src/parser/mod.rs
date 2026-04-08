@@ -490,7 +490,8 @@ impl Parser {
             }
             TokenType::At => {
                 // S0215: @ cannot follow a predicate (subscript) expression.
-                if matches!(self.arena.get(left), Expr::Binary { op, .. } if *op == BinaryOp::Subscript) {
+                if matches!(self.arena.get(left), Expr::Binary { op, .. } if *op == BinaryOp::Subscript)
+                {
                     return Err(parse_error(
                         "S0215",
                         "the @ operator cannot follow a predicate expression",
@@ -1377,7 +1378,9 @@ mod tests {
         match arena.get(root) {
             Expr::Unary { expressions, .. } => {
                 assert_eq!(expressions.len(), 1);
-                assert!(matches!(arena.get(expressions[0]), Expr::Binary { op, .. } if *op == BinaryOp::Range));
+                assert!(
+                    matches!(arena.get(expressions[0]), Expr::Binary { op, .. } if *op == BinaryOp::Range)
+                );
             }
             other => panic!("expected array with range, got {:?}", other),
         }

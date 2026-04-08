@@ -142,7 +142,10 @@ impl Value {
     ///
     /// # Errors
     /// Returns `T0410` if the value is not a function.
-    pub fn require_function(&self, func_name: &str) -> JsonataResult<Box<crate::evaluator::FunctionValue>> {
+    pub fn require_function(
+        &self,
+        func_name: &str,
+    ) -> JsonataResult<Box<crate::evaluator::FunctionValue>> {
         match self {
             Value::Function(f) => Ok(f.clone()),
             _ => Err(JsonataError::new(
@@ -325,10 +328,22 @@ impl Value {
     pub fn stringify_into(&self, buf: &mut String) -> JsonataResult<()> {
         match self {
             Value::Undefined | Value::Function(_) | Value::TailCall(_) => Ok(()),
-            Value::String(s) => { buf.push_str(s); Ok(()) }
-            Value::Number(n) => { buf.push_str(&format_float(*n)); Ok(()) }
-            Value::Bool(true) => { buf.push_str("true"); Ok(()) }
-            Value::Bool(false) => { buf.push_str("false"); Ok(()) }
+            Value::String(s) => {
+                buf.push_str(s);
+                Ok(())
+            }
+            Value::Number(n) => {
+                buf.push_str(&format_float(*n));
+                Ok(())
+            }
+            Value::Bool(true) => {
+                buf.push_str("true");
+                Ok(())
+            }
+            Value::Bool(false) => {
+                buf.push_str("false");
+                Ok(())
+            }
             other => {
                 if other.contains_non_finite() {
                     return Err(JsonataError::new("D1001", "Number out of range"));
@@ -422,9 +437,7 @@ impl Value {
                 }
             }
             Value::String(s) => serde_json::Value::String(s.to_string()),
-            Value::Array(arr) => {
-                serde_json::Value::Array(arr.iter().map(Value::to_json).collect())
-            }
+            Value::Array(arr) => serde_json::Value::Array(arr.iter().map(Value::to_json).collect()),
             Value::Object(obj) => serde_json::Value::Object(
                 obj.iter()
                     .map(|(k, v)| (k.to_string(), v.to_json()))
@@ -602,10 +615,7 @@ mod tests {
         // CompactString is 24 bytes inline, so Value is 32 bytes
         // (discriminant + 24-byte String variant + alignment).
         // Tradeoff: 2x size vs eliminating 90%+ of string heap allocs.
-        assert!(
-            size <= 32,
-            "Value should be ≤32 bytes, got {size}"
-        );
+        assert!(size <= 32, "Value should be ≤32 bytes, got {size}");
     }
 
     // ── Undefined/Null distinction ───────────────────────────────────

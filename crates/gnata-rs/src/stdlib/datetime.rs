@@ -10,9 +10,13 @@ use crate::value::Value;
 /// Uses jiff on native/WASI, js_sys::Date::now() on browser WASM.
 fn current_millis() -> i64 {
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-    { jiff::Timestamp::now().as_millisecond() }
+    {
+        jiff::Timestamp::now().as_millisecond()
+    }
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    { js_sys::Date::now() as i64 }
+    {
+        js_sys::Date::now() as i64
+    }
 }
 
 // ── Public entry points ─────────────────────────────────────────────────────
@@ -169,9 +173,7 @@ fn parse_iso_to_millis(s: &str) -> JsonataResult {
 
     Err(JsonataError::new(
         "D3110",
-        format!(
-            "$toMillis: the value '{s}' does not match the standard datetime format"
-        ),
+        format!("$toMillis: the value '{s}' does not match the standard datetime format"),
     ))
 }
 
@@ -241,9 +243,7 @@ fn format_default_iso(ms: i64, tz_offset_secs: i32) -> String {
 
     let (y, mo, d, h, mi, s) = secs_to_ymd_hms(secs);
 
-    let base = format!(
-        "{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{millis_part:03}"
-    );
+    let base = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{millis_part:03}");
 
     if tz_offset_secs == 0 {
         return base + "Z";
@@ -360,9 +360,9 @@ fn format_token(
         return Ok(String::new());
     }
     let mut chars = token.chars();
-    let component = chars.next().ok_or_else(|| {
-        JsonataError::new("D3130", "unexpected empty picture token")
-    })?;
+    let component = chars
+        .next()
+        .ok_or_else(|| JsonataError::new("D3130", "unexpected empty picture token"))?;
     let modifier: String = chars.collect();
 
     match component {
@@ -424,9 +424,7 @@ fn format_year_component(y: i32, modifier: &str) -> Result<String, JsonataError>
         "A" => Ok(to_alphabetic(y.into(), 'A')),
         "N" => Err(JsonataError::new(
             "D3133",
-            format!(
-                "the picture string is not valid: unsupported modifier in [Y{modifier}]"
-            ),
+            format!("the picture string is not valid: unsupported modifier in [Y{modifier}]"),
         )),
         _ => format_year_token(y, modifier),
     }
@@ -793,9 +791,10 @@ fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, Jsonata
                 i = j + 1;
                 continue;
             }
-            let comp = tok.chars().next().ok_or_else(|| {
-                JsonataError::new("D3132", "unexpected empty picture token")
-            })?;
+            let comp = tok
+                .chars()
+                .next()
+                .ok_or_else(|| JsonataError::new("D3132", "unexpected empty picture token"))?;
             if !VALID_COMPONENTS.contains(&comp) {
                 return Err(JsonataError::new(
                     "D3132",
@@ -1530,12 +1529,7 @@ impl WordParser<'_> {
                 continue;
             }
             let after = &self.s[self.pos + candidate.len()..];
-            if after.is_empty()
-                || !after
-                    .chars()
-                    .next()
-                    .is_some_and(char::is_alphabetic)
-            {
+            if after.is_empty() || !after.chars().next().is_some_and(char::is_alphabetic) {
                 self.pos += candidate.len();
                 return true;
             }
@@ -2043,7 +2037,11 @@ fn ymd_to_epoch_days(y: i32, m: u8, d: u8) -> i64 {
     // Inverse of days_to_ymd (Howard Hinnant).
     let m = i32::from(m);
     let d = i32::from(d);
-    let y = if m <= 2 { i64::from(y) - 1 } else { i64::from(y) };
+    let y = if m <= 2 {
+        i64::from(y) - 1
+    } else {
+        i64::from(y)
+    };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u64;
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as u64 + 2) / 5 + d as u64 - 1;

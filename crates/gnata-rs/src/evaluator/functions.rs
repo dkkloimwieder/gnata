@@ -215,14 +215,16 @@ pub fn eval_lambda(
         })
         .unwrap_or_default();
 
-    Ok(Value::Function(Box::new(FunctionValue::Lambda(Rc::new(Lambda {
-        params: param_names,
-        body,
-        closure: Rc::clone(env),
-        thunk,
-        signature: sig,
-        captured_focus: input.clone(),
-    })))))
+    Ok(Value::Function(Box::new(FunctionValue::Lambda(Rc::new(
+        Lambda {
+            params: param_names,
+            body,
+            closure: Rc::clone(env),
+            thunk,
+            signature: sig,
+            captured_focus: input.clone(),
+        },
+    )))))
 }
 
 /// Evaluate a partial application node.
@@ -306,7 +308,9 @@ pub fn eval_partial(
         },
     );
 
-    Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(partial_fn))))
+    Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(
+        partial_fn,
+    ))))
 }
 
 /// Call a function value with arguments. Contains the trampoline loop for TCO.
@@ -383,7 +387,8 @@ pub fn call_function(
                     focus
                 };
 
-                let result = super::eval_with_stack_check(arena, lambda.body, body_focus, &child_env);
+                let result =
+                    super::eval_with_stack_check(arena, lambda.body, body_focus, &child_env);
                 counter.depth.set(depth - 1);
 
                 match result {

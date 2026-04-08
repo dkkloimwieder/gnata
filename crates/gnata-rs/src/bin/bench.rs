@@ -19,15 +19,29 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "-expr" => { expr_str = &args[i + 1]; i += 2; }
-            "-data" => { data_str = args[i + 1].clone(); i += 2; }
+            "-expr" => {
+                expr_str = &args[i + 1];
+                i += 2;
+            }
+            "-data" => {
+                data_str = args[i + 1].clone();
+                i += 2;
+            }
             "-datafile" => {
                 data_str = std::fs::read_to_string(&args[i + 1]).expect("read file failed");
                 i += 2;
             }
-            "-n" => { n = args[i + 1].parse().expect("invalid -n"); i += 2; }
-            "-stream" => { stream_mode = true; i += 1; }
-            _ => { i += 1; }
+            "-n" => {
+                n = args[i + 1].parse().expect("invalid -n");
+                i += 2;
+            }
+            "-stream" => {
+                stream_mode = true;
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
         }
     }
 
@@ -57,7 +71,9 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
 
     let mut result = Value::Undefined;
     for _ in 0..n {
-        result = compiled.evaluate_with_env(&input, &env).expect("eval failed");
+        result = compiled
+            .evaluate_with_env(&input, &env)
+            .expect("eval failed");
     }
 
     let json = result.to_json();

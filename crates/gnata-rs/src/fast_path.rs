@@ -402,21 +402,21 @@ fn fold_pure_path<'a>(segments: &[String], input: &'a Value, f: &mut impl FnMut(
                     && let Some(v) = obj.get(segment.as_str())
                 {
                     if rest.is_empty() {
-                            match v {
-                                Value::Array(inner) => {
-                                    for elem in inner.iter() {
-                                        f(elem);
-                                    }
+                        match v {
+                            Value::Array(inner) => {
+                                for elem in inner.iter() {
+                                    f(elem);
                                 }
-                                Value::Undefined => {}
-                                other => f(other),
                             }
-                        } else {
-                            fold_pure_path(rest, v, f);
+                            Value::Undefined => {}
+                            other => f(other),
                         }
+                    } else {
+                        fold_pure_path(rest, v, f);
                     }
                 }
             }
+        }
         _ => {}
     }
 }
@@ -470,7 +470,11 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
                     found = true;
                 }
             });
-            return Some(if found { Value::Number(total) } else { Value::Number(0.0) });
+            return Some(if found {
+                Value::Number(total)
+            } else {
+                Value::Number(0.0)
+            });
         }
         FuncFastKind::Max => {
             let mut result: Option<f64> = None;
@@ -605,9 +609,7 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
         },
 
         FuncFastKind::Length => match val {
-            Value::String(s) => {
-                Some(Value::Number(s.chars().count() as f64))
-            }
+            Value::String(s) => Some(Value::Number(s.chars().count() as f64)),
             _ => None,
         },
 
@@ -671,7 +673,10 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
 
         FuncFastKind::Keys => match val {
             Value::Object(obj) => {
-                let keys: Vec<Value> = obj.keys().map(|k| Value::String(k.as_str().into())).collect();
+                let keys: Vec<Value> = obj
+                    .keys()
+                    .map(|k| Value::String(k.as_str().into()))
+                    .collect();
                 Some(match keys.len() {
                     0 => Value::Undefined,
                     1 => keys.into_iter().next().unwrap_or(Value::Undefined),
@@ -957,10 +962,7 @@ mod tests {
 
     #[test]
     fn func_contains() {
-        assert_fast_matches_full(
-            "$contains(name, \"li\")",
-            r#"{"name": "Alice"}"#,
-        );
+        assert_fast_matches_full("$contains(name, \"li\")", r#"{"name": "Alice"}"#);
     }
 
     #[test]

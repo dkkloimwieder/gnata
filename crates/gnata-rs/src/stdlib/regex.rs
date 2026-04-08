@@ -107,7 +107,10 @@ pub fn fn_match(
         }
     };
 
-    let limit: Option<usize> = args.get(2).and_then(super::super::value::Value::as_f64).map(|n| n as usize);
+    let limit: Option<usize> = args
+        .get(2)
+        .and_then(super::super::value::Value::as_f64)
+        .map(|n| n as usize);
 
     // If the second argument is a function, use custom matcher protocol.
     if let Value::Function(func) = &args[1] {
@@ -157,10 +160,12 @@ fn match_with_custom_matcher(
     )?;
 
     while let Value::Object(obj) = &res {
-
         let match_val = obj.get("match").cloned().unwrap_or(Value::Undefined);
         let start_val = obj.get("start").cloned().unwrap_or(Value::Undefined);
-        let groups_val = obj.get("groups").cloned().unwrap_or(Value::Array(Rc::from(vec![])));
+        let groups_val = obj
+            .get("groups")
+            .cloned()
+            .unwrap_or(Value::Array(Rc::from(vec![])));
 
         let mut match_obj = crate::value::ObjectMap::new();
         match_obj.insert("match".into(), match_val);
@@ -169,9 +174,10 @@ fn match_with_custom_matcher(
         result.push(Value::Object(Rc::new(match_obj)));
 
         if let Some(lim) = limit
-            && result.len() >= lim {
-                break;
-            }
+            && result.len() >= lim
+        {
+            break;
+        }
 
         // Get the next function and call it.
         let next_fn = match obj.get("next") {
@@ -218,12 +224,13 @@ pub fn fn_replace(
     }
 
     if let Some(v) = args.get(3)
-        && v.is_null() {
-            return Err(JsonataError::new(
-                "T0410",
-                "$replace: fourth argument must be a number",
-            ));
-        }
+        && v.is_null()
+    {
+        return Err(JsonataError::new(
+            "T0410",
+            "$replace: fourth argument must be a number",
+        ));
+    }
     let limit: Option<usize> = args.get(3).and_then(|v| {
         v.as_f64().map(|n| {
             if n < 0.0 {
@@ -251,12 +258,9 @@ pub fn fn_replace(
                 "$replace: pattern cannot be an empty string",
             ));
         }
-        return Ok(Value::String(replace_n_literal(
-            &s,
-            pattern,
-            replacement,
-            limit,
-        ).into()));
+        return Ok(Value::String(
+            replace_n_literal(&s, pattern, replacement, limit).into(),
+        ));
     }
 
     // Regex pattern.
@@ -314,9 +318,9 @@ fn replace_regex_string(
         {
             break;
         }
-        let m = caps.get(0).ok_or_else(|| {
-            JsonataError::new("D1004", "$replace: failed to get regex match")
-        })?;
+        let m = caps
+            .get(0)
+            .ok_or_else(|| JsonataError::new("D1004", "$replace: failed to get regex match"))?;
         if m.as_str().is_empty() {
             return Err(JsonataError::new(
                 "D1004",
@@ -354,9 +358,9 @@ fn replace_with_fn(
         {
             break;
         }
-        let m = caps.get(0).ok_or_else(|| {
-            JsonataError::new("D1004", "$replace: failed to get regex match")
-        })?;
+        let m = caps
+            .get(0)
+            .ok_or_else(|| JsonataError::new("D1004", "$replace: failed to get regex match"))?;
         if m.as_str().is_empty() {
             return Err(JsonataError::new(
                 "D1004",

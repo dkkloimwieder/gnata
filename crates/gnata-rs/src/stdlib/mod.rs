@@ -135,14 +135,8 @@ pub fn register_all_on_rc(env: &Rc<Environment>) {
     env.bind("ceil", _mk_b(numeric::fn_ceil));
     env.bind("round", _mk_b(numeric::fn_round));
     env.bind("sum", _mk_sb(numeric::fn_sum, "a<n>"));
-    env.bind(
-        "formatInteger",
-        _mk_b(format_integer::fn_format_integer),
-    );
-    env.bind(
-        "parseInteger",
-        _mk_b(parse_integer::fn_parse_integer),
-    );
+    env.bind("formatInteger", _mk_b(format_integer::fn_format_integer));
+    env.bind("parseInteger", _mk_b(parse_integer::fn_parse_integer));
     env.bind("count", _mk_b(array::fn_count));
     env.bind("append", _mk_b(array::fn_append));
     env.bind("keys", _mk_b(object::fn_keys));
@@ -186,7 +180,10 @@ fn bind_builtin(
     f: fn(&[Value], &Value) -> crate::error::JsonataResult,
 ) {
     let func: Rc<BuiltinFn> = Rc::new(f);
-    env.bind(name, Value::Function(Box::new(FunctionValue::Builtin(func))));
+    env.bind(
+        name,
+        Value::Function(Box::new(FunctionValue::Builtin(func))),
+    );
 }
 
 fn bind_signed_builtin(

@@ -36,29 +36,56 @@ const JOIN_FLAG: &str = "%%j";
 /// to eval_inner which is used for all internal recursive calls (no stack check overhead).
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     #[cfg(not(target_arch = "wasm32"))]
-    { stacker::maybe_grow(128 * 1024, 1024 * 1024, || eval_inner(arena, node, input, env)) }
+    {
+        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+            eval_inner(arena, node, input, env)
+        })
+    }
     #[cfg(target_arch = "wasm32")]
-    { eval_inner(arena, node, input, env) }
+    {
+        eval_inner(arena, node, input, env)
+    }
 }
 
 /// Internal eval without stack check. Used for all recursive calls within
 /// the evaluator. Stack growth is handled at deep-recursion entry points
 /// (call_function for lambda bodies).
-pub(crate) fn eval_no_stack_check(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
+pub(crate) fn eval_no_stack_check(
+    arena: &AstArena,
+    node: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
     eval_inner(arena, node, input, env)
 }
 
 /// Check remaining stack and grow if needed. Called from deep-recursion
 /// entry points (call_function lambda body, etc.).
-pub(crate) fn eval_with_stack_check(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
+pub(crate) fn eval_with_stack_check(
+    arena: &AstArena,
+    node: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
     #[cfg(not(target_arch = "wasm32"))]
-    { stacker::maybe_grow(128 * 1024, 1024 * 1024, || eval_inner(arena, node, input, env)) }
+    {
+        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+            eval_inner(arena, node, input, env)
+        })
+    }
     #[cfg(target_arch = "wasm32")]
-    { eval_inner(arena, node, input, env) }
+    {
+        eval_inner(arena, node, input, env)
+    }
 }
 
 #[allow(clippy::too_many_lines, clippy::needless_continue)]
-fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
+fn eval_inner(
+    arena: &AstArena,
+    node: NodeId,
+    input: &Value,
+    env: &Rc<Environment>,
+) -> JsonataResult {
     // Iterative evaluation loop with tail-call optimization.
     // Tail positions (Block last expr, Condition then/else, Binary ?:/??/~>)
     // update `cur_node`/`cur_env` and continue the loop instead of recursing.
@@ -82,11 +109,15 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             Expr::StringLit { value, .. } => return Ok(Value::String(value.clone().into())),
             Expr::NumberLit { value: n, .. } => return Ok(Value::Number(*n)),
             Expr::Variable { name, group, .. } => {
-                if group.is_some() { return eval_group_by(arena, cur_node, input, cur_env); }
+                if group.is_some() {
+                    return eval_group_by(arena, cur_node, input, cur_env);
+                }
                 return eval_variable(name, input, cur_env);
             }
             Expr::Name { value, group, .. } => {
-                if group.is_some() { return eval_group_by(arena, cur_node, input, cur_env); }
+                if group.is_some() {
+                    return eval_group_by(arena, cur_node, input, cur_env);
+                }
                 return eval_name(value, input);
             }
             Expr::Wildcard { .. } => return eval_wildcard(input),
@@ -144,7 +175,12 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
             }
 
             // ── Tail-call optimized: Binary ?:, ??, ~> ──
-            Expr::Binary { op, lhs, rhs, .. } if matches!(op, BinaryOp::CondTern | BinaryOp::NullCoal | BinaryOp::Chain) => {
+            Expr::Binary { op, lhs, rhs, .. }
+                if matches!(
+                    op,
+                    BinaryOp::CondTern | BinaryOp::NullCoal | BinaryOp::Chain
+                ) =>
+            {
                 let (op, lhs, rhs) = (*op, *lhs, *rhs);
                 match op {
                     BinaryOp::CondTern => {
@@ -179,7 +215,9 @@ fn eval_inner(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environmen
                 return eval_path(arena, cur_node, input, cur_env);
             }
             Expr::Function { group, .. } => {
-                if group.is_some() { return eval_group_by(arena, cur_node, input, cur_env); }
+                if group.is_some() {
+                    return eval_group_by(arena, cur_node, input, cur_env);
+                }
                 return eval_function(arena, cur_node, input, cur_env);
             }
             Expr::Binary { .. } => return eval_binary(arena, cur_node, input, cur_env),
@@ -261,8 +299,11 @@ fn eval_name(name: &str, input: &Value) -> JsonataResult {
                 match val {
                     Value::Array(inner) => {
                         for sv in inner.iter() {
-                            seq.values
-                                .push(if sv.is_undefined() { Value::Null } else { sv.clone() });
+                            seq.values.push(if sv.is_undefined() {
+                                Value::Null
+                            } else {
+                                sv.clone()
+                            });
                         }
                     }
                     other => {
@@ -697,9 +738,10 @@ fn eval_path_tuple(
     let mut final_group: Option<crate::parser::GroupExpr> = None;
     for &step in steps {
         if final_group.is_none()
-            && let Some(grp) = extract_step_group(arena, step) {
-                final_group = Some(grp);
-            }
+            && let Some(grp) = extract_step_group(arena, step)
+        {
+            final_group = Some(grp);
+        }
     }
 
     for (step_idx, &step) in steps.iter().enumerate() {
@@ -783,7 +825,8 @@ fn eval_path_tuple(
         // new env is the parent of the binding env so chained %.% walks upward.
         if matches!(arena.get(step), Expr::Parent { .. }) {
             for (_, ctx_env) in &ctxs {
-                if let Some((parent_val, binding_env)) = Environment::lookup_with_env(ctx_env, PARENT_BINDING)
+                if let Some((parent_val, binding_env)) =
+                    Environment::lookup_with_env(ctx_env, PARENT_BINDING)
                 {
                     // In Go, nil parent means "no valid parent context" → S0217.
                     if parent_val.is_null() || parent_val.is_undefined() {
@@ -805,7 +848,8 @@ fn eval_path_tuple(
                             if parent_env.lookup_direct(JOIN_FLAG).is_none() {
                                 break;
                             }
-                            if let Some((pv, pe)) = Environment::lookup_with_env(&parent_env, PARENT_BINDING)
+                            if let Some((pv, pe)) =
+                                Environment::lookup_with_env(&parent_env, PARENT_BINDING)
                             {
                                 if value_ptr_eq(&pv, &parent_val) {
                                     parent_env = pe.parent().cloned().unwrap_or_else(|| pe.clone());
@@ -838,7 +882,10 @@ fn eval_path_tuple(
         // the grandparent correctly).
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
             let (op, lhs, rhs) = (*op, *lhs, *rhs);
-            if op == BinaryOp::Subscript && !lhs.is_empty() && matches!(arena.get(lhs), Expr::Parent { .. }) {
+            if op == BinaryOp::Subscript
+                && !lhs.is_empty()
+                && matches!(arena.get(lhs), Expr::Parent { .. })
+            {
                 for (_, ctx_env) in &ctxs {
                     if let Some((parent_val, binding_env)) =
                         Environment::lookup_with_env(ctx_env, PARENT_BINDING)
@@ -853,7 +900,8 @@ fn eval_path_tuple(
                             .parent()
                             .cloned()
                             .unwrap_or_else(|| binding_env.clone());
-                        let pred_result = eval_no_stack_check(arena, rhs, &parent_val, &parent_env)?;
+                        let pred_result =
+                            eval_no_stack_check(arena, rhs, &parent_val, &parent_env)?;
                         if pred_result.to_boolean() {
                             next_ctxs.push((parent_val, parent_env));
                         }
@@ -892,14 +940,14 @@ fn eval_path_tuple(
                             && let Expr::Path {
                                 steps: inner_steps, ..
                             } = arena.get(expressions[0])
-                            {
-                                let inner_steps = inner_steps.clone();
-                                tuple_ctxs = expand_path_tuple(
-                                    arena,
-                                    &inner_steps,
-                                    &[(val.clone(), ctx_env.clone())],
-                                )?;
-                            }
+                        {
+                            let inner_steps = inner_steps.clone();
+                            tuple_ctxs = expand_path_tuple(
+                                arena,
+                                &inner_steps,
+                                &[(val.clone(), ctx_env.clone())],
+                            )?;
+                        }
                         if tuple_ctxs.is_empty() {
                             // Fallback: evaluate block normally.
                             let block_result = eval_no_stack_check(arena, lhs, val, ctx_env)?;
@@ -940,15 +988,15 @@ fn eval_path_tuple(
                 && let Expr::Path {
                     steps: inner_steps, ..
                 } = arena.get(expressions[0])
-                {
-                    let inner_steps = inner_steps.clone();
-                    next_ctxs = expand_path_tuple(arena, &inner_steps, &ctxs)?;
-                    ctxs = next_ctxs;
-                    if ctxs.is_empty() {
-                        return Ok(Value::Undefined);
-                    }
-                    continue;
+            {
+                let inner_steps = inner_steps.clone();
+                next_ctxs = expand_path_tuple(arena, &inner_steps, &ctxs)?;
+                ctxs = next_ctxs;
+                if ctxs.is_empty() {
+                    return Ok(Value::Undefined);
                 }
+                continue;
+            }
         }
 
         // Subscript step whose Left has a Focus binding (join operator @):
@@ -973,7 +1021,13 @@ fn eval_path_tuple(
                 };
                 if let Some(ref focus_name) = focus_var {
                     next_ctxs = eval_join_filter(
-                        arena, &ctxs, next_ctxs, lhs, rhs, focus_name, index_var.as_ref(),
+                        arena,
+                        &ctxs,
+                        next_ctxs,
+                        lhs,
+                        rhs,
+                        focus_name,
+                        index_var.as_ref(),
                     )?;
                     // Bind post-filter index if the Binary `[` node itself has #$var.
                     if let Some(ref pfi_name) = post_filter_index {
@@ -996,56 +1050,65 @@ fn eval_path_tuple(
         // tuples, then apply the outer subscript to the entire tuple collection.
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
             let (op, outer_lhs, outer_rhs) = (*op, *lhs, *rhs);
-            if op == BinaryOp::Subscript && !outer_lhs.is_empty()
+            if op == BinaryOp::Subscript
+                && !outer_lhs.is_empty()
                 && let Expr::Binary {
                     op: inner_op,
                     lhs: inner_lhs,
                     rhs: inner_rhs,
                     ..
                 } = arena.get(outer_lhs)
+            {
+                let (inner_op, inner_lhs, inner_rhs) = (*inner_op, *inner_lhs, *inner_rhs);
+                if inner_op == BinaryOp::Subscript
+                    && !inner_lhs.is_empty()
+                    && matches!(arena.get(inner_lhs), Expr::Name { focus: Some(_), .. })
                 {
-                    let (inner_op, inner_lhs, inner_rhs) =
-                        (*inner_op, *inner_lhs, *inner_rhs);
-                    if inner_op == BinaryOp::Subscript
-                        && !inner_lhs.is_empty()
-                        && matches!(arena.get(inner_lhs), Expr::Name { focus: Some(_), .. })
-                    {
-                        let (focus_var, index_var) = match arena.get(inner_lhs) {
-                            Expr::Name { focus, index, .. } => (focus.clone(), index.clone()),
-                            _ => (None, None),
-                        };
-                        if let Some(ref focus_name) = focus_var {
-                            // Process the inner join-filter.
-                            next_ctxs = eval_join_filter(
-                                arena, &ctxs, next_ctxs, inner_lhs, inner_rhs, focus_name,
-                                index_var.as_ref(),
-                            )?;
+                    let (focus_var, index_var) = match arena.get(inner_lhs) {
+                        Expr::Name { focus, index, .. } => (focus.clone(), index.clone()),
+                        _ => (None, None),
+                    };
+                    if let Some(ref focus_name) = focus_var {
+                        // Process the inner join-filter.
+                        next_ctxs = eval_join_filter(
+                            arena,
+                            &ctxs,
+                            next_ctxs,
+                            inner_lhs,
+                            inner_rhs,
+                            focus_name,
+                            index_var.as_ref(),
+                        )?;
 
-                            // Apply the outer subscript to the collected tuples.
-                            if !next_ctxs.is_empty() {
-                                let outer_result =
-                                    eval_no_stack_check(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
-                                if let Some(idx) = outer_result.as_f64() {
-                                    let mut i = idx as i64;
-                                    if i < 0 {
-                                        i += next_ctxs.len() as i64;
-                                    }
-                                    if i >= 0 && (i as usize) < next_ctxs.len() {
-                                        next_ctxs = vec![next_ctxs[i as usize].clone()];
-                                    } else {
-                                        next_ctxs = vec![];
-                                    }
+                        // Apply the outer subscript to the collected tuples.
+                        if !next_ctxs.is_empty() {
+                            let outer_result = eval_no_stack_check(
+                                arena,
+                                outer_rhs,
+                                &next_ctxs[0].0,
+                                &next_ctxs[0].1,
+                            )?;
+                            if let Some(idx) = outer_result.as_f64() {
+                                let mut i = idx as i64;
+                                if i < 0 {
+                                    i += next_ctxs.len() as i64;
+                                }
+                                if i >= 0 && (i as usize) < next_ctxs.len() {
+                                    next_ctxs = vec![next_ctxs[i as usize].clone()];
+                                } else {
+                                    next_ctxs = vec![];
                                 }
                             }
-
-                            ctxs = next_ctxs;
-                            if ctxs.is_empty() {
-                                return Ok(Value::Undefined);
-                            }
-                            continue;
                         }
+
+                        ctxs = next_ctxs;
+                        if ctxs.is_empty() {
+                            return Ok(Value::Undefined);
+                        }
+                        continue;
                     }
                 }
+            }
         }
 
         for (val, ctx_env) in &ctxs {
@@ -1331,8 +1394,10 @@ fn eval_tuple_group(
 
         // Phase 1: group ctxs by key.
         #[allow(clippy::type_complexity)]
-        let mut groups: std::collections::HashMap<compact_str::CompactString, (Vec<Value>, Vec<Rc<Environment>>)> =
-            std::collections::HashMap::new();
+        let mut groups: std::collections::HashMap<
+            compact_str::CompactString,
+            (Vec<Value>, Vec<Rc<Environment>>),
+        > = std::collections::HashMap::new();
         let mut key_order: Vec<compact_str::CompactString> = Vec::new();
 
         for (item, item_env) in ctxs {
@@ -1357,7 +1422,9 @@ fn eval_tuple_group(
 
         // Phase 2: evaluate value expression per group.
         for key in &key_order {
-            let (values, envs) = groups.get(key.as_str()).ok_or_else(|| JsonataError::new("D0000", "key from key_order must exist in groups"))?;
+            let (values, envs) = groups.get(key.as_str()).ok_or_else(|| {
+                JsonataError::new("D0000", "key from key_order must exist in groups")
+            })?;
             let (group_ctx, group_env) = if values.len() == 1 {
                 (values[0].clone(), Rc::clone(&envs[0]))
             } else {
@@ -1432,12 +1499,18 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
             }
         }
         if vals.len() == 1 {
-            merged.bind(name.clone(), vals.into_iter().next().unwrap_or(Value::Undefined));
+            merged.bind(
+                name.clone(),
+                vals.into_iter().next().unwrap_or(Value::Undefined),
+            );
         } else if !vals.is_empty() {
             // Check if all values are identical.
             let all_same = vals.windows(2).all(|w| w[0] == w[1]);
             if all_same {
-                merged.bind(name.clone(), vals.into_iter().next().unwrap_or(Value::Undefined));
+                merged.bind(
+                    name.clone(),
+                    vals.into_iter().next().unwrap_or(Value::Undefined),
+                );
             } else {
                 merged.bind(name.clone(), Value::Array(Rc::from(vals)));
             }
@@ -1560,7 +1633,9 @@ fn eval_path_step(
                 Ok(Value::Sequence(Box::new(seq)))
             };
         }
-        Expr::Binary { op, lhs, .. } if *op == BinaryOp::Subscript && !lhs.is_empty() && !prev_was_mapper => {
+        Expr::Binary { op, lhs, .. }
+            if *op == BinaryOp::Subscript && !lhs.is_empty() && !prev_was_mapper =>
+        {
             return eval_no_stack_check(arena, step, input, env);
         }
         _ => {}
@@ -1575,7 +1650,9 @@ fn eval_path_step(
     }
 
     // For all other step types, map over array input.
-    let arr = if let Value::Array(a) = input { a.clone() } else {
+    let arr = if let Value::Array(a) = input {
+        a.clone()
+    } else {
         // Single item — check for function step with path-element prepend.
         if matches!(expr, Expr::Function { .. }) {
             return eval_path_function_step(arena, step, input, env);
@@ -1588,22 +1665,25 @@ fn eval_path_step(
     // Lifted dispatch: analyze the step once, execute N times.
     // In .() path mapping, there's no explicit param — fields are resolved from scope.
     if !is_group_step
-        && let Some(mc) = crate::stdlib::hof_fast::analyze_mapped_call(step, arena, None, env) {
-            let mut seq = Sequence::with_capacity(arr.len());
-            for item in arr.iter() {
-                let val = crate::stdlib::hof_fast::exec_mapped_call(&mc, item, env, arena)?;
-                if val.is_undefined() { continue; }
-                match val {
-                    Value::Array(inner) => seq.values.extend(inner.iter().cloned()),
-                    Value::Sequence(s) => seq.values.extend(s.values),
-                    other => seq.append(other),
-                }
+        && let Some(mc) = crate::stdlib::hof_fast::analyze_mapped_call(step, arena, None, env)
+    {
+        let mut seq = Sequence::with_capacity(arr.len());
+        for item in arr.iter() {
+            let val = crate::stdlib::hof_fast::exec_mapped_call(&mc, item, env, arena)?;
+            if val.is_undefined() {
+                continue;
             }
-            if seq.values.is_empty() {
-                return Ok(Value::Undefined);
+            match val {
+                Value::Array(inner) => seq.values.extend(inner.iter().cloned()),
+                Value::Sequence(s) => seq.values.extend(s.values),
+                other => seq.append(other),
             }
-            return Ok(seq.into_value());
         }
+        if seq.values.is_empty() {
+            return Ok(Value::Undefined);
+        }
+        return Ok(seq.into_value());
+    }
 
     let mut seq = Sequence::with_capacity(arr.len());
 
@@ -1746,7 +1826,13 @@ fn eval_concat_chain(
 
 /// Walk a left-recursive Concat tree and collect non-Concat leaf nodes.
 fn collect_concat_operands(arena: &AstArena, node: NodeId, out: &mut Vec<NodeId>) {
-    if let Expr::Binary { op: BinaryOp::Concat, lhs, rhs, .. } = arena.get(node) {
+    if let Expr::Binary {
+        op: BinaryOp::Concat,
+        lhs,
+        rhs,
+        ..
+    } = arena.get(node)
+    {
         collect_concat_operands(arena, *lhs, out);
         out.push(*rhs);
     } else {
@@ -1852,7 +1938,12 @@ fn apply_binary_op(
         }
         BinaryOp::Chain => eval_chain(arena, rhs, &left, input, env),
         // Arithmetic operators.
-        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Pow => {
+        BinaryOp::Add
+        | BinaryOp::Sub
+        | BinaryOp::Mul
+        | BinaryOp::Div
+        | BinaryOp::Mod
+        | BinaryOp::Pow => {
             let right = eval_no_stack_check(arena, rhs, input, env)?;
             apply_arithmetic(op, &left, &right)
         }
@@ -1861,8 +1952,12 @@ fn apply_binary_op(
         BinaryOp::Concat => {
             let right = eval_no_stack_check(arena, rhs, input, env)?;
             let mut buf = String::new();
-            if !left.is_undefined() { left.stringify_into(&mut buf)?; }
-            if !right.is_undefined() { right.stringify_into(&mut buf)?; }
+            if !left.is_undefined() {
+                left.stringify_into(&mut buf)?;
+            }
+            if !right.is_undefined() {
+                right.stringify_into(&mut buf)?;
+            }
             Ok(Value::String(buf.into()))
         }
         // Equality.
@@ -1996,8 +2091,12 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
 
-    let ln = left.as_f64().ok_or_else(|| JsonataError::new("D0000", "left verified as number above"))?;
-    let rn = right.as_f64().ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
+    let ln = left
+        .as_f64()
+        .ok_or_else(|| JsonataError::new("D0000", "left verified as number above"))?;
+    let rn = right
+        .as_f64()
+        .ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
 
     // Must be integers (no fractional part).
     if ln != ln.trunc() {
@@ -2039,9 +2138,10 @@ fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
             | Expr::Function { keep_array, .. }
             | Expr::Sort { keep_array, .. }
             | Expr::Unary { keep_array, .. }
-                if *keep_array => {
-                    return true;
-                }
+                if *keep_array =>
+            {
+                return true;
+            }
             _ => {}
         }
         // Walk into the LHS of Binary nodes or the expr of Sort nodes.
@@ -2068,41 +2168,46 @@ fn eval_subscript(
     let needs_env = index_var.is_some() || node_has_parent_ref(arena, rhs);
 
     // For non-array inputs without index variable, evaluate directly.
-    if !matches!(left, Value::Array(_) | Value::Sequence(_))
-        && index_var.is_none() {
-            // Conditionally bind %% → input for the % operator.
-            let filter_env_owned;
-            let eval_env = if needs_env {
-                filter_env_owned = Rc::new(Environment::new_child(Rc::clone(env)));
-                filter_env_owned.bind(PARENT_BINDING, input.clone());
-                &filter_env_owned
-            } else {
-                env
-            };
-            let index = eval_no_stack_check(arena, rhs, left, eval_env)?;
-            if let Some(n) = index.as_f64() {
-                // Numeric index on a single value — treat as array of one.
-                let idx = n.trunc() as i64;
-                if idx == 0 || idx == -1 {
-                    return Ok(left.clone());
-                }
-                return Ok(Value::Undefined);
-            }
-            // Boolean predicate on single value.
-            if index.to_boolean() {
+    if !matches!(left, Value::Array(_) | Value::Sequence(_)) && index_var.is_none() {
+        // Conditionally bind %% → input for the % operator.
+        let filter_env_owned;
+        let eval_env = if needs_env {
+            filter_env_owned = Rc::new(Environment::new_child(Rc::clone(env)));
+            filter_env_owned.bind(PARENT_BINDING, input.clone());
+            &filter_env_owned
+        } else {
+            env
+        };
+        let index = eval_no_stack_check(arena, rhs, left, eval_env)?;
+        if let Some(n) = index.as_f64() {
+            // Numeric index on a single value — treat as array of one.
+            let idx = n.trunc() as i64;
+            if idx == 0 || idx == -1 {
                 return Ok(left.clone());
             }
             return Ok(Value::Undefined);
         }
-        // When there's an index variable, wrap in array so the predicate filter
-        // path handles index binding correctly (like Go's evalSubscriptLeft).
+        // Boolean predicate on single value.
+        if index.to_boolean() {
+            return Ok(left.clone());
+        }
+        return Ok(Value::Undefined);
+    }
+    // When there's an index variable, wrap in array so the predicate filter
+    // path handles index binding correctly (like Go's evalSubscriptLeft).
 
     // Avoid cloning: borrow the array as a slice where possible.
     let owned_arr;
     let arr: &[Value] = match &left {
         Value::Array(a) => a,
-        Value::Sequence(s) => { owned_arr = s.values.clone(); &owned_arr }
-        _ => { owned_arr = vec![left.clone()]; &owned_arr }
+        Value::Sequence(s) => {
+            owned_arr = s.values.clone();
+            &owned_arr
+        }
+        _ => {
+            owned_arr = vec![left.clone()];
+            &owned_arr
+        }
     };
 
     // Try evaluating RHS as a simple expression (might be a numeric literal or
@@ -2237,7 +2342,6 @@ fn eval_chain_step(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
-
     // Function call node: prepend piped as first argument.
     if let Expr::Function {
         procedure,
@@ -2286,9 +2390,10 @@ fn eval_chain_step(
 
     // If right side is a regex object, apply regex test (like $contains).
     if let Value::Object(ref obj) = fn_val
-        && obj.contains_key("pattern") {
-            return apply_regex_chain(piped, obj);
-        }
+        && obj.contains_key("pattern")
+    {
+        return apply_regex_chain(piped, obj);
+    }
 
     match &fn_val {
         Value::Function(func) => {
@@ -2311,7 +2416,9 @@ fn eval_chain_step(
                         call_function(&outer, &[intermediate], focus, &env_clone, arena)
                     },
                 );
-                return Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(composed))));
+                return Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(
+                    composed,
+                ))));
             }
             {
                 let result = call_function(func, std::slice::from_ref(piped), input, env, arena)?;
@@ -2330,10 +2437,7 @@ fn eval_chain_step(
 
 /// Apply a regex test to a piped value in chain context (~> /regex/).
 /// Returns the first match object if the regex matches, or Undefined if not.
-fn apply_regex_chain(
-    piped: &Value,
-    regex_obj: &crate::value::ObjectMap,
-) -> JsonataResult {
+fn apply_regex_chain(piped: &Value, regex_obj: &crate::value::ObjectMap) -> JsonataResult {
     let s = match piped {
         Value::String(s) => &**s,
         _ => return Ok(Value::Undefined),
@@ -2349,7 +2453,12 @@ fn apply_regex_chain(
     let re = crate::stdlib::regex::compile_regex(pattern, flags)
         .map_err(|e| JsonataError::new("D1002", format!("invalid regex: {}", e.message)))?;
     if let Some(caps) = re.captures(s) {
-        let m = caps.get(0).ok_or_else(|| JsonataError::new("D0000", "capture group 0 always exists when captures succeed"))?;
+        let m = caps.get(0).ok_or_else(|| {
+            JsonataError::new(
+                "D0000",
+                "capture group 0 always exists when captures succeed",
+            )
+        })?;
         // Build match object similar to $match.
         let mut obj = crate::value::ObjectMap::new();
         obj.insert("match".into(), Value::String(m.as_str().into()));
@@ -2453,9 +2562,7 @@ fn eval_unary(
                     _ => {
                         return Err(JsonataError::new(
                             "T1003",
-                            format!(
-                                "key expression must evaluate to a string, got {key_val:?}"
-                            ),
+                            format!("key expression must evaluate to a string, got {key_val:?}"),
                         ));
                     }
                 };
@@ -2555,7 +2662,10 @@ fn eval_sort(
 
     if terms.is_empty() {
         if !was_array && arr.len() == 1 {
-            return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
+            return arr
+                .into_iter()
+                .next()
+                .ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
         }
         return Ok(Value::Array(Rc::from(arr)));
     }
@@ -2579,7 +2689,10 @@ fn eval_sort(
     }
 
     if !was_array && arr.len() == 1 {
-        return arr.into_iter().next().ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
+        return arr
+            .into_iter()
+            .next()
+            .ok_or_else(|| JsonataError::new("D0000", "len is 1 but next() returned None"));
     }
     Ok(Value::Array(Rc::from(arr)))
 }
@@ -3096,7 +3209,9 @@ fn eval_group_by(
                     format!("duplicate key: \"{key}\""),
                 ));
             }
-            let (group_items, first_idx) = groups.get(key.as_str()).ok_or_else(|| JsonataError::new("D0000", "key from group_order must exist in groups"))?;
+            let (group_items, first_idx) = groups.get(key.as_str()).ok_or_else(|| {
+                JsonataError::new("D0000", "key from group_order must exist in groups")
+            })?;
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {
@@ -3149,8 +3264,8 @@ fn eval_group_by(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use crate::parser::{Parser, process_ast};
+    use std::rc::Rc;
 
     /// Helper: parse, process, and evaluate.
     fn eval_expr(src: &str, input: &Value) -> JsonataResult {
@@ -3248,7 +3363,10 @@ mod tests {
         let result = eval_with_data("name", r#"[{"name": "A"}, {"name": "B"}]"#);
         assert_eq!(
             result,
-            Value::Array(Rc::from(vec![Value::String("A".into()), Value::String("B".into())]))
+            Value::Array(Rc::from(vec![
+                Value::String("A".into()),
+                Value::String("B".into())
+            ]))
         );
     }
 
@@ -3688,7 +3806,10 @@ mod tests {
         let result = eval_with_data("$keys($)", r#"{"a": 1, "b": 2}"#);
         assert_eq!(
             result,
-            Value::Array(Rc::from(vec![Value::String("a".into()), Value::String("b".into()),]))
+            Value::Array(Rc::from(vec![
+                Value::String("a".into()),
+                Value::String("b".into()),
+            ]))
         );
     }
 
@@ -3912,7 +4033,10 @@ mod tests {
     fn group_by_variable() {
         // Test group-by on a $$ variable (case026)
         let result = eval_expr(r#"$${id: value}"#, &Value::from_json_str("[]").unwrap()).unwrap();
-        assert_eq!(result, Value::Object(Rc::new(crate::value::ObjectMap::new())));
+        assert_eq!(
+            result,
+            Value::Object(Rc::new(crate::value::ObjectMap::new()))
+        );
     }
 
     // ── Variable binding in blocks ──────────────────────────────
@@ -3938,7 +4062,11 @@ mod tests {
     fn map_basic() {
         assert_eq!(
             eval_simple("$map([1,2,3], function($v){$v * 2})"),
-            Value::Array(Rc::from(vec![Value::Number(2.0), Value::Number(4.0), Value::Number(6.0)]))
+            Value::Array(Rc::from(vec![
+                Value::Number(2.0),
+                Value::Number(4.0),
+                Value::Number(6.0)
+            ]))
         );
     }
 
@@ -3950,14 +4078,21 @@ mod tests {
     #[test]
     fn map_scalar_input() {
         // Scalar is wrapped in array
-        assert_eq!(eval_simple("$map(5, function($v){$v * 2})"), Value::Number(10.0));
+        assert_eq!(
+            eval_simple("$map(5, function($v){$v * 2})"),
+            Value::Number(10.0)
+        );
     }
 
     #[test]
     fn map_with_index() {
         assert_eq!(
             eval_simple("$map([10,20,30], function($v, $i){$i})"),
-            Value::Array(Rc::from(vec![Value::Number(0.0), Value::Number(1.0), Value::Number(2.0)]))
+            Value::Array(Rc::from(vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+                Value::Number(2.0)
+            ]))
         );
     }
 
@@ -4032,7 +4167,9 @@ mod tests {
 
     #[test]
     fn reduce_undefined_input() {
-        assert_undefined(&eval_simple("$reduce(nothing, function($acc, $val){$acc + $val})"));
+        assert_undefined(&eval_simple(
+            "$reduce(nothing, function($acc, $val){$acc + $val})",
+        ));
     }
 
     // ── HOF: $sort ────────────────────────────────────────────────
@@ -4041,7 +4178,11 @@ mod tests {
     fn sort_default() {
         assert_eq!(
             eval_simple("$sort([3,1,2])"),
-            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]))
+            Value::Array(Rc::from(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ]))
         );
     }
 
@@ -4063,7 +4204,11 @@ mod tests {
         // $a > $b → ascending order (swap when a > b)
         assert_eq!(
             eval_simple("$sort([1,3,2], function($a,$b){$a > $b})"),
-            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]))
+            Value::Array(Rc::from(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ]))
         );
     }
 
@@ -4103,7 +4248,8 @@ mod tests {
 
     #[test]
     fn single_no_matches_error() {
-        let err = eval_expr("$single([1,2,3], function($v){$v > 10})", &Value::Undefined).unwrap_err();
+        let err =
+            eval_expr("$single([1,2,3], function($v){$v > 10})", &Value::Undefined).unwrap_err();
         assert_eq!(err.code, "D3139");
     }
 
@@ -4128,10 +4274,7 @@ mod tests {
 
     #[test]
     fn sift_basic() {
-        let result = eval_with_data(
-            "$sift($, function($v){$v > 1})",
-            r#"{"a":1,"b":2,"c":3}"#,
-        );
+        let result = eval_with_data("$sift($, function($v){$v > 1})", r#"{"a":1,"b":2,"c":3}"#);
         let obj = result.as_object().expect("should be object");
         assert_eq!(obj.len(), 2);
         assert_eq!(obj.get("b"), Some(&Value::Number(2.0)));
@@ -4140,7 +4283,10 @@ mod tests {
 
     #[test]
     fn sift_no_matches() {
-        assert_undefined(&eval_with_data("$sift($, function($v){$v > 100})", r#"{"a":1}"#));
+        assert_undefined(&eval_with_data(
+            "$sift($, function($v){$v > 100})",
+            r#"{"a":1}"#,
+        ));
     }
 
     // ── Regex: $match ─────────────────────────────────────────────
@@ -4162,7 +4308,10 @@ mod tests {
         let result = eval_simple(r#"$match("2024-01-15", /(\d{4})-(\d{2})-(\d{2})/)"#);
         let obj = result.as_object().expect("should be match object");
         assert_eq!(obj.get("match"), Some(&Value::String("2024-01-15".into())));
-        let groups = obj.get("groups").and_then(|v| v.as_array()).expect("groups");
+        let groups = obj
+            .get("groups")
+            .and_then(|v| v.as_array())
+            .expect("groups");
         assert_eq!(groups.len(), 3);
     }
 
@@ -4245,12 +4394,18 @@ mod tests {
 
     #[test]
     fn format_base_binary() {
-        assert_eq!(eval_simple("$formatBase(10, 2)"), Value::String("1010".into()));
+        assert_eq!(
+            eval_simple("$formatBase(10, 2)"),
+            Value::String("1010".into())
+        );
     }
 
     #[test]
     fn format_base_hex() {
-        assert_eq!(eval_simple("$formatBase(255, 16)"), Value::String("ff".into()));
+        assert_eq!(
+            eval_simple("$formatBase(255, 16)"),
+            Value::String("ff".into())
+        );
     }
 
     // ── String edge cases ─────────────────────────────────────────
@@ -4264,12 +4419,18 @@ mod tests {
     #[test]
     fn substring_negative_start() {
         // Negative start counts from end
-        assert_eq!(eval_simple(r#"$substring("hello", -2, 4)"#), Value::String("lo".into()));
+        assert_eq!(
+            eval_simple(r#"$substring("hello", -2, 4)"#),
+            Value::String("lo".into())
+        );
     }
 
     #[test]
     fn trim_collapses_whitespace() {
-        assert_eq!(eval_simple(r#"$trim("  hello   world  ")"#), Value::String("hello world".into()));
+        assert_eq!(
+            eval_simple(r#"$trim("  hello   world  ")"#),
+            Value::String("hello world".into())
+        );
     }
 
     #[test]
@@ -4331,8 +4492,10 @@ mod tests {
         assert_eq!(
             eval_simple("$append([1,2], [3,4])"),
             Value::Array(Rc::from(vec![
-                Value::Number(1.0), Value::Number(2.0),
-                Value::Number(3.0), Value::Number(4.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
             ]))
         );
     }
@@ -4341,7 +4504,11 @@ mod tests {
     fn reverse_array() {
         assert_eq!(
             eval_simple("$reverse([1,2,3])"),
-            Value::Array(Rc::from(vec![Value::Number(3.0), Value::Number(2.0), Value::Number(1.0)]))
+            Value::Array(Rc::from(vec![
+                Value::Number(3.0),
+                Value::Number(2.0),
+                Value::Number(1.0)
+            ]))
         );
     }
 
@@ -4349,7 +4516,11 @@ mod tests {
     fn distinct_removes_dupes() {
         assert_eq!(
             eval_simple("$distinct([1,2,2,3,3,3])"),
-            Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]))
+            Value::Array(Rc::from(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0)
+            ]))
         );
     }
 
@@ -4358,8 +4529,11 @@ mod tests {
         assert_eq!(
             eval_simple("$flatten([[1,2],[3,[4,5]]])"),
             Value::Array(Rc::from(vec![
-                Value::Number(1.0), Value::Number(2.0),
-                Value::Number(3.0), Value::Number(4.0), Value::Number(5.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+                Value::Number(5.0),
             ]))
         );
     }
@@ -4436,8 +4610,14 @@ mod tests {
     #[test]
     fn type_function() {
         assert_eq!(eval_simple(r#"$type(42)"#), Value::String("number".into()));
-        assert_eq!(eval_simple(r#"$type("hi")"#), Value::String("string".into()));
-        assert_eq!(eval_simple(r#"$type(true)"#), Value::String("boolean".into()));
+        assert_eq!(
+            eval_simple(r#"$type("hi")"#),
+            Value::String("string".into())
+        );
+        assert_eq!(
+            eval_simple(r#"$type(true)"#),
+            Value::String("boolean".into())
+        );
         assert_eq!(eval_simple(r#"$type(null)"#), Value::String("null".into()));
         assert_eq!(eval_simple(r#"$type([1])"#), Value::String("array".into()));
     }

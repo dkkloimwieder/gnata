@@ -39,11 +39,9 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
     if !(-MAX_I64_F64..MAX_I64_F64).contains(&truncated) {
         let (format_token, modifier) = split_picture_modifier(picture);
         if format_token == "w" || format_token == "W" || format_token == "Ww" {
-            return Ok(Value::String(format_big_float_words(
-                truncated,
-                format_token,
-                modifier,
-            ).into()));
+            return Ok(Value::String(
+                format_big_float_words(truncated, format_token, modifier).into(),
+            ));
         }
         return Err(JsonataError::new(
             "D3137",
@@ -111,9 +109,7 @@ fn format_integer_with_picture(n: i64, picture: &str) -> Result<String, JsonataE
             {
                 return Err(JsonataError::new(
                     "D3130",
-                    format!(
-                        "$formatInteger: unsupported picture string {format_token:?}"
-                    ),
+                    format!("$formatInteger: unsupported picture string {format_token:?}"),
                 ));
             }
             let mut r = format_integer_decimal(abs_n, format_token)?;
@@ -265,9 +261,10 @@ fn apply_integer_grouping(digits: &str, grps: &[(char, usize)]) -> String {
     for (i, &ch) in runes.iter().enumerate() {
         let pos_from_right = runes.len() - i;
         if i > 0
-            && let Some(&sep) = pos_set.get(&pos_from_right) {
-                result.push(sep);
-            }
+            && let Some(&sep) = pos_set.get(&pos_from_right)
+        {
+            result.push(sep);
+        }
         result.push(ch);
     }
     result.into_iter().collect()
