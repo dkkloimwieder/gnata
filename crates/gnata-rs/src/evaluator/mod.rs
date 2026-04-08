@@ -16,7 +16,7 @@ pub use signature::{ParamSpec, parse_signature, process_call_args};
 use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
-use crate::parser::{AstArena, BinaryOp, Expr, NodeId, UnaryOp};
+use crate::parser::{AstArena, BinaryOp, Expr, NodeId, SortTerm, UnaryOp};
 use crate::value::{Sequence, Value};
 
 /// Environment variable name for the parent context (`%` operator).
@@ -716,11 +716,176 @@ fn eval_path_step_no_group(
     }
 }
 
+/// Handle a Sort step within tuple-aware path evaluation.
+///
+/// Sorts all tuples simultaneously using the sort terms. If the sort expression
+/// contains navigation (non-variable inner expr), expands it in tuple mode first
+/// to preserve parent bindings.
+fn eval_tuple_sort_step(
+    arena: &AstArena,
+    expr: NodeId,
+    terms: &[SortTerm],
+    ctxs: Vec<(Value, Rc<Environment>)>,
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    let needs_navigation = !expr.is_empty() && !matches!(arena.get(expr), Expr::Variable { .. });
+    let mut sorted_ctxs = if needs_navigation {
+        let mut inner_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
+        for (val, ctx_env) in &ctxs {
+            if let Expr::Path {
+                steps: inner_steps, ..
+            } = arena.get(expr)
+            {
+                let inner_steps = inner_steps.clone();
+                let expanded = expand_path_tuple(
+                    arena,
+                    &inner_steps,
+                    &[(val.clone(), ctx_env.clone())],
+                )?;
+                inner_ctxs.extend(expanded);
+            } else {
+                let result = eval_no_stack_check(arena, expr, val, ctx_env)?;
+                if !result.is_undefined() {
+                    let items = flatten_to_vec(result);
+                    let (index_var, focus_var) = get_step_bindings(arena, expr);
+                    let is_join = focus_var.is_some();
+                    for (j, elem) in items.iter().enumerate() {
+                        let child_env = Environment::new_child(Rc::clone(ctx_env));
+                        child_env.bind(PARENT_BINDING, val.clone());
+                        if is_join {
+                            child_env.bind(JOIN_FLAG, Value::Bool(true));
+                        }
+                        if let Some(ref var_name) = index_var {
+                            child_env.bind(var_name.clone(), Value::Number(j as f64));
+                        }
+                        if let Some(ref var_name) = focus_var {
+                            child_env.bind(var_name.clone(), elem.clone());
+                        }
+                        let ctx_value = if is_join { val.clone() } else { elem.clone() };
+                        inner_ctxs.push((ctx_value, Rc::new(child_env)));
+                    }
+                }
+            }
+        }
+        inner_ctxs
+    } else {
+        ctxs
+    };
+
+    let mut sort_err: Option<JsonataError> = None;
+    sorted_ctxs.sort_by(|a, b| {
+        if sort_err.is_some() {
+            return std::cmp::Ordering::Equal;
+        }
+        match compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1) {
+            Ok(cmp) => cmp.cmp(&0),
+            Err(e) => {
+                sort_err = Some(e);
+                std::cmp::Ordering::Equal
+            }
+        }
+    });
+    if let Some(e) = sort_err {
+        return Err(e);
+    }
+    Ok(sorted_ctxs)
+}
+
+/// Handle a Parent (%) step within tuple-aware path evaluation.
+///
+/// Navigates up the parent chain using `%%` env bindings. For join steps,
+/// skips through ancestor envs that are also join bindings with the same parent.
+fn eval_tuple_parent_step(
+    ctxs: &[(Value, Rc<Environment>)],
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    let mut next_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
+    for (_, ctx_env) in ctxs {
+        if let Some((parent_val, binding_env)) =
+            Environment::lookup_with_env(ctx_env, PARENT_BINDING)
+        {
+            if parent_val.is_null() || parent_val.is_undefined() {
+                return Err(JsonataError::new(
+                    "S0217",
+                    "% operator used outside of a valid path context",
+                ));
+            }
+            let mut parent_env = binding_env
+                .parent()
+                .cloned()
+                .unwrap_or_else(|| binding_env.clone());
+            if binding_env.lookup_direct(JOIN_FLAG).is_some() {
+                loop {
+                    if parent_env.lookup_direct(JOIN_FLAG).is_none() {
+                        break;
+                    }
+                    if let Some((pv, pe)) =
+                        Environment::lookup_with_env(&parent_env, PARENT_BINDING)
+                    {
+                        if value_ptr_eq(&pv, &parent_val) {
+                            parent_env = pe.parent().cloned().unwrap_or_else(|| pe.clone());
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+            next_ctxs.push((parent_val, parent_env));
+        } else {
+            return Err(JsonataError::new(
+                "S0217",
+                "% operator used outside of a valid path context",
+            ));
+        }
+    }
+    Ok(next_ctxs)
+}
+
+/// Handle a compound join-filter subscript within tuple-aware path evaluation.
+///
+/// Processes `books@$b[pred][idx]`: first applies the inner join-filter to collect
+/// tuples, then applies the outer subscript to the entire tuple collection.
+fn eval_tuple_compound_join(
+    arena: &AstArena,
+    ctxs: &[(Value, Rc<Environment>)],
+    inner_lhs: NodeId,
+    inner_rhs: NodeId,
+    outer_rhs: NodeId,
+    focus_name: &str,
+    index_var: Option<&String>,
+) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
+    let mut next_ctxs = eval_join_filter(
+        arena,
+        ctxs,
+        Vec::new(),
+        inner_lhs,
+        inner_rhs,
+        focus_name,
+        index_var,
+    )?;
+
+    if !next_ctxs.is_empty() {
+        let outer_result =
+            eval_no_stack_check(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
+        if let Some(idx) = outer_result.as_f64() {
+            let mut i = idx as i64;
+            if i < 0 {
+                i += next_ctxs.len() as i64;
+            }
+            if i >= 0 && (i as usize) < next_ctxs.len() {
+                next_ctxs = vec![next_ctxs[i as usize].clone()];
+            } else {
+                next_ctxs = vec![];
+            }
+        }
+    }
+    Ok(next_ctxs)
+}
+
 /// Tuple-aware path evaluation for paths containing #$var index bindings or % parent refs.
 ///
 /// Maintains a list of (value, env) contexts so that position variables bound
 /// at one step remain accessible in all subsequent steps.
-// Large dispatch function handling all tuple-aware path step types.
 #[allow(clippy::too_many_lines)]
 fn eval_path_tuple(
     arena: &AstArena,
@@ -751,125 +916,13 @@ fn eval_path_tuple(
         if let Expr::Sort { expr, terms, .. } = arena.get(step) {
             let expr = *expr;
             let terms = terms.clone();
-            // Match Go's evalTupleSort: if the sort has a non-variable inner expression
-            // (needsNavigation), expand it in tuple mode so parent bindings are preserved.
-            let needs_navigation =
-                !expr.is_empty() && !matches!(arena.get(expr), Expr::Variable { .. });
-            if needs_navigation {
-                // Evaluate the inner expression as a tuple path.
-                let mut inner_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
-                for (val, ctx_env) in &ctxs {
-                    // Extract inner path steps or evaluate the expression.
-                    if let Expr::Path {
-                        steps: inner_steps, ..
-                    } = arena.get(expr)
-                    {
-                        let inner_steps = inner_steps.clone();
-                        let expanded = expand_path_tuple(
-                            arena,
-                            &inner_steps,
-                            &[(val.clone(), ctx_env.clone())],
-                        )?;
-                        inner_ctxs.extend(expanded);
-                    } else {
-                        // Non-path inner expression — evaluate and bind %% for parent context.
-                        let result = eval_no_stack_check(arena, expr, val, ctx_env)?;
-                        if !result.is_undefined() {
-                            let items = flatten_to_vec(result);
-                            let (index_var, focus_var) = get_step_bindings(arena, expr);
-                            let is_join = focus_var.is_some();
-                            for (j, elem) in items.iter().enumerate() {
-                                let child_env = Environment::new_child(Rc::clone(ctx_env));
-                                child_env.bind(PARENT_BINDING, val.clone());
-                                if is_join {
-                                    child_env.bind(JOIN_FLAG, Value::Bool(true));
-                                }
-                                if let Some(ref var_name) = index_var {
-                                    child_env.bind(var_name.clone(), Value::Number(j as f64));
-                                }
-                                if let Some(ref var_name) = focus_var {
-                                    child_env.bind(var_name.clone(), elem.clone());
-                                }
-                                let ctx_value = if is_join { val.clone() } else { elem.clone() };
-                                inner_ctxs.push((ctx_value, Rc::new(child_env)));
-                            }
-                        }
-                    }
-                }
-                ctxs = inner_ctxs;
-            }
-            // Now sort the tuples.
-            let mut arr: Vec<(Value, Rc<Environment>)> = ctxs;
-            let mut sort_err: Option<JsonataError> = None;
-            arr.sort_by(|a, b| {
-                if sort_err.is_some() {
-                    return std::cmp::Ordering::Equal;
-                }
-                match compare_sort_terms(arena, &terms, &a.0, &b.0, &a.1, &b.1) {
-                    Ok(cmp) => cmp.cmp(&0),
-                    Err(e) => {
-                        sort_err = Some(e);
-                        std::cmp::Ordering::Equal
-                    }
-                }
-            });
-            if let Some(e) = sort_err {
-                return Err(e);
-            }
-            ctxs = arr;
+            ctxs = eval_tuple_sort_step(arena, expr, &terms, ctxs)?;
             continue;
         }
 
-        // Parent (%) steps navigate up the parent chain using the %% env bindings
-        // set by append_tuple_results. The parent value is retrieved via %%, and the
-        // new env is the parent of the binding env so chained %.% walks upward.
+        // Parent (%) steps navigate up the parent chain using the %% env bindings.
         if matches!(arena.get(step), Expr::Parent { .. }) {
-            for (_, ctx_env) in &ctxs {
-                if let Some((parent_val, binding_env)) =
-                    Environment::lookup_with_env(ctx_env, PARENT_BINDING)
-                {
-                    // In Go, nil parent means "no valid parent context" → S0217.
-                    if parent_val.is_null() || parent_val.is_undefined() {
-                        return Err(JsonataError::new(
-                            "S0217",
-                            "% operator used outside of a valid path context",
-                        ));
-                    }
-                    // Use the binding env's parent so chained %.% walks up correctly.
-                    let mut parent_env = binding_env
-                        .parent()
-                        .cloned()
-                        .unwrap_or_else(|| binding_env.clone());
-                    // When the current binding was made by a join step, skip
-                    // through any ancestor envs that are ALSO join bindings with
-                    // the same parent value.
-                    if binding_env.lookup_direct(JOIN_FLAG).is_some() {
-                        loop {
-                            if parent_env.lookup_direct(JOIN_FLAG).is_none() {
-                                break;
-                            }
-                            if let Some((pv, pe)) =
-                                Environment::lookup_with_env(&parent_env, PARENT_BINDING)
-                            {
-                                if value_ptr_eq(&pv, &parent_val) {
-                                    parent_env = pe.parent().cloned().unwrap_or_else(|| pe.clone());
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    next_ctxs.push((parent_val, parent_env));
-                } else {
-                    return Err(JsonataError::new(
-                        "S0217",
-                        "% operator used outside of a valid path context",
-                    ));
-                }
-            }
-            ctxs = next_ctxs;
+            ctxs = eval_tuple_parent_step(&ctxs)?;
             if ctxs.is_empty() {
                 return Ok(Value::Undefined);
             }
@@ -1044,10 +1097,7 @@ fn eval_path_tuple(
             }
         }
 
-        // Compound subscript after a join-filter: binary "[" whose Left is a
-        // binary "[" with Left.Focus set. E.g., books@$b[pred][1] or
-        // books@$b[pred][]. Process the inner join-filter first to collect
-        // tuples, then apply the outer subscript to the entire tuple collection.
+        // Compound subscript after a join-filter: books@$b[pred][1]
         if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
             let (op, outer_lhs, outer_rhs) = (*op, *lhs, *rhs);
             if op == BinaryOp::Subscript
@@ -1069,39 +1119,15 @@ fn eval_path_tuple(
                         _ => (None, None),
                     };
                     if let Some(ref focus_name) = focus_var {
-                        // Process the inner join-filter.
-                        next_ctxs = eval_join_filter(
+                        ctxs = eval_tuple_compound_join(
                             arena,
                             &ctxs,
-                            next_ctxs,
                             inner_lhs,
                             inner_rhs,
+                            outer_rhs,
                             focus_name,
                             index_var.as_ref(),
                         )?;
-
-                        // Apply the outer subscript to the collected tuples.
-                        if !next_ctxs.is_empty() {
-                            let outer_result = eval_no_stack_check(
-                                arena,
-                                outer_rhs,
-                                &next_ctxs[0].0,
-                                &next_ctxs[0].1,
-                            )?;
-                            if let Some(idx) = outer_result.as_f64() {
-                                let mut i = idx as i64;
-                                if i < 0 {
-                                    i += next_ctxs.len() as i64;
-                                }
-                                if i >= 0 && (i as usize) < next_ctxs.len() {
-                                    next_ctxs = vec![next_ctxs[i as usize].clone()];
-                                } else {
-                                    next_ctxs = vec![];
-                                }
-                            }
-                        }
-
-                        ctxs = next_ctxs;
                         if ctxs.is_empty() {
                             return Ok(Value::Undefined);
                         }
