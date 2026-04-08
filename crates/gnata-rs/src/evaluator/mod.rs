@@ -2124,14 +2124,14 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
         .as_f64()
         .ok_or_else(|| JsonataError::new("D0000", "right verified as number above"))?;
 
-    // Must be integers (no fractional part).
-    if ln != ln.trunc() {
+    // Must be finite integers (no fractional part, no Inf/NaN).
+    if !ln.is_finite() || ln != ln.trunc() {
         return Err(JsonataError::new(
             "T2003",
             "the left operand of the range operator (..) must be an integer",
         ));
     }
-    if rn != rn.trunc() {
+    if !rn.is_finite() || rn != rn.trunc() {
         return Err(JsonataError::new(
             "T2004",
             "the right operand of the range operator (..) must be an integer",
