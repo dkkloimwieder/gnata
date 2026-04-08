@@ -161,10 +161,24 @@ impl AstArena {
         Self { nodes: Vec::new() }
     }
 
-    pub fn alloc(&mut self, expr: Expr) -> NodeId {
+    /// Maximum AST nodes before the parser bails. Prevents OOM from complex
+    /// expressions that produce a very large number of nodes.
+    const MAX_NODES: usize = 100_000;
+
+    /// Allocate a new AST node.
+    ///
+    /// # Errors
+    /// Returns `S0210` if the arena exceeds the node limit.
+    pub fn alloc(&mut self, expr: Expr) -> Result<NodeId, crate::error::JsonataError> {
+        if self.nodes.len() >= Self::MAX_NODES {
+            return Err(crate::error::JsonataError::new(
+                "S0210",
+                "expression too complex (too many AST nodes)",
+            ));
+        }
         let id = self.nodes.len() as u32;
         self.nodes.push(expr);
-        NodeId(id)
+        Ok(NodeId(id))
     }
 
     #[inline]

@@ -390,7 +390,7 @@ fn collect_path_steps(
                     group: None,
                     focus: None,
                     index: None,
-                });
+                })?;
                 steps.push(name_node);
                 return Ok(());
             }

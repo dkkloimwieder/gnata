@@ -18,9 +18,6 @@ use crate::lexer::{Lexer, Token, TokenType};
 /// nested input like `-(-(-(-(...)))) `.
 const MAX_PARSE_DEPTH: usize = 500;
 
-/// Maximum AST nodes before the parser bails. Prevents OOM from expressions
-/// that are wide + deep (many siblings at each nesting level).
-const MAX_AST_NODES: usize = 100_000;
 
 pub struct Parser {
     lex: Lexer,
@@ -122,13 +119,6 @@ impl Parser {
                 self.token.pos,
             ));
         }
-        if self.arena.len() > MAX_AST_NODES {
-            return Err(parse_error(
-                "S0210",
-                "expression too complex (too many nodes)",
-                self.token.pos,
-            ));
-        }
         let mut left = self.nud()?;
         while binding_power(self.token.typ) > rbp {
             left = self.led(left)?;
@@ -172,7 +162,7 @@ impl Parser {
                     group: None,
                     focus: None,
                     index: None,
-                }))
+                })?)
             }
             // Keywords can appear as field names in prefix position
             TokenType::And | TokenType::Or | TokenType::In => {
@@ -186,7 +176,7 @@ impl Parser {
                     group: None,
                     focus: None,
                     index: None,
-                }))
+                })?)
             }
             TokenType::Variable => {
                 self.infix = true;
@@ -198,7 +188,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::String => {
                 self.infix = true;
@@ -206,7 +196,7 @@ impl Parser {
                 Ok(self.arena.alloc(Expr::StringLit {
                     value: tok.value,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Number => {
                 self.infix = true;
@@ -215,7 +205,7 @@ impl Parser {
                     value: tok.num_val,
                     raw: tok.value,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Value => {
                 self.infix = true;
@@ -223,7 +213,7 @@ impl Parser {
                 Ok(self.arena.alloc(Expr::ValueLit {
                     value: tok.value,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Regex => {
                 self.infix = true;
@@ -232,7 +222,7 @@ impl Parser {
                     pattern: tok.regex_pat,
                     flags: tok.regex_flg,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Minus => {
                 // Unary minus (bp=70)
@@ -261,18 +251,18 @@ impl Parser {
                         group: None,
                         keep_array: false,
                         pos: tok.pos,
-                    }))
+                    })?)
                 }
             }
             TokenType::Star => {
                 self.infix = true;
                 self.advance()?;
-                Ok(self.arena.alloc(Expr::Wildcard { pos: tok.pos }))
+                Ok(self.arena.alloc(Expr::Wildcard { pos: tok.pos })?)
             }
             TokenType::StarStar => {
                 self.infix = true;
                 self.advance()?;
-                Ok(self.arena.alloc(Expr::Descendant { pos: tok.pos }))
+                Ok(self.arena.alloc(Expr::Descendant { pos: tok.pos })?)
             }
             TokenType::Percent => {
                 self.infix = true;
@@ -280,7 +270,7 @@ impl Parser {
                 Ok(self.arena.alloc(Expr::Parent {
                     pos: tok.pos,
                     slot: None,
-                }))
+                })?)
             }
             TokenType::LBracket => {
                 // Array constructor [...]
@@ -330,7 +320,7 @@ impl Parser {
                     group: None,
                     keep_array: false,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::LBrace => {
                 // Object constructor {...}
@@ -344,7 +334,7 @@ impl Parser {
                     group: None,
                     keep_array: false,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::LParen => {
                 // Block or parenthesized expression
@@ -369,11 +359,11 @@ impl Parser {
                 Ok(self.arena.alloc(Expr::Block {
                     expressions: exprs,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Question => {
                 self.advance()?;
-                Ok(self.arena.alloc(Expr::Placeholder { pos: tok.pos }))
+                Ok(self.arena.alloc(Expr::Placeholder { pos: tok.pos })?)
             }
             TokenType::Pipe | TokenType::Tilde => self.parse_transform(tok.pos),
             TokenType::Chain => Err(parse_error(
@@ -412,7 +402,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::LParen => {
                 // Function call
@@ -456,7 +446,7 @@ impl Parser {
                         procedure: left,
                         arguments: args,
                         pos: tok.pos,
-                    }))
+                    })?)
                 } else {
                     Ok(self.arena.alloc(Expr::Function {
                         procedure: left,
@@ -465,7 +455,7 @@ impl Parser {
                         thunk: false,
                         keep_array: false,
                         group: None,
-                    }))
+                    })?)
                 }
             }
             TokenType::LBracket => {
@@ -498,7 +488,7 @@ impl Parser {
                         focus: None,
                         index: None,
                         pos: tok.pos,
-                    }))
+                    })?)
                 }
             }
             TokenType::LBrace => {
@@ -603,7 +593,7 @@ impl Parser {
                     then,
                     else_,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Assign => {
                 // Binding :=
@@ -621,7 +611,7 @@ impl Parser {
                     lhs: left,
                     rhs,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Caret => {
                 // Sort expression
@@ -640,7 +630,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Elvis => {
                 self.advance_prefix()?;
@@ -654,7 +644,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Coalesce => {
                 self.advance_prefix()?;
@@ -668,7 +658,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::DotDot => {
                 self.advance_prefix()?;
@@ -682,7 +672,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::And => {
                 self.advance_prefix()?;
@@ -696,7 +686,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Or => {
                 self.advance_prefix()?;
@@ -710,7 +700,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::In => {
                 self.advance_prefix()?;
@@ -724,7 +714,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::Equals => self.binary_op(left, BinaryOp::Eq, "=", 40, tok.pos),
             TokenType::NE => self.binary_op(left, BinaryOp::Ne, "!=", 40, tok.pos),
@@ -748,7 +738,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             TokenType::StarStar => self.binary_op(left, BinaryOp::Pow, "**", 60, tok.pos),
             TokenType::Amp => self.binary_op(left, BinaryOp::Concat, "&", 50, tok.pos),
@@ -764,7 +754,7 @@ impl Parser {
                     focus: None,
                     index: None,
                     pos: tok.pos,
-                }))
+                })?)
             }
             _ => Err(parse_error(
                 "S0201",
@@ -785,7 +775,7 @@ impl Parser {
     ) -> Result<NodeId, JsonataError> {
         self.advance_prefix()?;
         let rhs = self.binary_rhs(bp, op_str)?;
-        Ok(self.arena.alloc(Expr::Binary {
+        self.arena.alloc(Expr::Binary {
             op,
             lhs: left,
             rhs,
@@ -794,7 +784,7 @@ impl Parser {
             focus: None,
             index: None,
             pos,
-        }))
+        })
     }
 
     // ── Special parsers ──────────────────────────────────────────────
@@ -820,7 +810,7 @@ impl Parser {
                 focus: None,
                 index: None,
                 pos: self.token.pos,
-            });
+            })?;
             params.push(param);
             self.advance()?;
             if self.token.typ == TokenType::Comma {
@@ -845,13 +835,13 @@ impl Parser {
         self.infix = true;
         self.consume(TokenType::RBrace)?;
 
-        Ok(self.arena.alloc(Expr::Lambda {
+        self.arena.alloc(Expr::Lambda {
             params,
             body,
             signature,
             pos,
             thunk: false,
-        }))
+        })
     }
 
     fn parse_signature(&mut self) -> Result<Signature, JsonataError> {
@@ -896,12 +886,12 @@ impl Parser {
         };
         self.infix = true;
         self.consume(TokenType::Pipe)?;
-        Ok(self.arena.alloc(Expr::Transform {
+        self.arena.alloc(Expr::Transform {
             pattern,
             update,
             delete,
             pos,
-        }))
+        })
     }
 
     fn parse_sort(&mut self, left: NodeId, pos: usize) -> Result<NodeId, JsonataError> {
@@ -939,14 +929,14 @@ impl Parser {
         }
         self.infix = true;
         self.advance()?; // consume )
-        Ok(self.arena.alloc(Expr::Sort {
+        self.arena.alloc(Expr::Sort {
             expr: left,
             terms,
             keep_array: false,
             index: None,
             focus: None,
             pos,
-        }))
+        })
     }
 
     fn parse_object_pairs(&mut self) -> Result<Vec<NodeId>, JsonataError> {
