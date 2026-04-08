@@ -187,7 +187,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
     #[test]
-    fn compile_eval_no_panic(expr in "[ -~]{1,40}") {
+    fn compile_eval_no_panic(expr in "[ -~]{0,40}") {
         if let Ok(compiled) = Expression::compile(&expr) {
             let _ = compiled.evaluate_value(&Value::Undefined);
             let _ = compiled.evaluate_value(&Value::Null);
@@ -202,7 +202,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
     #[test]
-    fn compile_eval_with_cancel_no_panic(expr in "[ -~]{1,30}") {
+    fn compile_eval_with_cancel_no_panic(expr in "[ -~]{0,30}") {
         if let Ok(compiled) = Expression::compile(&expr) {
             let cancel = Arc::new(AtomicBool::new(false));
             let _ = compiled.evaluate_with_cancel("null", cancel);

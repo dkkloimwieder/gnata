@@ -98,6 +98,9 @@ pub enum FuncFastKind {
 /// Analyze an AST node and return its fast-path classification.
 /// Called once at compile time after `process_ast`.
 pub fn analyze(arena: &AstArena, node: NodeId) -> FastPath {
+    if node.is_empty() {
+        return FastPath::None;
+    }
     // Try pure path first.
     if let Some(path) = collect_pure_path(arena, node) {
         return FastPath::PurePath(path);
