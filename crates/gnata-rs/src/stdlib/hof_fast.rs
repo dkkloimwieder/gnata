@@ -34,11 +34,12 @@ pub enum SimpleLambda {
         op: BinaryOp,
         field2: String,
     },
-    /// function($a, $b) { $a.field > $b.field } — sort comparator on field
+    /// function($a, $b) { $a.field op $b.field } — sort comparator (same field both sides)
     SortComparator {
         param_a: String,
         param_b: String,
         field: String,
+        op: BinaryOp,
     },
     /// function($a, $b) { $a.field op $b.field } — sort comparator with any relational op
     SortComparatorOp {
@@ -199,6 +200,7 @@ fn analyze_binary(
                     param_a: param_a.clone(),
                     param_b: param_b.clone(),
                     field: field_a,
+                    op,
                 });
             }
             return Some(SimpleLambda::SortComparatorOp {

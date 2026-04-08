@@ -358,18 +358,20 @@ pub fn fn_sort(
         return Ok(Value::Array(Rc::from(arr)));
     }
 
-    // Fast path: sort by field — function($a,$b){$a.field > $b.field}
+    // Fast path: sort by field — function($a,$b){$a.field op $b.field}
+    // `>` / `>=` → ascending (compare_by_field natural order).
+    // `<` / `<=` → descending (reversed).
     if let Some(func) = &comparator
         && let Some(
-            SimpleLambda::SortComparator { field, .. }
-            | SimpleLambda::SortComparatorOp {
-                field,
-                op: BinaryOp::Gt,
-                ..
-            },
+            SimpleLambda::SortComparator { field, op, .. }
+            | SimpleLambda::SortComparatorOp { field, op, .. },
         ) = try_fast_lambda(func, arena)
     {
-        arr.sort_by(|a, b| hof_fast::compare_by_field(a, b, &field));
+        let descending = op == BinaryOp::Lt || op == BinaryOp::Le;
+        arr.sort_by(|a, b| {
+            let ord = hof_fast::compare_by_field(a, b, &field);
+            if descending { ord.reverse() } else { ord }
+        });
         return Ok(Value::Array(Rc::from(arr)));
     }
 
