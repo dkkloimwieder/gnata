@@ -30,6 +30,8 @@ WARMUP=5
 MIN_RUNS=20
 DRY_RUN=false
 RUNNERS="go rust wasi js"
+EXPORT_CSV=""
+RESULTS_DIR=""
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
         --dry-run)  DRY_RUN=true; shift ;;
         --quick)    TAG="quick"; SIZES="tiny"; WARMUP=3; MIN_RUNS=10; shift ;;
         --full)     SIZES="tiny,1k,10k,100k"; WARMUP=5; MIN_RUNS=20; shift ;;
+        --csv)      EXPORT_CSV="$2"; shift 2 ;;
         *)          echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -326,7 +329,12 @@ for entry in "${FILTERED[@]}"; do
         echo -n "$expr" > "$EXPR_FILE"
 
         # Build wrapper scripts
-        HF_ARGS=(--warmup "$WARMUP" --min-runs "$MIN_RUNS" --shell=none)
+        HF_ARGS=(--warmup "$WARMUP" --min-runs "$MIN_RUNS" --shell=none --ignore-failure)
+        if [[ -n "$EXPORT_CSV" ]]; then
+            RESULTS_DIR="$BENCH_DIR/results_json"
+            mkdir -p "$RESULTS_DIR"
+            HF_ARGS+=(--export-json "$RESULTS_DIR/${id}_${size}.json")
+        fi
         for runner in $RUNNERS; do
             WRAPPER=$(mktemp)
             case "$runner" in
@@ -373,3 +381,56 @@ SCRIPT
 done
 
 echo "=== Done: ${#FILTERED[@]} expressions benchmarked ==="
+
+# ── CSV export ──────────────────────────────────────────────────────────────
+if [[ -n "$EXPORT_CSV" && -d "$RESULTS_DIR" ]]; then
+    echo ""
+    echo "=== Generating CSV: $EXPORT_CSV ==="
+    python3 -c "
+import json, glob, os, csv, sys
+
+results_dir = '$RESULTS_DIR'
+files = sorted(glob.glob(os.path.join(results_dir, '*.json')))
+if not files:
+    print('No result files found', file=sys.stderr)
+    sys.exit(0)
+
+rows = []
+for f in files:
+    base = os.path.basename(f).replace('.json', '')
+    # Parse id_size from filename: e.g. 'path.simple_1k' -> id='path.simple', size='1k'
+    parts = base.rsplit('_', 1)
+    bench_id = parts[0]
+    size = parts[1] if len(parts) > 1 else 'unknown'
+
+    data = json.load(open(f))
+    row = {'id': bench_id, 'size': size, 'iters': $ITERS}
+    for r in data['results']:
+        name = r['command']
+        row[f'{name}_mean_s'] = f\"{r['mean']:.6f}\"
+        row[f'{name}_stddev_s'] = f\"{r['stddev']:.6f}\"
+        row[f'{name}_median_s'] = f\"{r['median']:.6f}\"
+    rows.append(row)
+
+# Collect all runner columns
+runners = []
+for name in ['go', 'rust', 'wasi', 'js']:
+    if any(f'{name}_mean_s' in r for r in rows):
+        runners.append(name)
+
+fieldnames = ['id', 'size', 'iters']
+for name in runners:
+    fieldnames.extend([f'{name}_mean_s', f'{name}_stddev_s', f'{name}_median_s'])
+
+with open('$EXPORT_CSV', 'w', newline='') as csvfile:
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+
+print(f'Wrote {len(rows)} rows to $EXPORT_CSV')
+"
+    echo ""
+    head -5 "$EXPORT_CSV"
+    echo "..."
+fi
