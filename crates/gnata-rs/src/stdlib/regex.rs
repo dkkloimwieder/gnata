@@ -4,7 +4,11 @@
 
 use std::rc::Rc;
 
-use regex::Regex;
+#[cfg(feature = "regex")]
+use regex::{Captures, Match, Regex, escape as regex_escape};
+
+#[cfg(feature = "regex-lite")]
+use regex_lite::{Captures, Match, Regex, escape as regex_escape};
 
 use crate::error::{JsonataError, JsonataResult};
 use crate::evaluator::{Environment, FunctionValue, call_function};
@@ -38,7 +42,7 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, JsonataError> 
 fn compile_regex_arg(v: &Value) -> Result<Regex, JsonataError> {
     match v {
         Value::String(s) => {
-            let escaped = regex::escape(s);
+            let escaped = regex_escape(s);
             Regex::new(&escaped)
                 .map_err(|e| JsonataError::new("D3137", format!("regex error: {e}")))
         }
@@ -61,7 +65,7 @@ fn compile_regex_arg(v: &Value) -> Result<Regex, JsonataError> {
 }
 
 /// Build a match result object from a regex match.
-fn build_match_object(s: &str, caps: &regex::Captures, m: &regex::Match) -> Value {
+fn build_match_object(s: &str, caps: &Captures, m: &Match) -> Value {
     let match_str: compact_str::CompactString = m.as_str().into();
     let start = s[..m.start()].chars().count() as f64;
     let end = s[..m.end()].chars().count() as f64;

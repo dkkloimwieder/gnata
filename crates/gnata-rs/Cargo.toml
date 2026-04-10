@@ -10,8 +10,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 
-# Parsing & Regex
-regex = "1.12"
+# Parsing & Regex — default uses full `regex` crate with Unicode support.
+# Enable `regex-lite` feature for smaller WASM builds (~250KB savings).
+regex = { version = "1.12", optional = true }
+regex-lite = { version = "0.1", optional = true }
 
 # JSON & Serialization
 serde = { version = "1", features = ["derive"] }
@@ -52,7 +54,9 @@ wasm-bindgen = "0.2"
 js-sys = "0.3"
 
 [features]
-default = ["mimalloc-alloc"]
+default = ["mimalloc-alloc", "regex"]
+regex-lite = ["dep:regex-lite"]
+regex = ["dep:regex"]
 dhat-heap = ["dhat"]
 mimalloc-alloc = ["mimalloc"]
 
