@@ -107,6 +107,5 @@ fn eval_expression(expr: &Expression, json_data: &str) -> Result<String, JsError
         return Ok(String::new());
     }
 
-    let json = result.to_json();
-    serde_json::to_string(&json).map_err(|e| JsError::new(&e.to_string()))
+    Ok(result.to_json_string())
 }

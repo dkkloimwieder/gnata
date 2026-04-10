@@ -3306,7 +3306,7 @@ fn eval_group_by(
     };
 
     let mut out_obj = crate::value::ObjectMap::new();
-    let mut key_set = std::collections::HashSet::new();
+    let mut key_set: std::collections::HashSet<compact_str::CompactString> = std::collections::HashSet::new();
 
     for pair in &group.pairs {
         let key_node = pair[0];
@@ -3436,7 +3436,7 @@ fn eval_group_by(
             }
 
             if !val_result.is_undefined() {
-                key_set.insert(key.to_string());
+                key_set.insert(key.clone());
                 out_obj.insert(key.clone(), val_result);
             }
         }
