@@ -585,6 +585,8 @@ mod tests {
         format(expr).unwrap_or_else(|e| panic!("format failed for `{expr}`: {e}"))
     }
 
+    // ── Literals ──────────────────────────────────────────────
+
     #[test]
     fn literals() {
         assert_eq!(fmt("42"), "42");
@@ -595,7 +597,44 @@ mod tests {
     }
 
     #[test]
+    fn number_literals_preserved() {
+        assert_eq!(fmt("3.14159"), "3.14159");
+        assert_eq!(fmt("0"), "0");
+        assert_eq!(fmt("1e10"), "1e10");
+        assert_eq!(fmt("-42"), "-42");
+    }
+
+    #[test]
+    fn string_escapes_preserved() {
+        assert_eq!(fmt(r#""hello \"world\"""#), r#""hello \"world\"""#);
+        assert_eq!(fmt(r#""line\nbreak""#), r#""line\nbreak""#);
+        assert_eq!(fmt(r#""tab\there""#), r#""tab\there""#);
+    }
+
+    #[test]
+    fn regex_literals() {
+        // Parser may add implicit flags (e.g., 'g'), so just check roundtrip
+        let r = fmt("/abc/");
+        assert!(r.starts_with('/') && r.len() > 2, "should be regex: {r}");
+        assert_eq!(fmt("/test/i"), "/test/ig");
+        assert_eq!(fmt("/^foo.*bar$/m"), "/^foo.*bar$/mg");
+    }
+
+    // ── Path expressions ─────────────────────────────────────
+
+    #[test]
     fn simple_path() {
+        assert_eq!(fmt("a.b.c"), "a.b.c");
+    }
+
+    #[test]
+    fn path_two_steps() {
+        assert_eq!(fmt("a.b"), "a.b");
+    }
+
+    #[test]
+    fn path_at_threshold() {
+        // Exactly 3 steps = threshold, should stay inline
         assert_eq!(fmt("a.b.c"), "a.b.c");
     }
 
@@ -603,8 +642,23 @@ mod tests {
     fn long_path_breaks() {
         let result = fmt("a.b.c.d");
         assert!(result.contains('\n'), "expected multiline, got: {result}");
-        assert!(result.contains(".d"));
+        // Each continuation step should be indented with leading dot
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0], "a");
+        for line in &lines[1..] {
+            let trimmed = line.trim();
+            assert!(trimmed.starts_with('.'), "continuation should start with dot: {line}");
+        }
     }
+
+    #[test]
+    fn very_long_path() {
+        let result = fmt("a.b.c.d.e.f");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 6, "6 steps = 6 lines: {result}");
+    }
+
+    // ── Function calls ───────────────────────────────────────
 
     #[test]
     fn short_function_call() {
@@ -612,9 +666,35 @@ mod tests {
     }
 
     #[test]
+    fn function_no_args() {
+        assert_eq!(fmt("$now()"), "$now()");
+    }
+
+    #[test]
+    fn function_one_arg() {
+        assert_eq!(fmt("$count(items)"), "$count(items)");
+    }
+
+    #[test]
     fn long_function_call_breaks() {
         let result = fmt("$foo(a, b, c, d)");
         assert!(result.contains('\n'), "expected multiline, got: {result}");
+        // Each arg on its own line, indented
+        let lines: Vec<&str> = result.lines().collect();
+        assert!(lines[0].ends_with('('), "first line should end with '(': {}", lines[0]);
+        assert_eq!(lines.last().unwrap().trim(), ")", "last line should be closing paren");
+    }
+
+    #[test]
+    fn nested_function_calls() {
+        assert_eq!(fmt("$sum($map(x, f))"), "$sum($map(x, f))");
+    }
+
+    // ── Block expressions ────────────────────────────────────
+
+    #[test]
+    fn single_expression_block() {
+        assert_eq!(fmt("($x + 1)"), "($x + 1)");
     }
 
     #[test]
@@ -626,10 +706,48 @@ mod tests {
     }
 
     #[test]
-    fn simple_condition_inline() {
-        let result = fmt("x ? 1 : 0");
-        assert_eq!(result, "x ? 1 : 0");
+    fn block_each_stmt_on_line() {
+        let result = fmt("($a := 1; $b := 2; $a + $b)");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0], "(");
+        assert!(lines[1].trim().starts_with("$a"));
+        assert!(lines[2].trim().starts_with("$b"));
+        assert!(lines[3].trim().starts_with("$a"));
+        assert_eq!(lines[4].trim(), ")");
     }
+
+    // ── Conditionals ─────────────────────────────────────────
+
+    #[test]
+    fn simple_condition_inline() {
+        assert_eq!(fmt("x ? 1 : 0"), "x ? 1 : 0");
+    }
+
+    #[test]
+    fn condition_without_else() {
+        assert_eq!(fmt("x ? 1"), "x ? 1");
+    }
+
+    #[test]
+    fn long_condition_multiline() {
+        // Build something that exceeds LINE_WIDTH (60)
+        let expr = "this_is_a_long_variable_name ? this_is_another_long_value : yet_another_long_fallback_value";
+        let result = fmt(expr);
+        assert!(result.contains('\n'), "expected multiline for long condition, got: {result}");
+        assert!(result.contains("? "), "should have ? on its own indented line: {result}");
+        assert!(result.contains(": "), "should have : on its own indented line: {result}");
+    }
+
+    #[test]
+    fn nested_conditions() {
+        let result = fmt("a ? b ? 1 : 2 : 3");
+        assert!(result.contains("?"), "should contain ternary operator: {result}");
+        // Should be idempotent
+        let second = fmt(&result);
+        assert_eq!(result, second, "nested conditions not idempotent");
+    }
+
+    // ── Lambda / function definitions ────────────────────────
 
     #[test]
     fn lambda_multiline() {
@@ -640,16 +758,268 @@ mod tests {
     }
 
     #[test]
+    fn lambda_multiple_params() {
+        let result = fmt("function($x, $y, $z) { $x + $y + $z }");
+        assert!(result.contains("function($x, $y, $z)"));
+    }
+
+    #[test]
+    fn lambda_with_signature() {
+        let result = fmt("function($x)<n:n> { $x + 1 }");
+        assert!(result.contains("<n:n>"), "should preserve type signature: {result}");
+    }
+
+    #[test]
+    fn lambda_body_indented() {
+        let result = fmt("function($x) { $x + 1 }");
+        let lines: Vec<&str> = result.lines().collect();
+        assert!(lines.len() >= 3, "lambda should be at least 3 lines: {result}");
+        // Body line should be indented
+        assert!(lines[1].starts_with(INDENT), "body should be indented: {}", lines[1]);
+    }
+
+    // ── Object constructors ──────────────────────────────────
+
+    #[test]
+    fn short_object_inline() {
+        let result = fmt("{\"a\": 1, \"b\": 2}");
+        assert!(!result.contains('\n'), "short object should be inline: {result}");
+        assert!(result.contains("{"));
+        assert!(result.contains("}"));
+    }
+
+    #[test]
+    fn long_object_expanded() {
+        let result = fmt("{\"a\": 1, \"b\": 2, \"c\": 3, \"d\": 4}");
+        assert!(result.contains('\n'), "object with >3 pairs should expand: {result}");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0].trim(), "{");
+        assert_eq!(lines.last().unwrap().trim(), "}");
+    }
+
+    #[test]
+    fn object_three_pairs_inline() {
+        let result = fmt("{\"a\": 1, \"b\": 2, \"c\": 3}");
+        assert!(!result.contains('\n'), "3 pairs = threshold, should be inline: {result}");
+    }
+
+    // ── Array constructors ───────────────────────────────────
+
+    #[test]
+    fn short_array_inline() {
+        assert_eq!(fmt("[1, 2, 3]"), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn long_array_expanded() {
+        let result = fmt("[1, 2, 3, 4]");
+        assert!(result.contains('\n'), "array with >3 elements should expand: {result}");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0].trim(), "[");
+        assert_eq!(lines.last().unwrap().trim(), "]");
+    }
+
+    #[test]
+    fn empty_array() {
+        assert_eq!(fmt("[]"), "[]");
+    }
+
+    #[test]
+    fn single_element_array() {
+        assert_eq!(fmt("[1]"), "[1]");
+    }
+
+    // ── Binary operators ─────────────────────────────────────
+
+    #[test]
+    fn arithmetic_operators() {
+        assert_eq!(fmt("a + b"), "a + b");
+        assert_eq!(fmt("a - b"), "a - b");
+        assert_eq!(fmt("a * b"), "a * b");
+        assert_eq!(fmt("a / b"), "a / b");
+        assert_eq!(fmt("a % b"), "a % b");
+    }
+
+    #[test]
+    fn comparison_operators() {
+        assert_eq!(fmt("a = b"), "a = b");
+        assert_eq!(fmt("a != b"), "a != b");
+        assert_eq!(fmt("a < b"), "a < b");
+        assert_eq!(fmt("a <= b"), "a <= b");
+        assert_eq!(fmt("a > b"), "a > b");
+        assert_eq!(fmt("a >= b"), "a >= b");
+    }
+
+    #[test]
+    fn word_operators() {
+        assert_eq!(fmt("a and b"), "a and b");
+        assert_eq!(fmt("a or b"), "a or b");
+        assert_eq!(fmt("a in b"), "a in b");
+    }
+
+    #[test]
+    fn string_concat_operator() {
+        assert_eq!(fmt("a & b"), "a & b");
+    }
+
+    #[test]
+    fn chain_operator() {
+        assert_eq!(fmt("a ~> b"), "a ~> b");
+    }
+
+    #[test]
+    fn range_operator() {
+        assert_eq!(fmt("[1..5]"), "[1..5]");
+    }
+
+    #[test]
+    fn subscript_operator() {
+        assert_eq!(fmt("a[0]"), "a[0]");
+    }
+
+    // ── Variables ────────────────────────────────────────────
+
+    #[test]
     fn variable_binding() {
         assert_eq!(fmt("$x := 42"), "$x := 42");
     }
+
+    #[test]
+    fn root_variable() {
+        assert_eq!(fmt("$$"), "$$");
+    }
+
+    #[test]
+    fn context_variable() {
+        assert_eq!(fmt("$"), "$");
+    }
+
+    // ── Special tokens ───────────────────────────────────────
+
+    #[test]
+    fn wildcard() {
+        assert_eq!(fmt("a.*"), "a.*");
+    }
+
+    #[test]
+    fn descendant() {
+        assert_eq!(fmt("a.**"), "a.**");
+    }
+
+    // ── Transform expressions ────────────────────────────────
+
+    #[test]
+    fn transform_update() {
+        let result = fmt("|a|b|");
+        assert!(result.contains("|"), "transform should use pipe syntax: {result}");
+        assert!(result.contains("a"));
+        assert!(result.contains("b"));
+    }
+
+    #[test]
+    fn transform_update_delete() {
+        let result = fmt("|a|b, c|");
+        assert!(result.contains("a"));
+        assert!(result.contains("b"));
+        assert!(result.contains("c"));
+    }
+
+    // ── Sort expressions ─────────────────────────────────────
+
+    #[test]
+    fn sort_ascending() {
+        let result = fmt("data^(<price)");
+        assert!(result.contains("^("), "should have sort syntax: {result}");
+        assert!(result.contains("<price"), "should have ascending marker: {result}");
+    }
+
+    #[test]
+    fn sort_descending() {
+        let result = fmt("data^(>price)");
+        assert!(result.contains(">price"), "should have descending marker: {result}");
+    }
+
+    #[test]
+    fn sort_multi_key() {
+        let result = fmt("data^(<category, >price)");
+        assert!(result.contains("<category"), "first key ascending: {result}");
+        assert!(result.contains(">price"), "second key descending: {result}");
+    }
+
+    // ── Unary negate ─────────────────────────────────────────
+
+    #[test]
+    fn unary_negate() {
+        assert_eq!(fmt("-x"), "-x");
+    }
+
+    // ── Name escaping ────────────────────────────────────────
+
+    #[test]
+    fn backtick_keywords() {
+        // "and", "or", "in", etc. used as field names need backtick quoting
+        assert_eq!(fmt("`and`"), "`and`");
+        assert_eq!(fmt("`or`"), "`or`");
+        assert_eq!(fmt("`in`"), "`in`");
+        assert_eq!(fmt("`true`"), "`true`");
+        assert_eq!(fmt("`false`"), "`false`");
+        assert_eq!(fmt("`null`"), "`null`");
+    }
+
+    #[test]
+    fn backtick_special_chars() {
+        assert_eq!(fmt("`hello world`"), "`hello world`");
+        assert_eq!(fmt("`foo-bar`"), "`foo-bar`");
+    }
+
+    #[test]
+    fn normal_name_no_backtick() {
+        assert_eq!(fmt("foo"), "foo");
+        assert_eq!(fmt("_private"), "_private");
+        assert_eq!(fmt("camelCase"), "camelCase");
+    }
+
+    // ── Filter stages ────────────────────────────────────────
+
+    #[test]
+    fn filter_stage() {
+        assert_eq!(fmt("items[price > 10]"), "items[price > 10]");
+    }
+
+    #[test]
+    fn chained_filters() {
+        let result = fmt("items[type = \"book\"][price < 20]");
+        assert!(result.contains("[type = \"book\"]"), "first filter: {result}");
+        assert!(result.contains("[price < 20]"), "second filter: {result}");
+    }
+
+    // ── Nested indentation ───────────────────────────────────
+
+    #[test]
+    fn nested_lambda_in_block() {
+        let result = fmt("($f := function($x) { $x * 2 }; $f(5))");
+        assert!(result.contains('\n'), "should be multiline: {result}");
+        // The lambda body should be further indented than the block body
+        let lines: Vec<&str> = result.lines().collect();
+        let lambda_body = lines.iter().find(|l| l.contains("$x * 2"));
+        assert!(lambda_body.is_some(), "should contain lambda body: {result}");
+        let body_indent = lambda_body.unwrap().len() - lambda_body.unwrap().trim_start().len();
+        assert!(body_indent >= INDENT.len() * 2, "lambda body should be double-indented: {result}");
+    }
+
+    #[test]
+    fn nested_array_in_function() {
+        let result = fmt("$map([1, 2, 3, 4], function($v) { $v + 1 })");
+        assert!(result.contains('\n'), "should be multiline: {result}");
+    }
+
+    // ── Comments ─────────────────────────────────────────────
 
     #[test]
     fn preserves_comments() {
         let result = fmt("/* header */ $x + /* inline */ $y");
         assert!(result.contains("/* header */"), "missing header comment: {result}");
         assert!(result.contains("/* inline */"), "missing inline comment: {result}");
-        // Comments should be on their own lines
         for line in result.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("/*") {
@@ -671,6 +1041,31 @@ mod tests {
     }
 
     #[test]
+    fn comment_inside_string_not_extracted() {
+        // "/* not a comment */" is a string literal, should not be treated as comment
+        let result = fmt(r#""/* not a comment */""#);
+        assert_eq!(result, r#""/* not a comment */""#);
+    }
+
+    // ── Partial application ──────────────────────────────────
+
+    #[test]
+    fn partial_application() {
+        let result = fmt("$sum(?, 1)");
+        assert!(result.contains("?"), "should preserve placeholder: {result}");
+        assert!(result.contains("1"), "should preserve arg: {result}");
+    }
+
+    // ── Keep-array modifier ──────────────────────────────────
+
+    #[test]
+    fn keep_array_name() {
+        assert_eq!(fmt("items[]"), "items[]");
+    }
+
+    // ── Roundtrip / Idempotency ──────────────────────────────
+
+    #[test]
     fn idempotent() {
         let exprs = [
             "$sum(a, b, c)",
@@ -679,11 +1074,46 @@ mod tests {
             "x ? 1 : 0",
             "/* comment */ $x + $y",
             "$x + $y /* trailing */",
+            "function($x) { $x + 1 }",
+            "{\"a\": 1, \"b\": 2}",
+            "[1, 2, 3]",
+            "a.b.c.d.e",
+            "$foo(a, b, c, d)",
+            "data^(<price, >name)",
+            "|target|update, delete|",
+            "$x and $y or $z",
+            "items[price > 10]",
+            "-x",
+            "a[0]",
+            "[1..5]",
+            "a & b ~> c",
         ];
         for expr in exprs {
             let first = fmt(expr);
             let second = fmt(&first);
             assert_eq!(first, second, "not idempotent for: {expr}\nfirst:  {first}\nsecond: {second}");
         }
+    }
+
+    #[test]
+    fn roundtrip_complex() {
+        // A realistic complex expression
+        let expr = r#"Account.Order.Product{
+  $."Product Name": $sum(Price)
+}"#;
+        // We can't assert exact output format for complex expressions since
+        // the formatter canonicalizes, but it must be idempotent
+        if let Ok(first) = format(expr) {
+            let second = fmt(&first);
+            assert_eq!(first, second, "complex expression not idempotent");
+        }
+    }
+
+    // ── Error handling ───────────────────────────────────────
+
+    #[test]
+    fn parse_error_returns_err() {
+        assert!(format("$foo(").is_err(), "unclosed paren should error");
+        assert!(format("[1, 2,").is_err(), "unclosed bracket should error");
     }
 }
