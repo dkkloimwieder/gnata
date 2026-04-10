@@ -57,6 +57,19 @@ pub enum SimpleLambda {
     },
     /// function($v) { $v.A & "lit" & $string($v.B) & ... } — concat template
     ConcatTemplate { pieces: Vec<TemplatePiece> },
+    /// function($v) { $v.field1 op1 lit1 and/or $v.field2 op2 lit2 ... } — compound predicate
+    CompoundPredicate {
+        clauses: Vec<PredicateClause>,
+        combiner: BinaryOp, // And or Or
+    },
+}
+
+/// A single clause in a compound predicate: field op literal.
+#[derive(Debug, Clone)]
+pub struct PredicateClause {
+    pub field: String,
+    pub op: BinaryOp,
+    pub literal: Value,
 }
 
 /// A piece of a concat template — evaluated into a string buffer.
@@ -228,6 +241,21 @@ fn analyze_binary(
         }
     }
 
+    // Compound predicate: function($v) { $v.field1 op1 lit1 and/or $v.field2 op2 lit2 }
+    if !params.is_empty() && (op == BinaryOp::And || op == BinaryOp::Or) {
+        let param = &params[0];
+        let mut clauses = Vec::new();
+        if collect_predicate_clauses(arena, lhs, param, op, &mut clauses)
+            && collect_predicate_clauses(arena, rhs, param, op, &mut clauses)
+            && clauses.len() >= 2
+        {
+            return Some(SimpleLambda::CompoundPredicate {
+                clauses,
+                combiner: op,
+            });
+        }
+    }
+
     // Field predicate: function($v) { $v.field op literal }
     if !params.is_empty() {
         let param = &params[0];
@@ -348,6 +376,50 @@ fn classify_template_operand(node: NodeId, arena: &AstArena, param: &str) -> Opt
         }
 
         _ => None,
+    }
+}
+
+/// Recursively collect field-op-literal clauses from an and/or tree.
+/// Returns false if any leaf is not a simple field predicate.
+fn collect_predicate_clauses(
+    arena: &AstArena,
+    node: NodeId,
+    param: &str,
+    combiner: BinaryOp,
+    out: &mut Vec<PredicateClause>,
+) -> bool {
+    match arena.get(node) {
+        // Same combiner: flatten nested and/or
+        Expr::Binary { op, lhs, rhs, .. } if *op == combiner => {
+            collect_predicate_clauses(arena, *lhs, param, combiner, out)
+                && collect_predicate_clauses(arena, *rhs, param, combiner, out)
+        }
+        // Leaf: must be $param.field op literal (or literal op $param.field)
+        Expr::Binary { op, lhs, rhs, .. } if is_relational(*op) || is_arithmetic(*op) => {
+            if let Some(field) = extract_param_dot_field(*lhs, arena, param) {
+                if let Some(lit) = extract_literal(*rhs, arena) {
+                    out.push(PredicateClause {
+                        field,
+                        op: *op,
+                        literal: lit,
+                    });
+                    return true;
+                }
+            }
+            // Reversed: literal op $param.field
+            if let Some(lit) = extract_literal(*lhs, arena) {
+                if let Some(field) = extract_param_dot_field(*rhs, arena, param) {
+                    out.push(PredicateClause {
+                        field,
+                        op: flip_relational(*op),
+                        literal: lit,
+                    });
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 
