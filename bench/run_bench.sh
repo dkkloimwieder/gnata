@@ -328,8 +328,12 @@ for entry in "${FILTERED[@]}"; do
         EXPR_FILE=$(mktemp)
         echo -n "$expr" > "$EXPR_FILE"
 
-        # Build wrapper scripts
-        HF_ARGS=(--warmup "$WARMUP" --min-runs "$MIN_RUNS" --shell=none --ignore-failure)
+        # Build wrapper scripts.
+        # NOTE: --ignore-failure removed intentionally.  A crashing runner (e.g.
+        # WASI sandbox violation) was previously recorded as a ~2 ms "result",
+        # masking real performance data.  Hyperfine will now abort on non-zero
+        # exit so failures are visible.
+        HF_ARGS=(--warmup "$WARMUP" --min-runs "$MIN_RUNS" --shell=none)
         if [[ -n "$EXPORT_CSV" ]]; then
             RESULTS_DIR="$BENCH_DIR/results_json"
             mkdir -p "$RESULTS_DIR"
@@ -351,11 +355,19 @@ exec '$RS_BIN' -expr "\$(cat '$EXPR_FILE')" -datafile '$datafile' -n $iters
 SCRIPT
                     ;;
                 wasi)
-                    # Map bench dir as /bench; convert absolute datafile path to /bench/...
+                    # Resolve symlinks so the real path can be mapped into the sandbox.
+                    REAL_DF=$(readlink -f "$datafile")
+                    REAL_DIR=$(dirname "$REAL_DF")
+                    WASI_DIRS="--dir '$BENCH_DIR'::/bench"
                     WASI_DF="/bench${datafile#"$BENCH_DIR"}"
+                    # If the resolved file lives outside bench/, add its directory too.
+                    if [[ "$REAL_DIR" != "$BENCH_DIR"* ]]; then
+                        WASI_DIRS="$WASI_DIRS --dir '$REAL_DIR'::/data"
+                        WASI_DF="/data/$(basename "$REAL_DF")"
+                    fi
                     cat > "$WRAPPER" <<SCRIPT
 #!/bin/sh
-exec wasmtime --dir '$BENCH_DIR'::/bench '$WASI_BIN' -- -expr "\$(cat '$EXPR_FILE')" -datafile '$WASI_DF' -n $iters
+exec wasmtime $WASI_DIRS '$WASI_BIN' -- -expr "\$(cat '$EXPR_FILE')" -datafile '$WASI_DF' -n $iters
 SCRIPT
                     ;;
                 js)
