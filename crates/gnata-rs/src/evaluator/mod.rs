@@ -1493,8 +1493,8 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
     );
 
     // Collect variable names from tuple-specific envs (those with %%).
-    let mut var_names: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut var_names: Vec<compact_str::CompactString> = Vec::new();
+    let mut seen: std::collections::HashSet<compact_str::CompactString> = std::collections::HashSet::new();
     for env in envs {
         let mut current: Option<&Rc<Environment>> = Some(env);
         while let Some(e) = current {
@@ -1502,8 +1502,9 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
                 break;
             }
             e.for_each_direct(|name, _| {
-                if seen.insert(name.to_string()) {
-                    var_names.push(name.to_string());
+                let cs = compact_str::CompactString::from(name);
+                if seen.insert(cs.clone()) {
+                    var_names.push(cs);
                 }
             });
             current = e.parent();
