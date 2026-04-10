@@ -16,6 +16,30 @@
 <title>gnata · Rust</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>G</text></svg>">
 <link rel="preload" href="pkg/gnata_bg.wasm" as="fetch" type="application/wasm" crossorigin>
+<script type="importmap">
+{
+  "imports": {
+    "codemirror":                 "https://esm.sh/*codemirror@6.0.1",
+    "@codemirror/autocomplete":   "https://esm.sh/*@codemirror/autocomplete@6.18.6",
+    "@codemirror/commands":       "https://esm.sh/*@codemirror/commands@6.8.1",
+    "@codemirror/lang-json":      "https://esm.sh/*@codemirror/lang-json@6.0.1",
+    "@codemirror/language":       "https://esm.sh/*@codemirror/language@6.11.0",
+    "@codemirror/lint":           "https://esm.sh/*@codemirror/lint@6.8.5",
+    "@codemirror/search":         "https://esm.sh/*@codemirror/search@6.5.10",
+    "@codemirror/state":          "https://esm.sh/*@codemirror/state@6.5.2",
+    "@codemirror/theme-one-dark": "https://esm.sh/*@codemirror/theme-one-dark@6.1.2",
+    "@codemirror/view":           "https://esm.sh/*@codemirror/view@6.36.5",
+    "@lezer/common":              "https://esm.sh/*@lezer/common@1.2.3",
+    "@lezer/highlight":           "https://esm.sh/*@lezer/highlight@1.2.1",
+    "@lezer/json":                "https://esm.sh/*@lezer/json@1.0.3",
+    "@lezer/lr":                  "https://esm.sh/*@lezer/lr@1.4.2",
+    "crelt":                      "https://esm.sh/*crelt@1.0.6",
+    "style-mod":                  "https://esm.sh/*style-mod@4.1.2",
+    "w3c-keyname":                "https://esm.sh/*w3c-keyname@2.2.8",
+    "@marijn/find-cluster-break": "https://esm.sh/*@marijn/find-cluster-break@1.0.2"
+  }
+}
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -68,9 +92,10 @@
     font-family: 'Onest', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     transition: background 0.25s, color 0.25s;
   }
 
@@ -189,10 +214,11 @@
 
   .container {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr auto;
     gap: 0;
     flex: 1;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -201,6 +227,7 @@
     flex-direction: column;
     border-right: 1px solid var(--border);
     overflow: hidden;
+    min-height: 0;
     transition: border-color 0.25s;
   }
 
@@ -221,59 +248,54 @@
     transition: background 0.25s, border-color 0.25s;
   }
 
-  .expr-bar {
-    grid-column: 1 / -1;
-    display: flex;
-    align-items: stretch;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    transition: background 0.25s, border-color 0.25s;
-  }
-
-  .expr-bar .panel-header {
-    border-bottom: none;
-    border-right: 1px solid var(--border);
-    min-width: 120px;
-  }
-
-  #expression {
+  .cm-pane {
     flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--text-strong);
-    font-family: var(--font-mono);
-    font-size: 14px;
-    padding: 12px 16px;
-    outline: none;
-    resize: none;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  #expression::placeholder { color: var(--muted); }
-
-  textarea, pre {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 13px;
-    padding: 16px;
-    outline: none;
-    resize: none;
-    overflow: auto;
-    tab-size: 2;
-    white-space: pre;
-    transition: color 0.25s;
+  .cm-pane .cm-editor {
+    height: 100%;
   }
 
-  #result {
-    margin: 0;
-    line-height: 1.5;
-    min-height: 100%;
+  .cm-pane .cm-scroller {
+    overflow: auto !important;
   }
 
-  #result.error { color: var(--error); }
-  #result.success { color: var(--accent); }
+  .cm-pane.error .cm-content {
+    color: var(--error) !important;
+  }
+
+  /* JSONata semantic highlighting */
+  .hl-variable { color: #e06c75; }
+  .hl-function { color: #61afef; }
+  .hl-string { color: #98c379; }
+  .hl-number { color: #d19a66; }
+  .hl-bool { color: #d19a66; font-weight: 600; }
+  .hl-null { color: #d19a66; font-style: italic; }
+  .hl-operator { color: #56b6c2; }
+  .hl-keyword { color: #c678dd; font-weight: 600; }
+  .hl-bracket { color: #abb2bf; }
+  .hl-name { color: #e5c07b; }
+  .hl-object-key { color: #e06c75; font-weight: 500; }
+  .hl-regex { color: #98c379; font-style: italic; }
+  .hl-comment { color: #5c6370; font-style: italic; }
+  .hl-punctuation { color: #abb2bf; }
+
+  [data-theme="light"] .hl-variable { color: #e45649; }
+  [data-theme="light"] .hl-function { color: #4078f2; }
+  [data-theme="light"] .hl-string { color: #50a14f; }
+  [data-theme="light"] .hl-number { color: #986801; }
+  [data-theme="light"] .hl-bool { color: #986801; }
+  [data-theme="light"] .hl-null { color: #986801; }
+  [data-theme="light"] .hl-operator { color: #0184bc; }
+  [data-theme="light"] .hl-keyword { color: #a626a4; }
+  [data-theme="light"] .hl-bracket { color: #383a42; }
+  [data-theme="light"] .hl-name { color: #c18401; }
+  [data-theme="light"] .hl-object-key { color: #e45649; }
+  [data-theme="light"] .hl-regex { color: #50a14f; }
+  [data-theme="light"] .hl-comment { color: #a0a1a7; }
+  [data-theme="light"] .hl-punctuation { color: #383a42; }
 
   .toolbar {
     grid-column: 1 / -1;
@@ -385,16 +407,10 @@
     color: var(--accent);
   }
 
-  .icon-ext {
-    width: 10px;
-    height: 10px;
-    opacity: 0.5;
-  }
-
   @media (max-width: 768px) {
     .container {
       grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr 1fr auto;
+      grid-template-rows: 1fr 1fr 1fr auto;
     }
     .panel { border-right: none; border-bottom: 1px solid var(--border); }
     .header-links { gap: 2px; }
@@ -424,10 +440,6 @@
     <a href="https://docs.jsonata.org/expressions" target="_blank" rel="noopener">Expressions</a>
     <a href="https://docs.jsonata.org/string-functions" target="_blank" rel="noopener">Functions</a>
     <div class="sep"></div>
-    <a href="playground.html">
-      Go version
-    </a>
-    <div class="sep"></div>
     <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode">
       <span class="theme-icon"></span>
     </button>
@@ -435,11 +447,6 @@
 </header>
 
 <div class="container">
-  <div class="expr-bar">
-    <div class="panel-header">Expression</div>
-    <textarea id="expression" rows="1" placeholder="e.g. Account.Order.Product.(Price * Quantity)" spellcheck="false">$sum(Account.Order.Product.(Price * Quantity))</textarea>
-  </div>
-
   <div class="panel">
     <div class="panel-header">
       Input JSON
@@ -449,26 +456,12 @@
         <button class="example-chip" data-example="simple">Simple</button>
       </div>
     </div>
-    <textarea id="input" spellcheck="false">{
-  "Account": {
-    "Name": "Firefly",
-    "Order": [
-      {
-        "OrderID": "order103",
-        "Product": [
-          { "Name": "Bowler Hat", "Price": 34.45, "Quantity": 2 },
-          { "Name": "Trilby hat", "Price": 21.67, "Quantity": 1 }
-        ]
-      },
-      {
-        "OrderID": "order104",
-        "Product": [
-          { "Name": "Cloak", "Price": 107.99, "Quantity": 1 }
-        ]
-      }
-    ]
-  }
-}</textarea>
+    <div id="input-container" class="cm-pane"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">Expression</div>
+    <div id="expr-container" class="cm-pane"></div>
   </div>
 
   <div class="panel">
@@ -476,11 +469,12 @@
       Result
       <span id="timing" class="timing"></span>
     </div>
-    <pre id="result"></pre>
+    <div id="result-container" class="cm-pane"></div>
   </div>
 
   <div class="toolbar">
     <button class="btn-primary" id="runBtn" disabled>Run<kbd>&#8984;&#x21A9;</kbd></button>
+    <button class="btn-ghost" id="fmtBtn" disabled>Format<kbd>&#8679;&#8997;F</kbd></button>
     <button class="btn-ghost" id="clearBtn">Clear</button>
     <div class="toolbar-right">
       <a href="https://www.reco.ai" target="_blank" rel="noopener" class="reco-link" title="Built by Reco">
@@ -497,10 +491,20 @@
 </div>
 
 <script type="module">
-import init, { gnataEval } from './pkg/gnata.js';
+// --- CodeMirror 6 imports (resolved via import map with esm.sh * external prefix) ---
+import { EditorView, basicSetup } from 'codemirror';
+import { json } from '@codemirror/lang-json';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorState, Compartment } from '@codemirror/state';
+import { keymap, ViewPlugin, Decoration } from '@codemirror/view';
+import { RangeSetBuilder } from '@codemirror/state';
+
+// --- WASM imports ---
+import init, { gnataCompile, gnataEvalHandle, gnataReleaseHandle, gnataFormat, gnataHighlight } from './pkg/gnata.js';
 
 // --- Theme ---
 const THEME_KEY = 'gnata-playground-rs-theme';
+const themeCompartment = new Compartment();
 
 function getPreferredTheme() {
   const stored = localStorage.getItem(THEME_KEY);
@@ -508,22 +512,18 @@ function getPreferredTheme() {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+let currentTheme = getPreferredTheme();
+
 function applyTheme(theme) {
+  currentTheme = theme;
   document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem(THEME_KEY, theme);
   document.querySelector('.theme-icon').textContent = theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+  const ext = theme === 'dark' ? oneDark : [];
+  for (const view of [inputView, exprView, resultView]) {
+    view.dispatch({ effects: themeCompartment.reconfigure(ext) });
+  }
 }
-
-applyTheme(getPreferredTheme());
-
-document.getElementById('themeToggle').addEventListener('click', () => {
-  const current = document.documentElement.getAttribute('data-theme');
-  applyTheme(current === 'dark' ? 'light' : 'dark');
-});
-
-window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
-  if (!localStorage.getItem(THEME_KEY)) applyTheme(e.matches ? 'light' : 'dark');
-});
 
 // --- Examples ---
 const examples = {
@@ -574,15 +574,92 @@ const examples = {
   }
 };
 
+// --- Cmd/Ctrl+Enter keymap ---
+// --- WASM-based JSONata syntax highlighter ---
+const hlTypes = ['variable','function','string','number','bool','null','operator','keyword','bracket','name','object-key','regex','comment','punctuation'];
+const hlMarks = Object.fromEntries(hlTypes.map(t => [t, Decoration.mark({ class: `hl-${t}` })]));
+
+let wasmReady = false;
+
+const jsonataHighlighter = ViewPlugin.fromClass(class {
+  constructor(view) {
+    this.decorations = this.buildDecorations(view);
+  }
+  update(update) {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = this.buildDecorations(update.view);
+    }
+  }
+  buildDecorations(view) {
+    if (!wasmReady) return Decoration.none;
+    const doc = view.state.doc.toString();
+    if (!doc.trim()) return Decoration.none;
+    try {
+      const spans = JSON.parse(gnataHighlight(doc));
+      const builder = new RangeSetBuilder();
+      for (const [start, end, type] of spans) {
+        if (start < end && end <= doc.length && hlMarks[type]) {
+          builder.add(start, end, hlMarks[type]);
+        }
+      }
+      return builder.finish();
+    } catch {
+      return Decoration.none;
+    }
+  }
+}, { decorations: v => v.decorations });
+
+const runKeymap = keymap.of([
+  { key: 'Mod-Enter', run: () => { evaluate(); return true; } },
+  { key: 'Shift-Alt-f', run: () => { formatExpr(); return true; } },
+]);
+
+// --- Create CodeMirror editors ---
+const themeExt = currentTheme === 'dark' ? oneDark : [];
+
+const inputView = new EditorView({
+  doc: examples.invoice.data,
+  extensions: [basicSetup, json(), themeCompartment.of(themeExt), EditorView.lineWrapping, runKeymap],
+  parent: document.getElementById('input-container'),
+});
+
+const exprView = new EditorView({
+  doc: examples.invoice.expr,
+  extensions: [basicSetup, jsonataHighlighter, themeCompartment.of(themeExt), EditorView.lineWrapping, runKeymap],
+  parent: document.getElementById('expr-container'),
+});
+
+const resultView = new EditorView({
+  doc: '',
+  extensions: [basicSetup, json(), themeCompartment.of(themeExt), EditorState.readOnly.of(true)],
+  parent: document.getElementById('result-container'),
+});
+
+// Apply initial theme (sets the icon)
+document.documentElement.setAttribute('data-theme', currentTheme);
+document.querySelector('.theme-icon').textContent = currentTheme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  applyTheme(currentTheme === 'dark' ? 'light' : 'dark');
+});
+
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
+  if (!localStorage.getItem(THEME_KEY)) applyTheme(e.matches ? 'light' : 'dark');
+});
+
 // --- DOM refs ---
 const statusEl = document.getElementById('status');
-const exprEl = document.getElementById('expression');
-const inputEl = document.getElementById('input');
-const resultEl = document.getElementById('result');
 const timingEl = document.getElementById('timing');
 const runBtn = document.getElementById('runBtn');
+const fmtBtn = document.getElementById('fmtBtn');
 const clearBtn = document.getElementById('clearBtn');
 const progressBar = document.getElementById('progressBar');
+const resultContainer = document.getElementById('result-container');
+
+// --- Helper: set editor content ---
+function setDoc(view, text) {
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+}
 
 // --- WASM loading with progress ---
 async function loadWasm() {
@@ -608,7 +685,6 @@ async function loadWasm() {
     }
   }
 
-  // Combine chunks and pass to wasm-bindgen init
   const combined = new Uint8Array(loaded);
   let offset = 0;
   for (const chunk of chunks) {
@@ -622,78 +698,95 @@ async function loadWasm() {
   setTimeout(() => { progressBar.style.opacity = '0'; progressBar.style.transition += ', opacity 0.4s'; }, 200);
   statusEl.classList.add('ready');
   statusEl.querySelector('span:last-child').textContent = 'Ready';
+  wasmReady = true;
   runBtn.disabled = false;
+  fmtBtn.disabled = false;
+  // Trigger re-highlight of expression pane now that WASM is ready
+  exprView.dispatch({ changes: [] });
   evaluate();
 }
 
 loadWasm().catch(err => {
   statusEl.querySelector('span:last-child').textContent = 'Failed to load';
-  resultEl.textContent = `Failed to load WASM module: ${err.message || err}`;
-  resultEl.className = 'error';
+  setDoc(resultView, `Failed to load WASM module: ${err.message || err}`);
+  resultContainer.classList.add('error');
   console.error('WASM load error:', err);
 });
 
 // --- Evaluation ---
+function fmtTime(ms) {
+  return ms < 1 ? `${(ms * 1000).toFixed(0)}us` : `${ms.toFixed(2)}ms`;
+}
+
 function evaluate() {
-  const expr = exprEl.value.trim();
-  const jsonStr = inputEl.value.trim();
+  const expr = exprView.state.doc.toString().trim();
+  const jsonStr = inputView.state.doc.toString().trim();
 
   if (!expr) {
-    resultEl.textContent = '';
+    setDoc(resultView, '');
     timingEl.textContent = '';
+    resultContainer.classList.remove('error');
     return;
   }
 
   try {
     const t0 = performance.now();
-    const raw = gnataEval(expr, jsonStr || 'null');
-    const elapsed = performance.now() - t0;
+    const handle = gnataCompile(expr);
+    const tCompile = performance.now();
 
+    const raw = gnataEvalHandle(handle, jsonStr || 'null');
+    const tEval = performance.now();
+
+    gnataReleaseHandle(handle);
+
+    let display;
     if (raw === '') {
-      resultEl.textContent = 'undefined';
-      resultEl.className = 'success';
+      display = 'undefined';
     } else {
       let parsed;
       try { parsed = JSON.parse(raw); } catch { parsed = raw; }
-      resultEl.textContent = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
-      resultEl.className = 'success';
+      display = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
     }
-    timingEl.textContent = elapsed < 1 ? `${(elapsed * 1000).toFixed(0)} \u00b5s` : `${elapsed.toFixed(2)} ms`;
+    const tFormat = performance.now();
+
+    setDoc(resultView, display);
+    resultContainer.classList.remove('error');
+
+    const compileMs = tCompile - t0;
+    const evalMs = tEval - tCompile;
+    const formatMs = tFormat - tEval;
+    const totalMs = tFormat - t0;
+    timingEl.textContent = `compile ${fmtTime(compileMs)} · eval ${fmtTime(evalMs)} · format ${fmtTime(formatMs)} · total ${fmtTime(totalMs)}`;
   } catch (e) {
-    resultEl.textContent = e.message || String(e);
-    resultEl.className = 'error';
+    setDoc(resultView, e.message || String(e));
+    resultContainer.classList.add('error');
     timingEl.textContent = '';
   }
 }
 
-// --- Debounced live eval ---
-let debounceTimer = null;
-function scheduleEval() {
-  clearTimeout(debounceTimer);
-  timingEl.textContent = '';
-  debounceTimer = setTimeout(evaluate, 300);
+// --- Format ---
+function formatExpr() {
+  const expr = exprView.state.doc.toString().trim();
+  if (!expr) return;
+  try {
+    const formatted = gnataFormat(expr);
+    setDoc(exprView, formatted);
+    resultContainer.classList.remove('error');
+  } catch (e) {
+    setDoc(resultView, e.message || String(e));
+    resultContainer.classList.add('error');
+  }
 }
 
-exprEl.addEventListener('input', scheduleEval);
-inputEl.addEventListener('input', scheduleEval);
-
-// --- Buttons & keyboard ---
-runBtn.addEventListener('click', () => { clearTimeout(debounceTimer); evaluate(); });
-
-document.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-    e.preventDefault();
-    clearTimeout(debounceTimer);
-    evaluate();
-  }
-});
+// --- Buttons ---
+runBtn.addEventListener('click', () => evaluate());
+fmtBtn.addEventListener('click', () => formatExpr());
 
 clearBtn.addEventListener('click', () => {
-  clearTimeout(debounceTimer);
-  exprEl.value = '';
-  inputEl.value = '';
-  resultEl.textContent = '';
-  resultEl.className = '';
+  setDoc(inputView, '');
+  setDoc(exprView, '');
+  setDoc(resultView, '');
+  resultContainer.classList.remove('error');
   timingEl.textContent = '';
 });
 
@@ -702,9 +795,8 @@ document.querySelectorAll('.example-chip').forEach(chip => {
   chip.addEventListener('click', () => {
     const ex = examples[chip.dataset.example];
     if (ex) {
-      clearTimeout(debounceTimer);
-      exprEl.value = ex.expr;
-      inputEl.value = ex.data;
+      setDoc(inputView, ex.data);
+      setDoc(exprView, ex.expr);
       evaluate();
     }
   });

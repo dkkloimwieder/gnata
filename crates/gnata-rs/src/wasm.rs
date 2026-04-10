@@ -82,6 +82,19 @@ pub fn release_handle(handle: u32) {
     });
 }
 
+/// Format a JSONata expression with consistent indentation and line breaks.
+#[wasm_bindgen(js_name = gnataFormat)]
+pub fn format(expr: &str) -> Result<String, JsError> {
+    crate::formatter::format(expr).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Tokenize a JSONata expression for syntax highlighting.
+/// Returns JSON: `[[start, end, "type"], ...]`
+#[wasm_bindgen(js_name = gnataHighlight)]
+pub fn highlight(expr: &str) -> Result<String, JsError> {
+    crate::highlight::highlight(expr).map_err(|e| JsError::new(&e.to_string()))
+}
+
 fn eval_expression(expr: &Expression, json_data: &str) -> Result<String, JsError> {
     let result = if json_data.is_empty() || json_data == "null" {
         expr.evaluate_value(&Value::Undefined)

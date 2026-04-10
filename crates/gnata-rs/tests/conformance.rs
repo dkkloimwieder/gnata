@@ -34,7 +34,6 @@ struct TestCase {
     input: Value,
     expected: Expected,
     bindings: Vec<(String, Value)>,
-    file: String,
 }
 
 #[derive(Debug)]
@@ -79,7 +78,7 @@ fn load_test_cases(path: &Path) -> Vec<TestCase> {
 /// can't parse. Extracts the expression and expected error code via raw string
 /// matching. The JSON \uD800 escape is kept as literal characters so our
 /// JSONata lexer sees `\uD800` and rejects it with D3140.
-fn load_surrogate_test_cases(content: &str, path: &Path) -> Vec<TestCase> {
+fn load_surrogate_test_cases(content: &str, _path: &Path) -> Vec<TestCase> {
     // Extract "expr": "..." — keep JSON escapes as-is (don't decode \uD800).
     let expr = extract_json_string_raw(content, "expr");
     let expr = match expr {
@@ -105,7 +104,6 @@ fn load_surrogate_test_cases(content: &str, path: &Path) -> Vec<TestCase> {
         input,
         expected,
         bindings: Vec::new(),
-        file: path.display().to_string(),
     }]
 }
 
@@ -138,7 +136,7 @@ fn extract_json_string_raw(content: &str, key: &str) -> Option<String> {
 fn parse_test_object(
     obj: &serde_json::Map<String, serde_json::Value>,
     dir: &Path,
-    file_path: &Path,
+    _file_path: &Path,
 ) -> Option<TestCase> {
     // Expression: either inline "expr" or external "expr-file".
     let expr = if let Some(e) = obj.get("expr").and_then(|v| v.as_str()) {
@@ -189,7 +187,6 @@ fn parse_test_object(
         input,
         expected,
         bindings,
-        file: file_path.display().to_string(),
     })
 }
 

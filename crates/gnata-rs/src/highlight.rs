@@ -1,0 +1,376 @@
+//! Semantic tokenization for syntax highlighting.
+//!
+//! Walks the AST and emits token spans with semantic types, suitable for
+//! driving CodeMirror decorations via WASM.
+
+use crate::parser::ast::*;
+use crate::parser::{Parser, process_ast};
+use crate::error::JsonataError;
+
+/// Semantic token type for highlighting.
+#[derive(Debug, Clone, Copy)]
+pub enum HlType {
+    Variable,    // $name
+    Function,    // procedure name in function call position
+    String,      // "..."
+    Number,      // 123, 3.14
+    Bool,        // true, false
+    Null,        // null
+    Operator,    // +, -, *, and, or, etc.
+    Keyword,     // function, in
+    Bracket,     // ( ) [ ] { }
+    Name,        // field/path name
+    ObjectKey,   // key in object constructor
+    Regex,       // /pattern/flags
+    Comment,     // /* ... */
+    Punctuation, // , ; : .
+}
+
+impl HlType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Variable => "variable",
+            Self::Function => "function",
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Bool => "bool",
+            Self::Null => "null",
+            Self::Operator => "operator",
+            Self::Keyword => "keyword",
+            Self::Bracket => "bracket",
+            Self::Name => "name",
+            Self::ObjectKey => "object-key",
+            Self::Regex => "regex",
+            Self::Comment => "comment",
+            Self::Punctuation => "punctuation",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HlSpan {
+    pub start: usize,
+    pub end: usize,
+    pub typ: HlType,
+}
+
+/// Tokenize an expression for syntax highlighting.
+/// Returns a JSON string: `[[start, end, "type"], ...]`
+pub fn highlight(expr: &str) -> Result<String, JsonataError> {
+    let mut spans = Vec::new();
+
+    // Extract comments first (they're stripped by the lexer)
+    extract_comment_spans(expr, &mut spans);
+
+    // Parse and walk AST for semantic tokens
+    let (mut arena, root) = Parser::parse(expr)?;
+    let root = process_ast(&mut arena, root)?;
+
+    if !root.is_empty() {
+        let mut walker = HlWalker::new(&arena, expr);
+        walker.walk(root);
+        spans.extend(walker.spans);
+    }
+
+    // Sort by start position
+    spans.sort_by_key(|s| s.start);
+
+    // Serialize as JSON array
+    let mut out = String::from("[");
+    for (i, span) in spans.iter().enumerate() {
+        if i > 0 { out.push(','); }
+        out.push('[');
+        out.push_str(&span.start.to_string());
+        out.push(',');
+        out.push_str(&span.end.to_string());
+        out.push_str(",\"");
+        out.push_str(span.typ.as_str());
+        out.push_str("\"]");
+    }
+    out.push(']');
+    Ok(out)
+}
+
+fn extract_comment_spans(src: &str, spans: &mut Vec<HlSpan>) {
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            let start = i;
+            i += 2;
+            while i + 1 < bytes.len() {
+                if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
+            spans.push(HlSpan { start, end: i, typ: HlType::Comment });
+        } else if bytes[i] == b'"' || bytes[i] == b'\'' {
+            let quote = bytes[i];
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' { i += 2; continue; }
+                if bytes[i] == quote { i += 1; break; }
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+}
+
+struct HlWalker<'a> {
+    arena: &'a AstArena,
+    src: &'a str,
+    spans: Vec<HlSpan>,
+}
+
+impl<'a> HlWalker<'a> {
+    fn new(arena: &'a AstArena, src: &'a str) -> Self {
+        Self { arena, src, spans: Vec::new() }
+    }
+
+    fn push(&mut self, start: usize, end: usize, typ: HlType) {
+        if start < end && end <= self.src.len() {
+            self.spans.push(HlSpan { start, end, typ });
+        }
+    }
+
+    /// Find the end of an identifier/name starting at `pos`.
+    fn name_end(&self, pos: usize) -> usize {
+        let bytes = self.src.as_bytes();
+        if pos >= bytes.len() { return pos; }
+        // Backtick-quoted name
+        if bytes[pos] == b'`' {
+            let mut i = pos + 1;
+            while i < bytes.len() && bytes[i] != b'`' { i += 1; }
+            return if i < bytes.len() { i + 1 } else { i };
+        }
+        let mut i = pos;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] >= 0x80) {
+            i += 1;
+        }
+        i
+    }
+
+    /// Find the end of a variable starting at `pos` (which points at `$`).
+    fn variable_end(&self, pos: usize) -> usize {
+        let bytes = self.src.as_bytes();
+        if pos >= bytes.len() { return pos; }
+        let mut i = pos + 1; // skip $
+        if i < bytes.len() && bytes[i] == b'$' { return i + 1; } // $$
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] >= 0x80) {
+            i += 1;
+        }
+        if i == pos + 1 { return i; } // bare $
+        i
+    }
+
+    /// Find the end of a string literal starting at `pos`.
+    fn string_end(&self, pos: usize) -> usize {
+        let bytes = self.src.as_bytes();
+        if pos >= bytes.len() { return pos; }
+        let quote = bytes[pos];
+        let mut i = pos + 1;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' { i += 2; continue; }
+            if bytes[i] == quote { return i + 1; }
+            i += 1;
+        }
+        i
+    }
+
+    fn walk(&mut self, id: NodeId) {
+        if id.is_empty() { return; }
+        let expr = self.arena.get(id).clone();
+        match expr {
+            Expr::Name { pos, ref stages, .. } => {
+                let end = self.name_end(pos);
+                self.push(pos, end, HlType::Name);
+                self.walk_stages(&stages);
+            }
+            Expr::StringLit { pos, .. } => {
+                let end = self.string_end(pos);
+                self.push(pos, end, HlType::String);
+            }
+            Expr::NumberLit { pos, ref raw, .. } => {
+                self.push(pos, pos + raw.len(), HlType::Number);
+            }
+            Expr::ValueLit { ref value, pos, .. } => {
+                let typ = match value.as_str() {
+                    "null" => HlType::Null,
+                    _ => HlType::Bool,
+                };
+                self.push(pos, pos + value.len(), typ);
+            }
+            Expr::Variable { pos, ref group, .. } => {
+                let end = self.variable_end(pos);
+                self.push(pos, end, HlType::Variable);
+                self.walk_group(group);
+            }
+            Expr::Wildcard { pos } => {
+                self.push(pos, pos + 1, HlType::Operator);
+            }
+            Expr::Descendant { pos } => {
+                self.push(pos, pos + 2, HlType::Operator);
+            }
+            Expr::Parent { pos, .. } => {
+                self.push(pos, pos + 1, HlType::Operator);
+            }
+            Expr::Regex { pos, ref pattern, ref flags, .. } => {
+                // /pattern/flags
+                let end = pos + 1 + pattern.len() + 1 + flags.len();
+                self.push(pos, end, HlType::Regex);
+            }
+            Expr::Placeholder { pos } => {
+                self.push(pos, pos + 1, HlType::Operator);
+            }
+            Expr::Path { ref steps, ref group, .. } => {
+                for &step in steps {
+                    self.walk(step);
+                }
+                self.walk_group(group);
+            }
+            Expr::Binary { op, lhs, rhs, ref group, pos, .. } => {
+                self.walk(lhs);
+                // Emit operator span
+                let op_str = op.as_str();
+                self.push(pos, pos + op_str.len(), HlType::Operator);
+                self.walk(rhs);
+                self.walk_group(group);
+            }
+            Expr::Unary { op, operand, ref expressions, ref lhs, ref group, pos, .. } => {
+                match op {
+                    UnaryOp::Negate => {
+                        self.push(pos, pos + 1, HlType::Operator);
+                        self.walk(operand);
+                    }
+                    UnaryOp::ArrayCons => {
+                        self.push(pos, pos + 1, HlType::Bracket); // [
+                        for &el in expressions {
+                            self.walk(el);
+                        }
+                    }
+                    UnaryOp::ObjCons => {
+                        self.push(pos, pos + 1, HlType::Bracket); // {
+                        // lhs is flat [k0, v0, k1, v1, ...]
+                        for (i, &node) in lhs.iter().enumerate() {
+                            if i % 2 == 0 {
+                                self.walk_as_object_key(node);
+                            } else {
+                                self.walk(node);
+                            }
+                        }
+                        self.walk_group(group);
+                    }
+                }
+            }
+            Expr::Block { ref expressions, pos, .. } => {
+                self.push(pos, pos + 1, HlType::Bracket); // (
+                for &e in expressions {
+                    self.walk(e);
+                }
+            }
+            Expr::Condition { condition, then, else_, .. } => {
+                self.walk(condition);
+                self.walk(then);
+                if let Some(e) = else_ {
+                    self.walk(e);
+                }
+            }
+            Expr::Bind { lhs, rhs, .. } => {
+                self.walk(lhs);
+                self.walk(rhs);
+            }
+            Expr::Function { procedure, ref arguments, ref group, .. } => {
+                // The procedure name gets "function" highlighting
+                self.walk_as_function(procedure);
+                for &arg in arguments {
+                    self.walk(arg);
+                }
+                self.walk_group(group);
+            }
+            Expr::Partial { procedure, ref arguments, .. } => {
+                self.walk_as_function(procedure);
+                for &arg in arguments {
+                    self.walk(arg);
+                }
+            }
+            Expr::Lambda { ref params, body, pos, .. } => {
+                // "function" keyword
+                self.push(pos, pos + 8, HlType::Keyword);
+                for &p in params {
+                    self.walk(p);
+                }
+                self.walk(body);
+            }
+            Expr::Transform { pattern, update, delete, .. } => {
+                self.walk(pattern);
+                self.walk(update);
+                if let Some(d) = delete {
+                    self.walk(d);
+                }
+            }
+            Expr::Sort { expr, ref terms, .. } => {
+                self.walk(expr);
+                for term in terms {
+                    self.walk(term.expression);
+                }
+            }
+        }
+    }
+
+    /// Walk a node but emit it as an object key.
+    fn walk_as_object_key(&mut self, id: NodeId) {
+        if id.is_empty() { return; }
+        let expr = self.arena.get(id).clone();
+        match expr {
+            Expr::StringLit { pos, .. } => {
+                let end = self.string_end(pos);
+                self.push(pos, end, HlType::ObjectKey);
+            }
+            Expr::Name { pos, .. } => {
+                let end = self.name_end(pos);
+                self.push(pos, end, HlType::ObjectKey);
+            }
+            // Dynamic keys (expressions) — walk normally
+            _ => self.walk(id),
+        }
+    }
+
+    /// Walk a node but emit it as a function name instead of plain name/variable.
+    fn walk_as_function(&mut self, id: NodeId) {
+        if id.is_empty() { return; }
+        let expr = self.arena.get(id).clone();
+        match expr {
+            Expr::Variable { pos, .. } => {
+                let end = self.variable_end(pos);
+                self.push(pos, end, HlType::Function);
+            }
+            Expr::Name { pos, .. } => {
+                let end = self.name_end(pos);
+                self.push(pos, end, HlType::Function);
+            }
+            _ => self.walk(id),
+        }
+    }
+
+    fn walk_stages(&mut self, stages: &[Stage]) {
+        for stage in stages {
+            match &stage.kind {
+                StageKind::Filter { expression } => self.walk(*expression),
+                StageKind::Index { .. } => {}
+            }
+        }
+    }
+
+    fn walk_group(&mut self, group: &Option<GroupExpr>) {
+        if let Some(g) = group {
+            for pair in &g.pairs {
+                self.walk(pair[0]);
+                self.walk(pair[1]);
+            }
+        }
+    }
+}

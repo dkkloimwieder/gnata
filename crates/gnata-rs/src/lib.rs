@@ -21,6 +21,8 @@
 pub mod error;
 pub mod evaluator;
 pub mod expression;
+pub mod formatter;
+pub mod highlight;
 pub mod fast_path;
 pub mod lexer;
 pub mod parser;
