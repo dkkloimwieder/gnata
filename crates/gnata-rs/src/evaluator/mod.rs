@@ -2698,22 +2698,44 @@ fn eval_sort(
         return Ok(Value::Array(Rc::from(arr)));
     }
 
-    // Stable sort with error propagation.
-    let mut sort_err: Option<JsonataError> = None;
-    arr.sort_by(|a, b| {
-        if sort_err.is_some() {
-            return std::cmp::Ordering::Equal;
-        }
-        match compare_sort_terms(arena, &terms, a, b, env, env) {
-            Ok(cmp) => cmp.cmp(&0),
-            Err(e) => {
-                sort_err = Some(e);
-                std::cmp::Ordering::Equal
+    // Fast path: if every sort term is a simple Name node, extract field names
+    // and use direct field comparison (no evaluator dispatch per comparison).
+    let simple_fields: Option<Vec<(&str, bool)>> = terms
+        .iter()
+        .map(|t| match arena.get(t.expression) {
+            Expr::Name { value, .. } => Some((value.as_str(), t.descending)),
+            _ => None,
+        })
+        .collect();
+
+    if let Some(fields) = simple_fields {
+        arr.sort_by(|a, b| {
+            for &(field, descending) in &fields {
+                let ord = crate::stdlib::hof_fast::compare_by_field(a, b, field);
+                if ord != std::cmp::Ordering::Equal {
+                    return if descending { ord.reverse() } else { ord };
+                }
             }
+            std::cmp::Ordering::Equal
+        });
+    } else {
+        // Full evaluator path for complex sort term expressions.
+        let mut sort_err: Option<JsonataError> = None;
+        arr.sort_by(|a, b| {
+            if sort_err.is_some() {
+                return std::cmp::Ordering::Equal;
+            }
+            match compare_sort_terms(arena, &terms, a, b, env, env) {
+                Ok(cmp) => cmp.cmp(&0),
+                Err(e) => {
+                    sort_err = Some(e);
+                    std::cmp::Ordering::Equal
+                }
+            }
+        });
+        if let Some(e) = sort_err {
+            return Err(e);
         }
-    });
-    if let Some(e) = sort_err {
-        return Err(e);
     }
 
     if !was_array && arr.len() == 1 {
