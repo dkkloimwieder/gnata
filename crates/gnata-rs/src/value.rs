@@ -446,7 +446,7 @@ impl Value {
     }
 
     /// Serialize directly to a byte buffer, skipping the serde_json::Value intermediate.
-    /// This is the fast path for JSON output — single pass, no intermediate tree.
+    /// Single pass, no intermediate tree allocation.
     pub fn write_json(&self, buf: &mut Vec<u8>) {
         match self {
             Value::Undefined | Value::Null => buf.extend_from_slice(b"null"),
@@ -534,6 +534,10 @@ impl Value {
     }
 }
 
+// ── serde::Serialize for Value ──────────────────────────────────────
+//
+// Enables serialization via simd-json or any serde-compatible serializer.
+// Numbers use format_float for Go-compatible formatting, emitted via
 // ── Direct serde::Deserialize for Value ─────────────────────────────
 //
 // Produces gnata::Value in a single pass, avoiding the intermediate
@@ -671,10 +675,8 @@ fn write_escaped_str(src: &[u8], buf: &mut Vec<u8>) {
             0x08 => b"\\b",
             0x0C => b"\\f",
             0x00..=0x1F => {
-                // Flush pending unescaped bytes
                 buf.extend_from_slice(&src[start..i]);
                 start = i + 1;
-                // \u00XX
                 buf.extend_from_slice(b"\\u00");
                 let hi = b >> 4;
                 let lo = b & 0x0F;
