@@ -3064,7 +3064,7 @@ fn compute_updated_object(
             match delete_val {
                 Value::String(key) => {
                     if let Value::Object(ref mut obj) = result {
-                        Rc::make_mut(obj).remove(&*key);
+                        Rc::make_mut(obj).shift_remove(&*key);
                     }
                 }
                 Value::Array(keys) => {
@@ -3072,7 +3072,7 @@ fn compute_updated_object(
                         let obj = Rc::make_mut(obj);
                         for k in keys.iter() {
                             if let Value::String(key) = k {
-                                obj.remove(&**key);
+                                obj.shift_remove(&**key);
                             }
                         }
                     }

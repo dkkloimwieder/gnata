@@ -6,6 +6,7 @@
 use std::rc::Rc;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use compact_str::CompactString;
 use gnata::evaluator::Environment;
 use gnata::expression::Expression;
 use gnata::value::Value;
@@ -38,7 +39,7 @@ impl PreparedInput {
         let value = Value::from_json_str(&json_str).unwrap();
         let mut env = Environment::new();
         gnata::stdlib::register_all(&mut env);
-        env.bind("$".into(), value.clone());
+        env.bind(CompactString::from("$"), value.clone());
         let env = Rc::new(env);
         PreparedInput { value, env }
     }
@@ -132,7 +133,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                     let value = Value::from_json_str(data).unwrap();
                     let mut env = Environment::new();
                     gnata::stdlib::register_all(&mut env);
-                    env.bind("$".into(), value.clone());
+                    env.bind(CompactString::from("$"), value.clone());
                     let env = Rc::new(env);
                     let result = compiled_short.evaluate_with_env(&value, &env).unwrap();
                     criterion::black_box(result);
@@ -155,7 +156,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                     let value = Value::from_json_str(data).unwrap();
                     let mut env = Environment::new();
                     gnata::stdlib::register_all(&mut env);
-                    env.bind("$".into(), value.clone());
+                    env.bind(CompactString::from("$"), value.clone());
                     let env = Rc::new(env);
                     let result = compiled_long.evaluate_with_env(&value, &env).unwrap();
                     criterion::black_box(result);

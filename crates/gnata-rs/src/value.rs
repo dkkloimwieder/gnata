@@ -11,10 +11,10 @@ use serde_json::Number;
 
 use crate::error::{JsonataError, JsonataResult};
 
-/// Object map used in Value::Object. Uses halfbrown for ≤32 keys (linear
-/// scan, cache-friendly) and hashmap above. CompactString keys inline ≤24
+/// Object map used in Value::Object. Uses IndexMap to preserve insertion
+/// order (JSONata behavioral invariant #8). CompactString keys inline ≤24
 /// bytes — covers all common JSON field names with zero heap allocation.
-pub type ObjectMap = halfbrown::HashMap<CompactString, Value>;
+pub type ObjectMap = indexmap::IndexMap<CompactString, Value>;
 
 /// Core value type for JSONata evaluation.
 ///

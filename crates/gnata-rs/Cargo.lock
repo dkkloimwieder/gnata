@@ -395,7 +395,7 @@ dependencies = [
  "criterion",
  "dhat",
  "fastrand",
- "halfbrown",
+ "indexmap",
  "jiff",
  "js-sys",
  "mimalloc",
