@@ -7,11 +7,14 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
 /// Get current time as milliseconds since Unix epoch.
-/// Uses jiff on native/WASI, js_sys::Date::now() on browser WASM.
+/// Uses std::time on native/WASI, js_sys::Date::now() on browser WASM.
 fn current_millis() -> i64 {
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
-        jiff::Timestamp::now().as_millisecond()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
     }
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
@@ -163,9 +166,9 @@ pub fn fn_to_millis(args: &[Value], _focus: &Value) -> JsonataResult {
 // ── ISO 8601 parsing (no picture) ───────────────────────────────────────────
 
 fn parse_iso_to_millis(s: &str) -> JsonataResult {
-    // Try jiff's timestamp parsing first (handles RFC 3339 / ISO 8601 with Z / offset).
-    if let Ok(ts) = s.parse::<jiff::Timestamp>() {
-        return Ok(Value::Number(ts.as_millisecond() as f64));
+    // Try ISO 8601 with timezone: "YYYY-MM-DDTHH:MM:SS.sssZ" or "+HH:MM" suffix.
+    if let Some(ms) = try_parse_iso_with_tz(s) {
+        return Ok(Value::Number(ms as f64));
     }
 
     // Try date-only "YYYY-MM-DD".
@@ -189,25 +192,90 @@ fn parse_iso_to_millis(s: &str) -> JsonataResult {
     ))
 }
 
+/// Parse ISO 8601 / RFC 3339 with timezone suffix (Z, +HH:MM, -HHMM, etc.)
+fn try_parse_iso_with_tz(s: &str) -> Option<i64> {
+    // Must have at least "YYYY-MM-DDTHH:MM:SSZ" = 20 chars
+    if s.len() < 20 || s.as_bytes()[4] != b'-' || s.as_bytes()[10] != b'T' {
+        return None;
+    }
+
+    let y: i32 = s[0..4].parse().ok()?;
+    let m: u8 = s[5..7].parse().ok()?;
+    let d: u8 = s[8..10].parse().ok()?;
+    let h: u8 = s[11..13].parse().ok()?;
+    let mi: u8 = s[14..16].parse().ok()?;
+    let sec: u8 = s[17..19].parse().ok()?;
+
+    // Parse fractional seconds and find where the tz suffix starts.
+    let rest = &s[19..];
+    let (ms, tz_part) = if rest.starts_with('.') {
+        // Find end of digits after dot.
+        let frac_end = 1 + rest[1..].bytes().take_while(|b| b.is_ascii_digit()).count();
+        let frac_str = &rest[1..frac_end];
+        let frac_val: i32 = frac_str.parse().ok()?;
+        let ms_val = match frac_str.len() {
+            1 => frac_val * 100,
+            2 => frac_val * 10,
+            3 => frac_val,
+            n if n > 3 => (frac_val as f64 / 10f64.powi(n as i32 - 3)) as i32,
+            _ => 0,
+        };
+        (ms_val, &rest[frac_end..])
+    } else {
+        (0, rest)
+    };
+
+    // Parse timezone suffix.
+    let offset_secs = match tz_part {
+        "Z" | "z" => 0i64,
+        _ if tz_part.len() >= 5 => {
+            let sign: i64 = if tz_part.starts_with('+') { 1 } else if tz_part.starts_with('-') { -1 } else { return None };
+            let tz_digits = &tz_part[1..];
+            let (th, tm) = if tz_digits.contains(':') && tz_digits.len() >= 5 {
+                let th: i64 = tz_digits[0..2].parse().ok()?;
+                let tm: i64 = tz_digits[3..5].parse().ok()?;
+                (th, tm)
+            } else if tz_digits.len() >= 4 {
+                let th: i64 = tz_digits[0..2].parse().ok()?;
+                let tm: i64 = tz_digits[2..4].parse().ok()?;
+                (th, tm)
+            } else {
+                return None;
+            };
+            sign * (th * 3600 + tm * 60)
+        }
+        _ => return None,
+    };
+
+    let utc_ms = datetime_to_epoch_ms(y, m, d, h, mi, sec, ms) - offset_secs * 1000;
+    Some(utc_ms)
+}
+
+/// Convert calendar components to epoch milliseconds (UTC).
+fn datetime_to_epoch_ms(y: i32, m: u8, d: u8, h: u8, mi: u8, s: u8, ms: i32) -> i64 {
+    let days = ymd_to_epoch_days(y, m, d);
+    days * 86_400_000
+        + i64::from(h) * 3_600_000
+        + i64::from(mi) * 60_000
+        + i64::from(s) * 1000
+        + i64::from(ms)
+}
+
 fn try_parse_date_only(s: &str) -> Option<i64> {
     // "YYYY-MM-DD"
     if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-        let y: i16 = s[0..4].parse().ok()?;
-        let m: i8 = s[5..7].parse().ok()?;
-        let d: i8 = s[8..10].parse().ok()?;
-        let date = jiff::civil::date(y, m, d);
-        let ts = date.to_zoned(jiff::tz::TimeZone::UTC).ok()?.timestamp();
-        return Some(ts.as_millisecond());
+        let y: i32 = s[0..4].parse().ok()?;
+        let m: u8 = s[5..7].parse().ok()?;
+        let d: u8 = s[8..10].parse().ok()?;
+        return Some(datetime_to_epoch_ms(y, m, d, 0, 0, 0, 0));
     }
     None
 }
 
 fn try_parse_year_only(s: &str) -> Option<i64> {
     if s.len() == 4 {
-        let y: i16 = s.parse().ok()?;
-        let date = jiff::civil::date(y, 1, 1);
-        let ts = date.to_zoned(jiff::tz::TimeZone::UTC).ok()?.timestamp();
-        return Some(ts.as_millisecond());
+        let y: i32 = s.parse().ok()?;
+        return Some(datetime_to_epoch_ms(y, 1, 1, 0, 0, 0, 0));
     }
     None
 }
@@ -217,18 +285,17 @@ fn try_parse_datetime_no_tz(s: &str) -> Option<i64> {
     if s.len() >= 19 && s.as_bytes()[4] == b'-' && s.as_bytes()[10] == b'T' {
         let date_part = &s[0..10];
         let time_part = &s[11..];
-        let y: i16 = date_part[0..4].parse().ok()?;
-        let m: i8 = date_part[5..7].parse().ok()?;
-        let d: i8 = date_part[8..10].parse().ok()?;
+        let y: i32 = date_part[0..4].parse().ok()?;
+        let m: u8 = date_part[5..7].parse().ok()?;
+        let d: u8 = date_part[8..10].parse().ok()?;
 
-        let h: i8 = time_part[0..2].parse().ok()?;
-        let mi: i8 = time_part[3..5].parse().ok()?;
-        let sec: i8 = time_part[6..8].parse().ok()?;
+        let h: u8 = time_part[0..2].parse().ok()?;
+        let mi: u8 = time_part[3..5].parse().ok()?;
+        let sec: u8 = time_part[6..8].parse().ok()?;
         let ms: i32 = if time_part.len() > 9 && time_part.as_bytes()[8] == b'.' {
             let frac = &time_part[9..];
             let frac = &frac[..frac.len().min(3)];
             let v: i32 = frac.parse().ok()?;
-            // Pad to ms
             match frac.len() {
                 1 => v * 100,
                 2 => v * 10,
@@ -238,9 +305,7 @@ fn try_parse_datetime_no_tz(s: &str) -> Option<i64> {
             0
         };
 
-        let dt = jiff::civil::datetime(y, m, d, h, mi, sec, ms * 1_000_000);
-        let ts = dt.to_zoned(jiff::tz::TimeZone::UTC).ok()?.timestamp();
-        return Some(ts.as_millisecond());
+        return Some(datetime_to_epoch_ms(y, m, d, h, mi, sec, ms));
     }
     None
 }
@@ -1120,21 +1185,7 @@ fn calendar_to_ms(
     second: u8,
     ms: i32,
 ) -> Result<i64, JsonataError> {
-    let y = year as i16;
-    let dt = jiff::civil::datetime(
-        y,
-        month as i8,
-        day as i8,
-        hour as i8,
-        minute as i8,
-        second as i8,
-        ms * 1_000_000,
-    );
-    let ts = dt
-        .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| JsonataError::new("D3137", format!("invalid date: {e}")))?
-        .timestamp();
-    Ok(ts.as_millisecond())
+    Ok(datetime_to_epoch_ms(year, month, day, hour, minute, second, ms))
 }
 
 fn date_to_ms_with_doy(
@@ -1146,24 +1197,8 @@ fn date_to_ms_with_doy(
     ms: i32,
 ) -> Result<i64, JsonataError> {
     // Start from Jan 1 of year, add (doy - 1) days.
-    let y = year as i16;
-    let dt = jiff::civil::datetime(
-        y,
-        1i8,
-        1i8,
-        hour as i8,
-        minute as i8,
-        second as i8,
-        ms * 1_000_000,
-    );
-    let ts = dt
-        .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| JsonataError::new("D3137", format!("invalid date: {e}")))?;
-    // Add (doy - 1) days.
-    let final_ts = ts
-        .checked_add(jiff::Span::new().days(i64::from(doy - 1)))
-        .map_err(|e| JsonataError::new("D3137", format!("date overflow: {e}")))?;
-    Ok(final_ts.timestamp().as_millisecond())
+    let jan1_ms = datetime_to_epoch_ms(year, 1, 1, hour, minute, second, ms);
+    Ok(jan1_ms + i64::from(doy - 1) * 86_400_000)
 }
 
 // ── Token value parsing ──────────────────────────────────────────────────────
@@ -2069,20 +2104,11 @@ fn week_of_month(_thy: i32, _thm: u8, thd: u8) -> u32 {
 // ── Timezone parsing ─────────────────────────────────────────────────────────
 
 /// Parse timezone string to offset in seconds.
-/// Accepts: "UTC", "America/New_York", "+05:30", "-05:00", "+0530", "-0500".
+/// Accepts: "UTC", "+05:30", "-05:00", "+0530", "-0500".
 fn parse_tz(s: &str) -> Result<i32, JsonataError> {
-    // Try named timezone via jiff.
-    if let Ok(tz) = jiff::tz::TimeZone::get(s) {
-        // For fixed-name TZs, get the offset at epoch 0 as approximation.
-        // For proper named TZs we convert a known timestamp.
-        let ts = jiff::Timestamp::new(0, 0).map_err(|e| {
-            JsonataError::new("D3001", format!("failed to create epoch timestamp: {e}"))
-        })?;
-        let offset = tz.to_fixed_offset().map_or(0, jiff::tz::Offset::seconds);
-        let _ = ts;
-        return Ok(offset);
+    if s.eq_ignore_ascii_case("UTC") || s.eq_ignore_ascii_case("GMT") || s == "Z" {
+        return Ok(0);
     }
-    // Try numeric offset.
     parse_numeric_tz(s).map_err(|_| JsonataError::new("D3137", format!("unknown timezone {s:?}")))
 }
 

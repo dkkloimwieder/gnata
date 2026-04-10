@@ -24,8 +24,6 @@ serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_ord
 # Numeric formatting
 ryu-js = "1.0"
 
-# Date/Time
-jiff = "0.2"
 
 # Encoding
 base64 = "0.22"
