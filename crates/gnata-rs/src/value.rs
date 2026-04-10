@@ -697,6 +697,51 @@ fn write_escaped_str(src: &[u8], buf: &mut Vec<u8>) {
 mod tests {
     use super::*;
 
+    // ── write_json correctness ─────────────────────────────────────────
+
+    /// Verify write_json matches serde_json output for all Value types and edge cases.
+    #[test]
+    fn write_json_matches_serde_json() {
+        let cases: Vec<Value> = vec![
+            Value::Null,
+            Value::Undefined,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Number(0.0),
+            Value::Number(42.0),
+            Value::Number(-3.14),
+            Value::Number(1e20),
+            Value::Number(f64::NAN),
+            Value::Number(f64::INFINITY),
+            Value::String("hello".into()),
+            Value::String("".into()),
+            Value::String("quote\"here".into()),
+            Value::String("back\\slash".into()),
+            Value::String("new\nline".into()),
+            Value::String("tab\there".into()),
+            Value::String("\x00\x01\x1f".into()),  // control chars
+            Value::String("unicode: \u{00e9}\u{1f600}".into()),  // é and emoji
+            Value::Array(Rc::from(vec![Value::Number(1.0), Value::String("two".into())])),
+            Value::Array(Rc::from(vec![])),
+            Value::Object(Rc::new(ObjectMap::new())),
+        ];
+
+        for val in &cases {
+            let expected = serde_json::to_string(&val.to_json()).unwrap();
+            let got = val.to_json_string();
+            assert_eq!(expected, got, "mismatch for {val:?}");
+        }
+
+        // Nested object
+        let mut obj = ObjectMap::new();
+        obj.insert("key".into(), Value::String("val".into()));
+        obj.insert("num".into(), Value::Number(99.0));
+        obj.insert("arr".into(), Value::Array(Rc::from(vec![Value::Bool(true)])));
+        let nested = Value::Object(Rc::new(obj));
+        let expected = serde_json::to_string(&nested.to_json()).unwrap();
+        assert_eq!(expected, nested.to_json_string());
+    }
+
     // ── Size validation ───────────────────────────────────────────────
 
     #[test]
