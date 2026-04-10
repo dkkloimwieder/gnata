@@ -55,6 +55,15 @@ pub enum SimpleLambda {
         field: String,
         op: BinaryOp,
     },
+    /// function($prev, $curr) { $prev op ($curr.field1 op2 $curr.field2) } — compound reduce
+    ReduceCompoundAccum {
+        param_prev: String,
+        param_curr: String,
+        field1: String,
+        field2: String,
+        outer_op: BinaryOp,
+        inner_op: BinaryOp,
+    },
     /// function($v) { $v.A & "lit" & $string($v.B) & ... } — concat template
     ConcatTemplate { pieces: Vec<TemplatePiece> },
     /// function($v) { $v.field1 op1 lit1 and/or $v.field2 op2 lit2 ... } — compound predicate
@@ -226,18 +235,44 @@ fn analyze_binary(
     }
 
     // Reduce accumulator: function($prev, $curr) { $prev + $curr.field }
+    // or compound: function($prev, $curr) { $prev + $curr.field1 * $curr.field2 }
     if params.len() >= 2 && is_arithmetic(op) {
         let param_prev = &params[0];
         let param_curr = &params[1];
-        if is_param_ref(lhs, arena, param_prev)
-            && let Some(field) = extract_param_dot_field(rhs, arena, param_curr)
-        {
-            return Some(SimpleLambda::ReduceAccum {
-                param_prev: param_prev.clone(),
-                param_curr: param_curr.clone(),
-                field,
-                op,
-            });
+        if is_param_ref(lhs, arena, param_prev) {
+            // Simple: $prev op $curr.field
+            if let Some(field) = extract_param_dot_field(rhs, arena, param_curr) {
+                return Some(SimpleLambda::ReduceAccum {
+                    param_prev: param_prev.clone(),
+                    param_curr: param_curr.clone(),
+                    field,
+                    op,
+                });
+            }
+            // Compound: $prev op ($curr.field1 inner_op $curr.field2)
+            if let Expr::Binary {
+                op: inner_op,
+                lhs: inner_lhs,
+                rhs: inner_rhs,
+                ..
+            } = arena.get(rhs)
+            {
+                if is_arithmetic(*inner_op) {
+                    if let (Some(field1), Some(field2)) = (
+                        extract_param_dot_field(*inner_lhs, arena, param_curr),
+                        extract_param_dot_field(*inner_rhs, arena, param_curr),
+                    ) {
+                        return Some(SimpleLambda::ReduceCompoundAccum {
+                            param_prev: param_prev.clone(),
+                            param_curr: param_curr.clone(),
+                            field1,
+                            field2,
+                            outer_op: op,
+                            inner_op: *inner_op,
+                        });
+                    }
+                }
+            }
         }
     }
 

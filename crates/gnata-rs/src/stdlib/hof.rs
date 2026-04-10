@@ -236,12 +236,30 @@ pub fn fn_reduce(
     };
 
     // Fast path: simple reduce — function($prev,$curr){$prev + $curr.field}
-    if let Some(SimpleLambda::ReduceAccum { field, op, .. }) = try_fast_lambda(&func, arena) {
-        for item in &arr[start..] {
-            let fv = hof_fast::get_field(item, &field);
-            acc = hof_fast::eval_binary_simple(&acc, op, &fv);
+    match try_fast_lambda(&func, arena) {
+        Some(SimpleLambda::ReduceAccum { field, op, .. }) => {
+            for item in &arr[start..] {
+                let fv = hof_fast::get_field(item, &field);
+                acc = hof_fast::eval_binary_simple(&acc, op, &fv);
+            }
+            return Ok(acc);
         }
-        return Ok(acc);
+        Some(SimpleLambda::ReduceCompoundAccum {
+            field1,
+            field2,
+            outer_op,
+            inner_op,
+            ..
+        }) => {
+            for item in &arr[start..] {
+                let fv1 = hof_fast::get_field(item, &field1);
+                let fv2 = hof_fast::get_field(item, &field2);
+                let inner = hof_fast::eval_binary_simple(&fv1, inner_op, &fv2);
+                acc = hof_fast::eval_binary_simple(&acc, outer_op, &inner);
+            }
+            return Ok(acc);
+        }
+        _ => {}
     }
 
     // Determine arity for passing index/array like Go does.
