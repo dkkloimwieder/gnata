@@ -90,6 +90,16 @@ pub enum TemplatePiece {
     Field(String),
     /// $string(field) — stringify the field value into the buffer.
     StringifyField(String),
+    /// $substring(field, start, len?) — extract substring from field value.
+    SubstringField {
+        field: String,
+        start: i64,
+        length: Option<usize>,
+    },
+    /// $lowercase(field) — lowercase the field value.
+    LowercaseField(String),
+    /// $uppercase(field) — uppercase the field value.
+    UppercaseField(String),
 }
 
 /// Try to analyze a lambda body into a SimpleLambda for fast dispatch.
@@ -387,29 +397,67 @@ fn classify_template_operand(node: NodeId, arena: &AstArena, param: &str) -> Opt
             extract_param_field(steps, arena, param).map(TemplatePiece::Field)
         }
 
-        // $string($param.field) — stringify a field value
+        // Function calls on fields: $string, $substring, $lowercase, $uppercase
         Expr::Function {
             procedure,
             arguments,
             ..
-        } if arguments.len() == 1 => {
-            // Check procedure is $string
-            let is_string_fn = matches!(
-                arena.get(*procedure),
-                Expr::Variable { name, .. } if name == "string"
-            );
-            if !is_string_fn {
-                return None;
-            }
-            // Check argument is $param.field
-            match arena.get(arguments[0]) {
-                Expr::Path { steps, .. } if steps.len() == 2 => {
-                    extract_param_field(steps, arena, param).map(TemplatePiece::StringifyField)
+        } => {
+            let func_name = match arena.get(*procedure) {
+                Expr::Variable { name, .. } => name.as_str(),
+                _ => return None,
+            };
+            match func_name {
+                // $string($param.field)
+                "string" if arguments.len() == 1 => {
+                    extract_field_from_arg(arguments[0], arena, param)
+                        .map(TemplatePiece::StringifyField)
+                }
+                // $lowercase($param.field)
+                "lowercase" if arguments.len() == 1 => {
+                    extract_field_from_arg(arguments[0], arena, param)
+                        .map(TemplatePiece::LowercaseField)
+                }
+                // $uppercase($param.field)
+                "uppercase" if arguments.len() == 1 => {
+                    extract_field_from_arg(arguments[0], arena, param)
+                        .map(TemplatePiece::UppercaseField)
+                }
+                // $substring($param.field, start [, length])
+                "substring" if arguments.len() >= 2 && arguments.len() <= 3 => {
+                    let field = extract_field_from_arg(arguments[0], arena, param)?;
+                    let start = match arena.get(arguments[1]) {
+                        Expr::NumberLit { value, .. } => *value as i64,
+                        _ => return None,
+                    };
+                    let length = if arguments.len() == 3 {
+                        match arena.get(arguments[2]) {
+                            Expr::NumberLit { value, .. } if *value >= 0.0 => {
+                                Some(*value as usize)
+                            }
+                            _ => return None,
+                        }
+                    } else {
+                        None
+                    };
+                    Some(TemplatePiece::SubstringField {
+                        field,
+                        start,
+                        length,
+                    })
                 }
                 _ => None,
             }
         }
 
+        _ => None,
+    }
+}
+
+/// Extract a field name from a function argument that is $param.field.
+fn extract_field_from_arg(arg: NodeId, arena: &AstArena, param: &str) -> Option<String> {
+    match arena.get(arg) {
+        Expr::Path { steps, .. } if steps.len() == 2 => extract_param_field(steps, arena, param),
         _ => None,
     }
 }
@@ -577,6 +625,43 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
                 let v = get_field(item, field);
                 if !v.is_undefined() && v.stringify_into(&mut buf).is_err() {
                     return Value::Undefined;
+                }
+            }
+            TemplatePiece::SubstringField {
+                field,
+                start,
+                length,
+            } => {
+                let v = get_field(item, field);
+                if let Value::String(s) = &v {
+                    let chars: Vec<char> = s.chars().collect();
+                    let len = chars.len() as i64;
+                    // JSONata $substring semantics: negative start counts from end
+                    let start_idx = if *start < 0 {
+                        (len + start).max(0) as usize
+                    } else {
+                        (*start as usize).min(chars.len())
+                    };
+                    let end_idx = match length {
+                        Some(l) => (start_idx + l).min(chars.len()),
+                        None => chars.len(),
+                    };
+                    if start_idx < end_idx {
+                        let sub: String = chars[start_idx..end_idx].iter().collect();
+                        buf.push_str(&sub);
+                    }
+                }
+            }
+            TemplatePiece::LowercaseField(field) => {
+                let v = get_field(item, field);
+                if let Value::String(s) = &v {
+                    buf.push_str(&s.to_lowercase());
+                }
+            }
+            TemplatePiece::UppercaseField(field) => {
+                let v = get_field(item, field);
+                if let Value::String(s) = &v {
+                    buf.push_str(&s.to_uppercase());
                 }
             }
         }
