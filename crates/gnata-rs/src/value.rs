@@ -348,10 +348,7 @@ impl Value {
                 if other.contains_non_finite() {
                     return Err(JsonataError::new("D1001", "Number out of range"));
                 }
-                let json_val = other.to_json();
-                let json = serde_json::to_string(&json_val)
-                    .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))?;
-                buf.push_str(&json);
+                buf.push_str(&other.to_json_string());
                 Ok(())
             }
         }
@@ -369,18 +366,17 @@ impl Value {
             Value::Function(_) => Ok(String::new()),
             Value::TailCall(_) => Ok(String::new()),
             other => {
-                // Check for Inf/NaN anywhere in the structure → D1001
                 if other.contains_non_finite() {
                     return Err(JsonataError::new("D1001", "Number out of range"));
                 }
-                let json_val = other.to_json();
-                let json = if prettify {
+                if prettify {
+                    // Pretty-print still uses serde_json for indentation
+                    let json_val = other.to_json();
                     serde_json::to_string_pretty(&json_val)
+                        .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))
                 } else {
-                    serde_json::to_string(&json_val)
+                    Ok(other.to_json_string())
                 }
-                .map_err(|e| JsonataError::new("", format!("cannot stringify value: {e}")))?;
-                Ok(json)
             }
         }
     }
@@ -447,6 +443,63 @@ impl Value {
             // Functions serialize as empty string in JSONata (matches Go's sanitizeForJSON).
             Value::Function(_) | Value::TailCall(_) => serde_json::Value::String(String::new()),
         }
+    }
+
+    /// Serialize directly to a byte buffer, skipping the serde_json::Value intermediate.
+    /// This is the fast path for JSON output — single pass, no intermediate tree.
+    pub fn write_json(&self, buf: &mut Vec<u8>) {
+        match self {
+            Value::Undefined | Value::Null => buf.extend_from_slice(b"null"),
+            Value::Bool(true) => buf.extend_from_slice(b"true"),
+            Value::Bool(false) => buf.extend_from_slice(b"false"),
+            Value::Number(n) => {
+                if n.is_nan() || n.is_infinite() {
+                    buf.extend_from_slice(b"null");
+                } else {
+                    let s = format_float(*n);
+                    buf.extend_from_slice(s.as_bytes());
+                }
+            }
+            Value::String(s) => {
+                buf.push(b'"');
+                write_escaped_str(s.as_bytes(), buf);
+                buf.push(b'"');
+            }
+            Value::Array(arr) => {
+                buf.push(b'[');
+                for (i, item) in arr.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(b',');
+                    }
+                    item.write_json(buf);
+                }
+                buf.push(b']');
+            }
+            Value::Object(obj) => {
+                buf.push(b'{');
+                for (i, (k, v)) in obj.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(b',');
+                    }
+                    buf.push(b'"');
+                    write_escaped_str(k.as_bytes(), buf);
+                    buf.push(b'"');
+                    buf.push(b':');
+                    v.write_json(buf);
+                }
+                buf.push(b'}');
+            }
+            Value::Sequence(seq) => seq.collapse().write_json(buf),
+            Value::Function(_) | Value::TailCall(_) => buf.extend_from_slice(b"\"\""),
+        }
+    }
+
+    /// Serialize to a JSON string using the direct-to-bytes path.
+    pub fn to_json_string(&self) -> String {
+        let mut buf = Vec::with_capacity(256);
+        self.write_json(&mut buf);
+        // SAFETY: write_json only produces valid UTF-8 (JSON is a subset of UTF-8)
+        unsafe { String::from_utf8_unchecked(buf) }
     }
 
     /// Decode a JSON string into a Value, preserving object key order.
@@ -601,6 +654,43 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
         let vec: Vec<Value> = v.into_iter().map(Into::into).collect();
         Value::Array(Rc::from(vec))
     }
+}
+
+/// Write a JSON-escaped string to a byte buffer.
+/// Handles the JSON spec escapes: `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`,
+/// and `\uXXXX` for control characters below 0x20.
+fn write_escaped_str(src: &[u8], buf: &mut Vec<u8>) {
+    let mut start = 0;
+    for (i, &b) in src.iter().enumerate() {
+        let escape = match b {
+            b'"' => b"\\\"",
+            b'\\' => b"\\\\",
+            b'\n' => b"\\n",
+            b'\r' => b"\\r",
+            b'\t' => b"\\t",
+            0x08 => b"\\b",
+            0x0C => b"\\f",
+            0x00..=0x1F => {
+                // Flush pending unescaped bytes
+                buf.extend_from_slice(&src[start..i]);
+                start = i + 1;
+                // \u00XX
+                buf.extend_from_slice(b"\\u00");
+                let hi = b >> 4;
+                let lo = b & 0x0F;
+                buf.push(if hi < 10 { b'0' + hi } else { b'a' + hi - 10 });
+                buf.push(if lo < 10 { b'0' + lo } else { b'a' + lo - 10 });
+                continue;
+            }
+            _ => {
+                continue;
+            }
+        };
+        buf.extend_from_slice(&src[start..i]);
+        buf.extend_from_slice(escape);
+        start = i + 1;
+    }
+    buf.extend_from_slice(&src[start..]);
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! Walks the AST and emits token spans with semantic types, suitable for
 //! driving CodeMirror decorations via WASM.
 
-use crate::parser::ast::*;
+use crate::parser::ast::{AstArena, NodeId, Expr, UnaryOp, Stage, StageKind, GroupExpr};
 use crate::parser::{Parser, process_ast};
 use crate::error::JsonataError;
 
@@ -56,6 +56,9 @@ pub struct HlSpan {
 
 /// Tokenize an expression for syntax highlighting.
 /// Returns a JSON string: `[[start, end, "type"], ...]`
+///
+/// # Errors
+/// Returns `JsonataError` if the expression fails to parse.
 pub fn highlight(expr: &str) -> Result<String, JsonataError> {
     let mut spans = Vec::new();
 
@@ -181,6 +184,7 @@ impl<'a> HlWalker<'a> {
         i
     }
 
+    #[allow(clippy::too_many_lines)]
     fn walk(&mut self, id: NodeId) {
         if id.is_empty() { return; }
         let expr = self.arena.get(id).clone();
@@ -188,7 +192,7 @@ impl<'a> HlWalker<'a> {
             Expr::Name { pos, ref stages, .. } => {
                 let end = self.name_end(pos);
                 self.push(pos, end, HlType::Name);
-                self.walk_stages(&stages);
+                self.walk_stages(stages);
             }
             Expr::StringLit { pos, .. } => {
                 let end = self.string_end(pos);
@@ -207,7 +211,7 @@ impl<'a> HlWalker<'a> {
             Expr::Variable { pos, ref group, .. } => {
                 let end = self.variable_end(pos);
                 self.push(pos, end, HlType::Variable);
-                self.walk_group(group);
+                self.walk_group(group.as_ref());
             }
             Expr::Wildcard { pos } => {
                 self.push(pos, pos + 1, HlType::Operator);
@@ -230,7 +234,7 @@ impl<'a> HlWalker<'a> {
                 for &step in steps {
                     self.walk(step);
                 }
-                self.walk_group(group);
+                self.walk_group(group.as_ref());
             }
             Expr::Binary { op, lhs, rhs, ref group, pos, .. } => {
                 self.walk(lhs);
@@ -238,7 +242,7 @@ impl<'a> HlWalker<'a> {
                 let op_str = op.as_str();
                 self.push(pos, pos + op_str.len(), HlType::Operator);
                 self.walk(rhs);
-                self.walk_group(group);
+                self.walk_group(group.as_ref());
             }
             Expr::Unary { op, operand, ref expressions, ref lhs, ref group, pos, .. } => {
                 match op {
@@ -262,7 +266,7 @@ impl<'a> HlWalker<'a> {
                                 self.walk(node);
                             }
                         }
-                        self.walk_group(group);
+                        self.walk_group(group.as_ref());
                     }
                 }
             }
@@ -289,7 +293,7 @@ impl<'a> HlWalker<'a> {
                 for &arg in arguments {
                     self.walk(arg);
                 }
-                self.walk_group(group);
+                self.walk_group(group.as_ref());
             }
             Expr::Partial { procedure, ref arguments, .. } => {
                 self.walk_as_function(procedure);
@@ -365,7 +369,7 @@ impl<'a> HlWalker<'a> {
         }
     }
 
-    fn walk_group(&mut self, group: &Option<GroupExpr>) {
+    fn walk_group(&mut self, group: Option<&GroupExpr>) {
         if let Some(g) = group {
             for pair in &g.pairs {
                 self.walk(pair[0]);

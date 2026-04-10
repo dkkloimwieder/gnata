@@ -267,7 +267,7 @@ fn eval_variable(name: &str, input: &Value, env: &Rc<Environment>) -> JsonataRes
         return Ok(input.clone());
     }
     match env.lookup(name) {
-        Some(val) => Ok(val.clone()),
+        Some(val) => Ok(val),
         None => Ok(Value::Undefined),
     }
 }
@@ -3154,6 +3154,114 @@ fn validate_transform_clauses(
 
 // ── Group-by expression ({key:val}) ─────────────────────────────────
 
+/// Check whether an AST subtree references `$index` or `$key` variables.
+/// When it doesn't, we can skip `Environment::new_child` for group-by pairs.
+fn uses_group_bindings(arena: &AstArena, node: NodeId) -> bool {
+    if node.is_empty() {
+        return false;
+    }
+    match arena.get(node) {
+        Expr::Variable { name, group, .. } => {
+            name == "index"
+                || name == "key"
+                || group.as_ref().is_some_and(|g| {
+                    g.pairs.iter().any(|p| {
+                        uses_group_bindings(arena, p[0]) || uses_group_bindings(arena, p[1])
+                    })
+                })
+        }
+        Expr::Path { steps, group, .. } => {
+            steps.iter().any(|&s| uses_group_bindings(arena, s))
+                || group.as_ref().is_some_and(|g| {
+                    g.pairs.iter().any(|p| {
+                        uses_group_bindings(arena, p[0]) || uses_group_bindings(arena, p[1])
+                    })
+                })
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            uses_group_bindings(arena, *lhs) || uses_group_bindings(arena, *rhs)
+        }
+        Expr::Unary {
+            operand,
+            expressions,
+            lhs,
+            ..
+        } => {
+            uses_group_bindings(arena, *operand)
+                || expressions.iter().any(|&n| uses_group_bindings(arena, n))
+                || lhs.iter().any(|&n| uses_group_bindings(arena, n))
+        }
+        Expr::Function {
+            procedure,
+            arguments,
+            ..
+        } => {
+            uses_group_bindings(arena, *procedure)
+                || arguments.iter().any(|&n| uses_group_bindings(arena, n))
+        }
+        Expr::Block { expressions, .. } => {
+            expressions.iter().any(|&n| uses_group_bindings(arena, n))
+        }
+        Expr::Condition {
+            condition,
+            then,
+            else_,
+            ..
+        } => {
+            uses_group_bindings(arena, *condition)
+                || uses_group_bindings(arena, *then)
+                || else_.is_some_and(|e| uses_group_bindings(arena, e))
+        }
+        Expr::Bind { lhs, rhs, .. } => {
+            uses_group_bindings(arena, *lhs) || uses_group_bindings(arena, *rhs)
+        }
+        Expr::Lambda { body, .. } => uses_group_bindings(arena, *body),
+        Expr::Sort { expr, .. } => uses_group_bindings(arena, *expr),
+        Expr::Transform {
+            pattern, update, delete, ..
+        } => {
+            uses_group_bindings(arena, *pattern)
+                || uses_group_bindings(arena, *update)
+                || delete.is_some_and(|d| uses_group_bindings(arena, d))
+        }
+        Expr::Name { group, .. } => group.as_ref().is_some_and(|g| {
+            g.pairs.iter().any(|p| {
+                uses_group_bindings(arena, p[0]) || uses_group_bindings(arena, p[1])
+            })
+        }),
+        Expr::Partial {
+            procedure,
+            arguments,
+            ..
+        } => {
+            uses_group_bindings(arena, *procedure)
+                || arguments.iter().any(|&n| uses_group_bindings(arena, n))
+        }
+        // Leaves: literals, wildcard, descendant, parent, regex, placeholder
+        _ => false,
+    }
+}
+
+/// Fast-path key evaluation strategy, determined once per group pair.
+enum KeyStrategy {
+    /// key_node is a simple Name — use direct field lookup, no dispatch.
+    FieldAccess(String),
+    /// key_node requires full evaluation.
+    FullEval(NodeId),
+}
+
+/// Fast-path value evaluation strategy, determined once per group pair.
+enum ValStrategy {
+    /// val_node is empty — return group input as-is.
+    Identity,
+    /// val_node is a simple Name — use direct field lookup.
+    FieldAccess(String),
+    /// val_node requires full evaluation, but doesn't use $index/$key.
+    FullEvalNoBindings(NodeId),
+    /// val_node requires full evaluation AND uses $index/$key.
+    FullEvalWithBindings(NodeId),
+}
+
 // Large dispatch function for group-by evaluation.
 #[allow(clippy::too_many_lines)]
 fn eval_group_by(
@@ -3203,12 +3311,73 @@ fn eval_group_by(
     for pair in &group.pairs {
         let key_node = pair[0];
         let val_node = pair[1];
-        let mut group_order: Vec<compact_str::CompactString> = Vec::new();
-        let mut groups: std::collections::HashMap<compact_str::CompactString, (Vec<Value>, usize)> =
-            std::collections::HashMap::new();
+
+        // Analyze key expression once: simple Name → direct field lookup.
+        let key_strategy = match arena.get(key_node) {
+            Expr::Name {
+                value,
+                stages,
+                group: None,
+                focus: None,
+                index: None,
+                ..
+            } if stages.is_empty() => KeyStrategy::FieldAccess(value.clone()),
+            _ => KeyStrategy::FullEval(key_node),
+        };
+
+        // Analyze value expression once: determine if we need env bindings.
+        let val_strategy = if val_node.is_empty() {
+            ValStrategy::Identity
+        } else {
+            match arena.get(val_node) {
+                Expr::Name {
+                    value,
+                    stages,
+                    group: None,
+                    focus: None,
+                    index: None,
+                    ..
+                } if stages.is_empty() && !uses_group_bindings(arena, val_node) => {
+                    ValStrategy::FieldAccess(value.clone())
+                }
+                _ if uses_group_bindings(arena, val_node) => {
+                    ValStrategy::FullEvalWithBindings(val_node)
+                }
+                _ => ValStrategy::FullEvalNoBindings(val_node),
+            }
+        };
+
+        // Determine keep_array flag once per pair.
+        let val_keep_array = match arena.get(val_node) {
+            Expr::Name { keep_array, .. }
+            | Expr::Binary { keep_array, .. }
+            | Expr::Variable { keep_array, .. }
+            | Expr::Function { keep_array, .. }
+            | Expr::Sort { keep_array, .. }
+            | Expr::Unary { keep_array, .. } => *keep_array,
+            Expr::Path {
+                keep_singleton_array,
+                ..
+            } => *keep_singleton_array,
+            _ => false,
+        };
+
+        // Use IndexMap directly instead of HashMap + separate order Vec.
+        let mut groups: indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, usize)> =
+            indexmap::IndexMap::new();
 
         for (i, item) in items.iter().enumerate() {
-            let key_val = eval_no_stack_check(arena, key_node, item, env)?;
+            // Fast-path: direct field lookup for simple Name key expressions.
+            let key_val = match &key_strategy {
+                KeyStrategy::FieldAccess(field) => match item {
+                    Value::Object(obj) => match obj.get(field.as_str()) {
+                        Some(v) => v.clone(),
+                        None => Value::Undefined,
+                    },
+                    _ => Value::Undefined,
+                },
+                KeyStrategy::FullEval(node) => eval_no_stack_check(arena, *node, item, env)?,
+            };
             if key_val.is_undefined() || key_val.is_null() {
                 continue;
             }
@@ -3224,52 +3393,40 @@ fn eval_group_by(
             if let Some(entry) = groups.get_mut(key.as_str()) {
                 entry.0.push(item.clone());
             } else {
-                group_order.push(key.clone());
                 groups.insert(key, (vec![item.clone()], i));
             }
         }
 
-        for key in &group_order {
+        // Iterate groups in insertion order (IndexMap guarantees this).
+        for (key, (group_items, first_idx)) in &groups {
             if key_set.contains(key.as_str()) {
                 return Err(JsonataError::new(
                     "D1009",
                     format!("duplicate key: \"{key}\""),
                 ));
             }
-            let (group_items, first_idx) = groups.get(key.as_str()).ok_or_else(|| {
-                JsonataError::new("D0000", "key from group_order must exist in groups")
-            })?;
             let group_input = if group_items.len() == 1 {
                 group_items[0].clone()
             } else {
                 Value::Array(Rc::from(group_items.clone()))
             };
 
-            let child_env = Environment::new_child(Rc::clone(env));
-            child_env.bind("index", Value::Number(*first_idx as f64));
-            child_env.bind("key", Value::String(key.clone()));
-            let child_env = Rc::new(child_env);
-
-            let mut val_result = if val_node.is_empty() {
-                group_input
-            } else {
-                eval_no_stack_check(arena, val_node, &group_input, &child_env)?
+            let mut val_result = match &val_strategy {
+                ValStrategy::Identity => group_input,
+                ValStrategy::FieldAccess(field) => eval_name(field, &group_input)?,
+                ValStrategy::FullEvalNoBindings(vn) => {
+                    // No $index/$key used — skip Environment::new_child.
+                    eval_no_stack_check(arena, *vn, &group_input, env)?
+                }
+                ValStrategy::FullEvalWithBindings(vn) => {
+                    let child_env = Environment::new_child(Rc::clone(env));
+                    child_env.bind("index", Value::Number(*first_idx as f64));
+                    child_env.bind("key", Value::String(key.clone()));
+                    let child_env = Rc::new(child_env);
+                    eval_no_stack_check(arena, *vn, &group_input, &child_env)?
+                }
             };
 
-            // Apply keep_array wrapping for value nodes with [] suffix.
-            let val_keep_array = match arena.get(val_node) {
-                Expr::Name { keep_array, .. }
-                | Expr::Binary { keep_array, .. }
-                | Expr::Variable { keep_array, .. }
-                | Expr::Function { keep_array, .. }
-                | Expr::Sort { keep_array, .. }
-                | Expr::Unary { keep_array, .. } => *keep_array,
-                Expr::Path {
-                    keep_singleton_array,
-                    ..
-                } => *keep_singleton_array,
-                _ => false,
-            };
             if val_keep_array {
                 val_result = match val_result {
                     Value::Undefined => Value::Array(Rc::from(vec![])),

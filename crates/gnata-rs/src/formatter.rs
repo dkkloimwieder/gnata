@@ -4,7 +4,7 @@
 //! pretty-printed text with consistent indentation and line-breaking rules.
 
 use crate::error::JsonataError;
-use crate::parser::ast::*;
+use crate::parser::ast::{AstArena, NodeId, Expr, UnaryOp, GroupExpr, BinaryOp, Signature, Stage, StageKind};
 use crate::parser::{Parser, process_ast};
 
 const INDENT: &str = "  ";
@@ -64,6 +64,9 @@ fn extract_comments(src: &str) -> Vec<Comment> {
 }
 
 /// Format a JSONata expression string.
+///
+/// # Errors
+/// Returns `JsonataError` if the expression fails to parse.
 pub fn format(expr: &str) -> Result<String, JsonataError> {
     let comments = extract_comments(expr);
     let (mut arena, root) = Parser::parse(expr)?;
@@ -126,6 +129,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn emit(&mut self, id: NodeId, depth: usize) {
         if id.is_empty() {
             return;
@@ -141,8 +145,8 @@ impl<'a> Formatter<'a> {
                 } else {
                     self.out.push_str(&escape_name(value));
                 }
-                self.emit_stages(&stages, depth);
-                self.emit_group(&group, depth);
+                self.emit_stages(stages, depth);
+                self.emit_group(group.as_ref(), depth);
             }
             Expr::StringLit { ref value, .. } => {
                 self.out.push('"');
@@ -167,7 +171,7 @@ impl<'a> Formatter<'a> {
                 if keep_array {
                     self.out.push_str("[]");
                 }
-                self.emit_group(&group, depth);
+                self.emit_group(group.as_ref(), depth);
             }
             Expr::Wildcard { .. } => self.out.push('*'),
             Expr::Descendant { .. } => self.out.push_str("**"),
@@ -186,11 +190,11 @@ impl<'a> Formatter<'a> {
             Expr::Placeholder { .. } => self.out.push('?'),
 
             Expr::Path { ref steps, ref group, .. } => {
-                self.emit_path(&steps, &group, depth);
+                self.emit_path(steps, group.as_ref(), depth);
             }
 
             Expr::Binary { op, lhs, rhs, ref group, .. } => {
-                self.emit_binary(op, lhs, rhs, &group, depth);
+                self.emit_binary(op, lhs, rhs, group.as_ref(), depth);
             }
 
             Expr::Unary { op, operand, ref expressions, ref lhs, ref group, .. } => {
@@ -200,16 +204,16 @@ impl<'a> Formatter<'a> {
                         self.emit(operand, depth);
                     }
                     UnaryOp::ArrayCons => {
-                        self.emit_array(&expressions, depth);
+                        self.emit_array(expressions, depth);
                     }
                     UnaryOp::ObjCons => {
-                        self.emit_object(&lhs, &group, depth);
+                        self.emit_object(lhs, group.as_ref(), depth);
                     }
                 }
             }
 
             Expr::Block { ref expressions, .. } => {
-                self.emit_block(&expressions, depth);
+                self.emit_block(expressions, depth);
             }
 
             Expr::Condition { condition, then, else_, .. } => {
@@ -224,23 +228,23 @@ impl<'a> Formatter<'a> {
 
             Expr::Function { procedure, ref arguments, ref group, .. } => {
                 self.emit(procedure, depth);
-                self.emit_args(&arguments, depth);
-                self.emit_group(&group, depth);
+                self.emit_args(arguments, depth);
+                self.emit_group(group.as_ref(), depth);
             }
 
             Expr::Partial { procedure, ref arguments, .. } => {
                 self.emit(procedure, depth);
-                self.emit_args(&arguments, depth);
+                self.emit_args(arguments, depth);
             }
 
             Expr::Lambda { ref params, body, ref signature, .. } => {
-                self.emit_lambda(&params, body, &signature, depth);
+                self.emit_lambda(params, body, signature.as_ref(), depth);
             }
 
             Expr::Transform { pattern, update, delete, .. } => {
-                self.out.push_str("|");
+                self.out.push('|');
                 self.emit(pattern, depth);
-                self.out.push_str("|");
+                self.out.push('|');
                 self.emit(update, depth);
                 if let Some(del) = delete {
                     self.out.push_str(", ");
@@ -277,7 +281,7 @@ impl<'a> Formatter<'a> {
         f.out
     }
 
-    fn emit_path(&mut self, steps: &[NodeId], group: &Option<GroupExpr>, depth: usize) {
+    fn emit_path(&mut self, steps: &[NodeId], group: Option<&GroupExpr>, depth: usize) {
         if steps.len() > BREAK_THRESHOLD {
             self.emit(steps[0], depth);
             for &step in &steps[1..] {
@@ -297,7 +301,7 @@ impl<'a> Formatter<'a> {
         self.emit_group(group, depth);
     }
 
-    fn emit_binary(&mut self, op: BinaryOp, lhs: NodeId, rhs: NodeId, group: &Option<GroupExpr>, depth: usize) {
+    fn emit_binary(&mut self, op: BinaryOp, lhs: NodeId, rhs: NodeId, group: Option<&GroupExpr>, depth: usize) {
         match op {
             BinaryOp::Subscript => {
                 self.emit(lhs, depth);
@@ -313,7 +317,7 @@ impl<'a> Formatter<'a> {
             _ => {
                 self.emit(lhs, depth);
                 let op_str = op.as_str();
-                if op_str.chars().next().map_or(false, |c| c.is_alphabetic()) {
+                if op_str.chars().next().is_some_and(char::is_alphabetic) {
                     // Word operators: and, or, in
                     self.out.push(' ');
                     self.out.push_str(op_str);
@@ -379,7 +383,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn emit_object(&mut self, lhs: &[NodeId], group: &Option<GroupExpr>, depth: usize) {
+    fn emit_object(&mut self, lhs: &[NodeId], group: Option<&GroupExpr>, depth: usize) {
         // lhs is flat [k0, v0, k1, v1, ...]
         let pair_count = lhs.len() / 2;
         if pair_count > BREAK_THRESHOLD {
@@ -441,7 +445,7 @@ impl<'a> Formatter<'a> {
             + else_str.as_ref().map_or(0, |s| 3 + s.len());
 
         if inline_len <= LINE_WIDTH && !cond_str.contains('\n') && !then_str.contains('\n')
-            && else_str.as_ref().map_or(true, |s| !s.contains('\n'))
+            && else_str.as_ref().is_none_or(|s| !s.contains('\n'))
         {
             self.emit(condition, depth);
             self.out.push_str(" ? ");
@@ -465,7 +469,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn emit_lambda(&mut self, params: &[NodeId], body: NodeId, signature: &Option<Signature>, depth: usize) {
+    fn emit_lambda(&mut self, params: &[NodeId], body: NodeId, signature: Option<&Signature>, depth: usize) {
         self.out.push_str("function(");
         for (i, &p) in params.iter().enumerate() {
             if i > 0 {
@@ -475,9 +479,9 @@ impl<'a> Formatter<'a> {
         }
         self.out.push(')');
         if let Some(sig) = signature {
-            self.out.push_str("<");
+            self.out.push('<');
             self.out.push_str(&sig.raw);
-            self.out.push_str(">");
+            self.out.push('>');
         }
         self.out.push_str(" {\n");
         self.indent(depth + 1);
@@ -503,7 +507,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn emit_group(&mut self, group: &Option<GroupExpr>, depth: usize) {
+    fn emit_group(&mut self, group: Option<&GroupExpr>, depth: usize) {
         if let Some(g) = group {
             let pair_count = g.pairs.len();
             if pair_count > BREAK_THRESHOLD {
@@ -539,7 +543,7 @@ impl<'a> Formatter<'a> {
 /// Escape a name that contains special characters or is a keyword.
 fn escape_name(name: &str) -> String {
     if name.is_empty() || needs_backtick(name) {
-        format!("`{}`", name)
+        format!("`{name}`")
     } else {
         name.to_string()
     }

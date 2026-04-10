@@ -324,6 +324,15 @@ pub fn call_function(
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
+    // Short-circuit builtins: they never produce TailCall, so skip the
+    // trampoline setup (avoids cloning func + args.to_vec()).
+    match func {
+        FunctionValue::SignedBuiltin { func: f, .. } => return f(args, focus),
+        FunctionValue::Builtin(f) | FunctionValue::Partial(f) => return f(args, focus),
+        FunctionValue::EnvAwareBuiltin(f) => return f(args, focus, env, arena),
+        FunctionValue::Lambda(_) => {}
+    }
+
     let counter = env.call_counter();
     let max_iter = counter.max as usize * 10000;
     let mut current_func = func.clone();
@@ -337,8 +346,6 @@ pub fn call_function(
 
         match &current_func {
             FunctionValue::SignedBuiltin { func: f, .. } => {
-                // No signature validation here — HOF callbacks bypass signatures.
-                // Signature is validated at the direct call site (eval_function).
                 return f(&current_args, focus);
             }
             FunctionValue::Builtin(f) | FunctionValue::Partial(f) => {

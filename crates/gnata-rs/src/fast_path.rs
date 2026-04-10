@@ -91,6 +91,8 @@ pub enum FuncFastKind {
     Average,
     Reverse,
     Distinct,
+    Shuffle,
+    Flatten,
 }
 
 // ── Analysis ────────────────────────────────────────────────────────
@@ -227,6 +229,8 @@ fn try_function(arena: &AstArena, node: NodeId) -> Option<FuncFastPath> {
         "average" => FuncFastKind::Average,
         "reverse" => FuncFastKind::Reverse,
         "distinct" => FuncFastKind::Distinct,
+        "shuffle" => FuncFastKind::Shuffle,
+        "flatten" => FuncFastKind::Flatten,
         "contains" => FuncFastKind::Contains,
         _ => return None,
     };
@@ -252,7 +256,17 @@ fn try_function(arena: &AstArena, node: NodeId) -> Option<FuncFastPath> {
     if arguments.len() != 1 {
         return None;
     }
-    let path = collect_pure_path(arena, arguments[0])?;
+    // Unwrap single-element array constructor: $func([path]) → $func(path)
+    // In JSONata, [expr] doesn't nest when expr already yields an array.
+    let inner_arg = match arena.get(arguments[0]) {
+        Expr::Unary {
+            op: crate::parser::ast::UnaryOp::ArrayCons,
+            expressions,
+            ..
+        } if expressions.len() == 1 => expressions[0],
+        _ => arguments[0],
+    };
+    let path = collect_pure_path(arena, inner_arg)?;
 
     Some(FuncFastPath {
         kind,
@@ -720,7 +734,41 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
             }
             _ => None,
         },
+
+        FuncFastKind::Shuffle => match val {
+            Value::Array(arr) => {
+                let mut shuffled = arr.to_vec();
+                for i in (1..shuffled.len()).rev() {
+                    let j = fastrand::usize(..=i);
+                    shuffled.swap(i, j);
+                }
+                Some(Value::Array(Rc::from(shuffled)))
+            }
+            _ => None,
+        },
+
+        FuncFastKind::Flatten => match val {
+            Value::Array(arr) => {
+                Some(Value::Array(Rc::from(flatten_recursive(arr, usize::MAX))))
+            }
+            _ => None,
+        },
     }
+}
+
+/// Recursively flatten nested arrays up to the given depth.
+fn flatten_recursive(arr: &[Value], depth: usize) -> Vec<Value> {
+    let mut result = Vec::new();
+    for item in arr {
+        if depth > 0
+            && let Value::Array(inner) = item
+        {
+            result.extend(flatten_recursive(inner.as_ref(), depth - 1));
+            continue;
+        }
+        result.push(item.clone());
+    }
+    result
 }
 
 /// Collect all numbers from a value (scalar or array). Returns None if any non-number found.

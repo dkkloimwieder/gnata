@@ -76,8 +76,7 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
             .expect("eval failed");
     }
 
-    let json = result.to_json();
-    println!("{}", serde_json::to_string(&json).unwrap_or_default());
+    println!("{}", result.to_json_string());
 }
 
 fn run_stream_bench(data_str: &str, n: u64) {
