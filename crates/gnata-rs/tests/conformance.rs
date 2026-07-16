@@ -303,6 +303,13 @@ fn json_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     }
 }
 
+/// Known-failing cases exempted from the strict `failed == 0` gate,
+/// as `"group/file.json"` names. Keep this list shrinking: only add an
+/// entry together with a tracking issue, and remove it once fixed. A
+/// listed case that PASSES also fails the suite so stale entries get
+/// pruned.
+const EXPECTED_FAILURES: &[&str] = &[];
+
 #[test]
 fn conformance_suite() {
     let groups_dir = testdata_dir().join("groups");
@@ -310,7 +317,9 @@ fn conformance_suite() {
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
+    let mut xfailed = 0;
     let mut failures: Vec<(String, String)> = Vec::new();
+    let mut unexpected_passes: Vec<String> = Vec::new();
 
     let mut groups: Vec<_> = std::fs::read_dir(&groups_dir)
         .expect("cannot read testdata/groups")
@@ -342,18 +351,27 @@ fn conformance_suite() {
                 eprintln!("SKIP {case_name}");
                 continue;
             }
+            let case_name = format!(
+                "{}/{}",
+                group_name,
+                case_entry.file_name().to_string_lossy()
+            );
+            let expected_failure = EXPECTED_FAILURES.contains(&case_name.as_str());
             for tc in &test_cases {
                 total += 1;
                 match run_test_case(tc) {
+                    Ok(()) if expected_failure => {
+                        passed += 1;
+                        unexpected_passes.push(case_name.clone());
+                    }
                     Ok(()) => passed += 1,
+                    Err(_) if expected_failure => {
+                        xfailed += 1;
+                        eprintln!("XFAIL {case_name}");
+                    }
                     Err(msg) => {
                         failed += 1;
-                        let case_name = format!(
-                            "{}/{}",
-                            group_name,
-                            case_entry.file_name().to_string_lossy()
-                        );
-                        failures.push((case_name, msg));
+                        failures.push((case_name.clone(), msg));
                     }
                 }
             }
@@ -365,6 +383,7 @@ fn conformance_suite() {
     eprintln!("Total:   {total}");
     eprintln!("Passed:  {passed}");
     eprintln!("Failed:  {failed}");
+    eprintln!("Xfailed: {xfailed}");
     eprintln!("Skipped: {skipped}");
     eprintln!(
         "Pass rate: {:.1}%",
@@ -382,13 +401,17 @@ fn conformance_suite() {
         }
     }
 
-    // Don't assert 100% — just report progress.
-    // Uncomment below when targeting full conformance:
-    // assert_eq!(failed, 0, "{failed} conformance tests failed");
-
-    // For now, assert we pass at least a meaningful percentage.
+    // Strict gate: every case passes unless listed in EXPECTED_FAILURES.
+    assert_eq!(failed, 0, "{failed} conformance tests failed unexpectedly");
     assert!(
-        passed > 100,
-        "expected at least 100 conformance tests to pass, got {passed}"
+        unexpected_passes.is_empty(),
+        "cases in EXPECTED_FAILURES now pass — remove them: {unexpected_passes:?}"
+    );
+    // Load-sanity floor: guards against the harness silently loading or
+    // skipping large parts of the suite (1,733 cases at time of writing).
+    assert!(
+        passed >= 1700,
+        "expected at least 1700 conformance tests to pass, got {passed} — \
+         did the suite fail to load?"
     );
 }
