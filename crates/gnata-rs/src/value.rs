@@ -16,6 +16,37 @@ use crate::error::{JsonataError, JsonataResult};
 /// bytes — covers all common JSON field names with zero heap allocation.
 pub type ObjectMap = indexmap::IndexMap<CompactString, Value>;
 
+/// Ordering comparison operators accepted by [`Value::compare`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompareOp {
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `>`
+    Gt,
+    /// `>=`
+    Ge,
+}
+
+impl CompareOp {
+    /// Operator source text, as used in JSONata error messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CompareOp::Lt => "<",
+            CompareOp::Le => "<=",
+            CompareOp::Gt => ">",
+            CompareOp::Ge => ">=",
+        }
+    }
+}
+
+impl std::fmt::Display for CompareOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Core value type for JSONata evaluation.
 ///
 /// Heap-allocated variants (String, Array, Object) are wrapped in `Rc` for
@@ -256,7 +287,7 @@ impl Value {
     ///
     /// # Errors
     /// Returns a `JsonataError` if the operands are not numbers or strings.
-    pub fn compare(&self, other: &Value, op: &str) -> JsonataResult {
+    pub fn compare(&self, other: &Value, op: CompareOp) -> JsonataResult {
         // Validate left operand type
         if !self.is_undefined() && !self.is_number() && !self.is_string() {
             return Err(JsonataError::new(
@@ -271,11 +302,10 @@ impl Value {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => {
                 let result = match op {
-                    "<" => a < b,
-                    "<=" => a <= b,
-                    ">" => a > b,
-                    ">=" => a >= b,
-                    _ => unreachable!(),
+                    CompareOp::Lt => a < b,
+                    CompareOp::Le => a <= b,
+                    CompareOp::Gt => a > b,
+                    CompareOp::Ge => a >= b,
                 };
                 Ok(Value::Bool(result))
             }
@@ -289,11 +319,10 @@ impl Value {
             }
             (Value::String(a), Value::String(b)) => {
                 let result = match op {
-                    "<" => a < b,
-                    "<=" => a <= b,
-                    ">" => a > b,
-                    ">=" => a >= b,
-                    _ => unreachable!(),
+                    CompareOp::Lt => a < b,
+                    CompareOp::Le => a <= b,
+                    CompareOp::Gt => a > b,
+                    CompareOp::Ge => a >= b,
                 };
                 Ok(Value::Bool(result))
             }
@@ -866,20 +895,22 @@ mod tests {
     #[test]
     fn compare_numbers() {
         let r = Value::Number(1.0)
-            .compare(&Value::Number(2.0), "<")
+            .compare(&Value::Number(2.0), CompareOp::Lt)
             .unwrap();
         assert_eq!(r, Value::Bool(true));
     }
 
     #[test]
     fn compare_undefined_propagates() {
-        let r = Value::Number(1.0).compare(&Value::Undefined, "<").unwrap();
+        let r = Value::Number(1.0)
+            .compare(&Value::Undefined, CompareOp::Lt)
+            .unwrap();
         assert!(r.is_undefined());
     }
 
     #[test]
     fn compare_type_mismatch_error() {
-        let r = Value::Number(1.0).compare(&Value::String("a".into()), "<");
+        let r = Value::Number(1.0).compare(&Value::String("a".into()), CompareOp::Lt);
         assert!(r.is_err());
         assert_eq!(r.unwrap_err().code, "T2009");
     }

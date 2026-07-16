@@ -136,10 +136,17 @@ impl std::fmt::Display for UnaryOp {
 }
 
 /// Index into the AST arena. Lightweight, Copy, no lifetimes.
+///
+/// Only obtainable from [`AstArena::alloc`] (or as [`NodeId::EMPTY`]), so a
+/// `NodeId` is always valid for the arena that produced it. Using it with a
+/// *different* arena is a bug and may panic or address the wrong node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u32);
+pub struct NodeId(u32);
 
 impl NodeId {
+    /// Sentinel for "no node" (e.g. the absent else-branch of a ternary).
+    /// Never a valid arena index — check with [`NodeId::is_empty`] before
+    /// resolving.
     pub const EMPTY: NodeId = NodeId(u32::MAX);
 
     pub fn is_empty(self) -> bool {
@@ -181,14 +188,44 @@ impl AstArena {
         Ok(NodeId(id))
     }
 
+    /// Resolve a node id to its expression.
+    ///
+    /// # Panics
+    /// Panics if `id` is [`NodeId::EMPTY`] or was allocated by a different
+    /// arena — both are caller bugs. Use [`AstArena::try_get`] to resolve
+    /// ids of uncertain provenance.
     #[inline]
     pub fn get(&self, id: NodeId) -> &Expr {
-        &self.nodes[id.0 as usize]
+        self.try_get(id).unwrap_or_else(|| {
+            panic!(
+                "{id:?} is not a node of this arena (len {}) — NodeIds are only \
+                 valid for the arena that allocated them",
+                self.nodes.len()
+            )
+        })
     }
 
+    /// Resolve a node id, returning `None` for [`NodeId::EMPTY`] or an id
+    /// that this arena never allocated.
+    #[inline]
+    pub fn try_get(&self, id: NodeId) -> Option<&Expr> {
+        self.nodes.get(id.0 as usize)
+    }
+
+    /// Mutable counterpart of [`AstArena::get`].
+    ///
+    /// # Panics
+    /// Panics if `id` is [`NodeId::EMPTY`] or was allocated by a different
+    /// arena — both are caller bugs.
     #[inline]
     pub fn get_mut(&mut self, id: NodeId) -> &mut Expr {
-        &mut self.nodes[id.0 as usize]
+        let len = self.nodes.len();
+        self.nodes.get_mut(id.0 as usize).unwrap_or_else(|| {
+            panic!(
+                "{id:?} is not a node of this arena (len {len}) — NodeIds are only \
+                 valid for the arena that allocated them"
+            )
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -421,4 +458,42 @@ pub struct Slot {
 #[derive(Debug, Clone)]
 pub struct Signature {
     pub raw: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_get_rejects_empty_and_foreign_ids() {
+        let mut arena = AstArena::new();
+        let id = arena
+            .alloc(Expr::StringLit {
+                value: "x".into(),
+                pos: 0,
+            })
+            .unwrap();
+        assert!(arena.try_get(id).is_some());
+        assert!(arena.try_get(NodeId::EMPTY).is_none());
+        // An id from a larger arena is out of range for this one.
+        let mut bigger = AstArena::new();
+        let _ = bigger.alloc(Expr::StringLit {
+            value: "a".into(),
+            pos: 0,
+        });
+        let foreign = bigger
+            .alloc(Expr::StringLit {
+                value: "b".into(),
+                pos: 0,
+            })
+            .unwrap();
+        assert!(arena.try_get(foreign).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "not a node of this arena")]
+    fn get_panics_with_helpful_message_on_empty_id() {
+        let arena = AstArena::new();
+        let _ = arena.get(NodeId::EMPTY);
+    }
 }

@@ -17,7 +17,7 @@ use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
 use crate::parser::{AstArena, BinaryOp, Expr, NodeId, SortTerm, UnaryOp};
-use crate::value::{Sequence, Value};
+use crate::value::{CompareOp, Sequence, Value};
 
 /// Environment variable name for the parent context (`%` operator).
 const PARENT_BINDING: &str = "%%";
@@ -2027,19 +2027,30 @@ fn apply_binary_op(
 /// Typed comparison — avoids string matching on the operator in the hot loop.
 #[inline]
 fn compare_values(left: &Value, right: &Value, op: BinaryOp) -> JsonataResult {
+    let cmp = match op {
+        BinaryOp::Lt => CompareOp::Lt,
+        BinaryOp::Le => CompareOp::Le,
+        BinaryOp::Gt => CompareOp::Gt,
+        BinaryOp::Ge => CompareOp::Ge,
+        _ => {
+            return Err(JsonataError::new(
+                "D3001",
+                format!("unknown comparison operator: {op}"),
+            ));
+        }
+    };
     // Fast path: both numbers (the common case in filter predicates).
     if let (Value::Number(a), Value::Number(b)) = (left, right) {
-        let result = match op {
-            BinaryOp::Lt => a < b,
-            BinaryOp::Le => a <= b,
-            BinaryOp::Gt => a > b,
-            BinaryOp::Ge => a >= b,
-            _ => unreachable!(),
+        let result = match cmp {
+            CompareOp::Lt => a < b,
+            CompareOp::Le => a <= b,
+            CompareOp::Gt => a > b,
+            CompareOp::Ge => a >= b,
         };
         return Ok(Value::Bool(result));
     }
     // Slow path: delegates to Value::compare for type checking and error messages.
-    left.compare(right, op.as_str())
+    left.compare(right, cmp)
 }
 
 /// Apply arithmetic operator to pre-evaluated values.

@@ -13,7 +13,7 @@ use crate::error::JsonataResult;
 use crate::evaluator::functions::FunctionValue;
 use crate::evaluator::{Environment, call_function};
 use crate::parser::ast::{AstArena, BinaryOp, Expr, NodeId};
-use crate::value::Value;
+use crate::value::{CompareOp, Value};
 
 /// A simple lambda pattern that can be evaluated without full dispatch.
 #[derive(Debug)]
@@ -554,10 +554,10 @@ pub fn get_field(item: &Value, field: &str) -> Value {
 #[inline]
 pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> JsonataResult {
     match op {
-        BinaryOp::Gt => lhs.compare(rhs, ">"),
-        BinaryOp::Lt => lhs.compare(rhs, "<"),
-        BinaryOp::Ge => lhs.compare(rhs, ">="),
-        BinaryOp::Le => lhs.compare(rhs, "<="),
+        BinaryOp::Gt => lhs.compare(rhs, CompareOp::Gt),
+        BinaryOp::Lt => lhs.compare(rhs, CompareOp::Lt),
+        BinaryOp::Ge => lhs.compare(rhs, CompareOp::Ge),
+        BinaryOp::Le => lhs.compare(rhs, CompareOp::Le),
         // Equality mirrors apply_binary_op: undefined operands → false.
         BinaryOp::Eq => {
             if lhs.is_undefined() || rhs.is_undefined() {
