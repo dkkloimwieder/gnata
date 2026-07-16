@@ -844,11 +844,13 @@ fn eval_tuple_compound_join(
     Ok(next_ctxs)
 }
 
+/// A (value, environment) pair flowing through tuple-aware path evaluation.
+type TupleCtx = (Value, Rc<Environment>);
+
 /// Tuple-aware path evaluation for paths containing #$var index bindings or % parent refs.
 ///
 /// Maintains a list of (value, env) contexts so that position variables bound
 /// at one step remain accessible in all subsequent steps.
-#[allow(clippy::too_many_lines)]
 fn eval_path_tuple(
     arena: &AstArena,
     steps: &[NodeId],
@@ -858,299 +860,22 @@ fn eval_path_tuple(
     env: &Rc<Environment>,
 ) -> JsonataResult {
     // Each context pairs a value with the env it was produced under.
-    let mut ctxs: Vec<(Value, Rc<Environment>)> = vec![(input.clone(), env.clone())];
+    let mut ctxs: Vec<TupleCtx> = vec![(input.clone(), env.clone())];
 
     // Detect the first step-level group expression; it will be applied at the
     // end via eval_tuple_group instead of during per-element evaluation.
-    let mut final_group: Option<crate::parser::GroupExpr> = None;
-    for &step in steps {
-        if final_group.is_none()
-            && let Some(grp) = extract_step_group(arena, step)
-        {
-            final_group = Some(grp);
-        }
-    }
+    let final_group = steps.iter().find_map(|&s| extract_step_group(arena, s));
 
     for (step_idx, &step) in steps.iter().enumerate() {
-        let mut next_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
-
-        // Sort steps must be applied globally to all tuples simultaneously.
+        // Sort steps apply globally to all tuples at once and may legitimately
+        // continue with an empty context set.
         if let Expr::Sort { expr, terms, .. } = arena.get(step) {
             let expr = *expr;
             let terms = terms.clone();
             ctxs = eval_tuple_sort_step(arena, expr, &terms, ctxs)?;
             continue;
         }
-
-        // Parent (%) steps navigate up the parent chain using the %% env bindings.
-        if matches!(arena.get(step), Expr::Parent { .. }) {
-            ctxs = eval_tuple_parent_step(&ctxs)?;
-            if ctxs.is_empty() {
-                return Ok(Value::Undefined);
-            }
-            continue;
-        }
-
-        // Subscript steps whose LEFT is Parent (%[predicate]) require special
-        // handling: navigate % to the parent first, then apply the predicate using
-        // the parent's own env (so that nested % inside the predicate refers to
-        // the grandparent correctly).
-        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
-            let (op, lhs, rhs) = (*op, *lhs, *rhs);
-            if op == BinaryOp::Subscript
-                && !lhs.is_empty()
-                && matches!(arena.get(lhs), Expr::Parent { .. })
-            {
-                for (_, ctx_env) in &ctxs {
-                    if let Some((parent_val, binding_env)) =
-                        Environment::lookup_with_env(ctx_env, PARENT_BINDING)
-                    {
-                        if parent_val.is_null() || parent_val.is_undefined() {
-                            return Err(JsonataError::new(
-                                "S0217",
-                                "% operator used outside of a valid path context",
-                            ));
-                        }
-                        let parent_env = binding_env
-                            .parent()
-                            .cloned()
-                            .unwrap_or_else(|| binding_env.clone());
-                        let pred_result =
-                            eval_no_stack_check(arena, rhs, &parent_val, &parent_env)?;
-                        if pred_result.to_boolean() {
-                            next_ctxs.push((parent_val, parent_env));
-                        }
-                    } else {
-                        return Err(JsonataError::new(
-                            "S0217",
-                            "% operator used outside of a valid path context",
-                        ));
-                    }
-                }
-                ctxs = next_ctxs;
-                if ctxs.is_empty() {
-                    return Ok(Value::Undefined);
-                }
-                continue;
-            }
-        }
-
-        // Subscript whose Left is a Block containing a path expression, and
-        // whose Right (predicate) references %. The block would normally discard
-        // per-element parent context, so we evaluate the block's inner path in
-        // tuple mode to preserve parent bindings, then apply the predicate per-tuple.
-        // Example: (Account.Order.Product)[%.OrderID='order104'].SKU
-        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
-            let (op, lhs, rhs) = (*op, *lhs, *rhs);
-            if op == BinaryOp::Subscript
-                && !lhs.is_empty()
-                && matches!(arena.get(lhs), Expr::Block { .. })
-                && node_has_parent_ref(arena, rhs)
-            {
-                for (val, ctx_env) in &ctxs {
-                    let mut tuple_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
-                    if let Expr::Block { expressions, .. } = arena.get(lhs) {
-                        let expressions = expressions.clone();
-                        if expressions.len() == 1
-                            && let Expr::Path {
-                                steps: inner_steps, ..
-                            } = arena.get(expressions[0])
-                        {
-                            let inner_steps = inner_steps.clone();
-                            tuple_ctxs = expand_path_tuple(
-                                arena,
-                                &inner_steps,
-                                &[(val.clone(), ctx_env.clone())],
-                            )?;
-                        }
-                        if tuple_ctxs.is_empty() {
-                            // Fallback: evaluate block normally.
-                            let block_result = eval_no_stack_check(arena, lhs, val, ctx_env)?;
-                            if block_result.is_undefined() {
-                                continue;
-                            }
-                            match block_result {
-                                Value::Array(arr) => {
-                                    for item in arr.iter() {
-                                        tuple_ctxs.push((item.clone(), ctx_env.clone()));
-                                    }
-                                }
-                                other => tuple_ctxs.push((other, ctx_env.clone())),
-                            }
-                        }
-                    }
-                    for (tval, tenv) in &tuple_ctxs {
-                        let pred_result = eval_no_stack_check(arena, rhs, tval, tenv)?;
-                        if pred_result.to_boolean() {
-                            next_ctxs.push((tval.clone(), tenv.clone()));
-                        }
-                    }
-                }
-                ctxs = next_ctxs;
-                if ctxs.is_empty() {
-                    return Ok(Value::Undefined);
-                }
-                continue;
-            }
-        }
-
-        // When the step is a Block containing a single Path expression,
-        // expand the inner path in tuple mode to preserve parent bindings
-        // for the % operator (e.g., Account.(Order.Product).{%.OrderID}).
-        if let Expr::Block { expressions, .. } = arena.get(step) {
-            let expressions = expressions.clone();
-            if expressions.len() == 1
-                && let Expr::Path {
-                    steps: inner_steps, ..
-                } = arena.get(expressions[0])
-            {
-                let inner_steps = inner_steps.clone();
-                next_ctxs = expand_path_tuple(arena, &inner_steps, &ctxs)?;
-                ctxs = next_ctxs;
-                if ctxs.is_empty() {
-                    return Ok(Value::Undefined);
-                }
-                continue;
-            }
-        }
-
-        // Subscript step whose Left has a Focus binding (join operator @):
-        // e.g., Contact@$c[$c.ssn = $e.SSN]. Bind focus var and apply predicate.
-        if let Expr::Binary {
-            op,
-            lhs,
-            rhs,
-            index: post_filter_index,
-            ..
-        } = arena.get(step)
-        {
-            let (op, lhs, rhs) = (*op, *lhs, *rhs);
-            let post_filter_index = post_filter_index.clone();
-            if op == BinaryOp::Subscript
-                && !lhs.is_empty()
-                && matches!(arena.get(lhs), Expr::Name { focus: Some(_), .. })
-            {
-                let (focus_var, index_var) = match arena.get(lhs) {
-                    Expr::Name { focus, index, .. } => (focus.clone(), index.clone()),
-                    _ => (None, None),
-                };
-                if let Some(ref focus_name) = focus_var {
-                    next_ctxs = eval_join_filter(
-                        arena,
-                        &ctxs,
-                        next_ctxs,
-                        lhs,
-                        rhs,
-                        focus_name,
-                        index_var.as_ref(),
-                    )?;
-                    // Bind post-filter index if the Binary `[` node itself has #$var.
-                    if let Some(ref pfi_name) = post_filter_index {
-                        for (k, (_, env)) in next_ctxs.iter().enumerate() {
-                            env.bind(pfi_name.clone(), Value::Number(k as f64));
-                        }
-                    }
-                    ctxs = next_ctxs;
-                    if ctxs.is_empty() {
-                        return Ok(Value::Undefined);
-                    }
-                    continue;
-                }
-            }
-        }
-
-        // Compound subscript after a join-filter: books@$b[pred][1]
-        if let Expr::Binary { op, lhs, rhs, .. } = arena.get(step) {
-            let (op, outer_lhs, outer_rhs) = (*op, *lhs, *rhs);
-            if op == BinaryOp::Subscript
-                && !outer_lhs.is_empty()
-                && let Expr::Binary {
-                    op: inner_op,
-                    lhs: inner_lhs,
-                    rhs: inner_rhs,
-                    ..
-                } = arena.get(outer_lhs)
-            {
-                let (inner_op, inner_lhs, inner_rhs) = (*inner_op, *inner_lhs, *inner_rhs);
-                if inner_op == BinaryOp::Subscript
-                    && !inner_lhs.is_empty()
-                    && matches!(arena.get(inner_lhs), Expr::Name { focus: Some(_), .. })
-                {
-                    let (focus_var, index_var) = match arena.get(inner_lhs) {
-                        Expr::Name { focus, index, .. } => (focus.clone(), index.clone()),
-                        _ => (None, None),
-                    };
-                    if let Some(ref focus_name) = focus_var {
-                        ctxs = eval_tuple_compound_join(
-                            arena,
-                            &ctxs,
-                            inner_lhs,
-                            inner_rhs,
-                            outer_rhs,
-                            focus_name,
-                            index_var.as_ref(),
-                        )?;
-                        if ctxs.is_empty() {
-                            return Ok(Value::Undefined);
-                        }
-                        continue;
-                    }
-                }
-            }
-        }
-
-        for (val, ctx_env) in &ctxs {
-            // Collapse sequences between steps.
-            let val = collapse_val(val);
-            if step_idx > 0 && val.is_undefined() {
-                continue;
-            }
-
-            let result =
-                eval_path_step_no_group(arena, step, &val, ctx_env, false, keep_singleton_array)?;
-            if result.is_undefined() {
-                continue;
-            }
-
-            // Skip parent binding for step 0 when it is $ or $$
-            // (root references don't have a parent context).
-            let skip_parent = step_idx == 0
-                && matches!(
-                    arena.get(step),
-                    Expr::Variable { name, .. } if name.is_empty() || name == "$"
-                );
-
-            // Get index var and focus var from this step.
-            let (index_var, focus_var) = get_step_bindings(arena, step);
-            let is_join = focus_var.is_some();
-
-            // Flatten the result into individual (value, env) contexts.
-            let items = flatten_to_vec(result);
-
-            for (j, elem) in items.iter().enumerate() {
-                let child_env = Environment::new_child(Rc::clone(ctx_env));
-                // Bind parent context (for % operator), unless this is a root step.
-                if !skip_parent {
-                    child_env.bind(PARENT_BINDING, val.clone());
-                    if is_join {
-                        child_env.bind(JOIN_FLAG, Value::Bool(true));
-                    }
-                }
-                // Bind index variable if present.
-                if let Some(ref var_name) = index_var {
-                    child_env.bind(var_name.clone(), Value::Number(j as f64));
-                }
-                // Bind focus variable if present (join @$var).
-                if let Some(ref var_name) = focus_var {
-                    child_env.bind(var_name.clone(), elem.clone());
-                }
-                // For join steps, the context value stays at parent level.
-                let ctx_value = if is_join { val.clone() } else { elem.clone() };
-                next_ctxs.push((ctx_value, Rc::new(child_env)));
-            }
-        }
-
-        ctxs = next_ctxs;
+        ctxs = eval_tuple_step(arena, step, step_idx, &ctxs, keep_singleton_array)?;
         if ctxs.is_empty() {
             return Ok(Value::Undefined);
         }
@@ -1162,21 +887,294 @@ fn eval_path_tuple(
         return eval_tuple_group(arena, grp, &ctxs);
     }
 
-    // Collect final values.
+    Ok(collect_tuple_results(&ctxs, keep_singleton_array))
+}
+
+/// Evaluate one non-sort path step across all tuple contexts, dispatching to
+/// the special forms (%, %[pred], block forms, joins) before the general
+/// per-element expansion.
+fn eval_tuple_step(
+    arena: &AstArena,
+    step: NodeId,
+    step_idx: usize,
+    ctxs: &[TupleCtx],
+    keep_singleton_array: bool,
+) -> JsonataResult<Vec<TupleCtx>> {
+    // Parent (%) steps navigate up the parent chain using the %% env bindings.
+    if matches!(arena.get(step), Expr::Parent { .. }) {
+        return eval_tuple_parent_step(ctxs);
+    }
+
+    if let Expr::Binary {
+        op,
+        lhs,
+        rhs,
+        index: post_filter_index,
+        ..
+    } = arena.get(step)
+    {
+        let (op, lhs, rhs) = (*op, *lhs, *rhs);
+        let post_filter_index = post_filter_index.clone();
+        if op == BinaryOp::Subscript && !lhs.is_empty() {
+            // %[predicate]: navigate to the parent first, then filter.
+            if matches!(arena.get(lhs), Expr::Parent { .. }) {
+                return eval_tuple_parent_pred_step(arena, rhs, ctxs);
+            }
+            // (block)[pred-with-%]: preserve per-element parent bindings.
+            if matches!(arena.get(lhs), Expr::Block { .. }) && node_has_parent_ref(arena, rhs) {
+                return eval_tuple_block_pred_step(arena, lhs, rhs, ctxs);
+            }
+            // Join operator: lhs@$focus[pred], e.g. Contact@$c[$c.ssn = $e.SSN].
+            if let Expr::Name {
+                focus: Some(focus_name),
+                index,
+                ..
+            } = arena.get(lhs)
+            {
+                let focus_name = focus_name.clone();
+                let index_var = index.clone();
+                return eval_tuple_join_step(
+                    arena,
+                    ctxs,
+                    lhs,
+                    rhs,
+                    &focus_name,
+                    index_var.as_ref(),
+                    post_filter_index.as_ref(),
+                );
+            }
+            // Compound subscript after a join-filter: books@$b[pred][1].
+            if let Expr::Binary {
+                op: inner_op,
+                lhs: inner_lhs,
+                rhs: inner_rhs,
+                ..
+            } = arena.get(lhs)
+            {
+                let (inner_op, inner_lhs, inner_rhs) = (*inner_op, *inner_lhs, *inner_rhs);
+                if inner_op == BinaryOp::Subscript
+                    && !inner_lhs.is_empty()
+                    && let Expr::Name {
+                        focus: Some(focus_name),
+                        index,
+                        ..
+                    } = arena.get(inner_lhs)
+                {
+                    let focus_name = focus_name.clone();
+                    let index_var = index.clone();
+                    return eval_tuple_compound_join(
+                        arena,
+                        ctxs,
+                        inner_lhs,
+                        inner_rhs,
+                        rhs,
+                        &focus_name,
+                        index_var.as_ref(),
+                    );
+                }
+            }
+        }
+    }
+
+    // Block containing a single Path: expand the inner path in tuple mode to
+    // preserve parent bindings for % (e.g., Account.(Order.Product).{%.OrderID}).
+    if let Expr::Block { expressions, .. } = arena.get(step) {
+        let expressions = expressions.clone();
+        if expressions.len() == 1
+            && let Expr::Path {
+                steps: inner_steps, ..
+            } = arena.get(expressions[0])
+        {
+            let inner_steps = inner_steps.clone();
+            return expand_path_tuple(arena, &inner_steps, ctxs);
+        }
+    }
+
+    eval_tuple_general_step(arena, step, step_idx, ctxs, keep_singleton_array)
+}
+
+/// %[predicate] step: navigate to the parent first, then apply the predicate
+/// in the parent's own env (so nested % inside it refers to the grandparent).
+fn eval_tuple_parent_pred_step(
+    arena: &AstArena,
+    rhs: NodeId,
+    ctxs: &[TupleCtx],
+) -> JsonataResult<Vec<TupleCtx>> {
+    let mut next_ctxs = Vec::new();
+    for (_, ctx_env) in ctxs {
+        let Some((parent_val, binding_env)) = Environment::lookup_with_env(ctx_env, PARENT_BINDING)
+        else {
+            return Err(JsonataError::new(
+                "S0217",
+                "% operator used outside of a valid path context",
+            ));
+        };
+        if parent_val.is_null() || parent_val.is_undefined() {
+            return Err(JsonataError::new(
+                "S0217",
+                "% operator used outside of a valid path context",
+            ));
+        }
+        let parent_env = binding_env
+            .parent()
+            .cloned()
+            .unwrap_or_else(|| binding_env.clone());
+        let pred_result = eval_no_stack_check(arena, rhs, &parent_val, &parent_env)?;
+        if pred_result.to_boolean() {
+            next_ctxs.push((parent_val, parent_env));
+        }
+    }
+    Ok(next_ctxs)
+}
+
+/// (block)[pred-with-%] step: the block would normally discard per-element
+/// parent context, so expand its inner path in tuple mode to preserve parent
+/// bindings, then apply the predicate per-tuple.
+/// Example: (Account.Order.Product)[%.OrderID='order104'].SKU
+fn eval_tuple_block_pred_step(
+    arena: &AstArena,
+    lhs: NodeId,
+    rhs: NodeId,
+    ctxs: &[TupleCtx],
+) -> JsonataResult<Vec<TupleCtx>> {
+    let mut next_ctxs = Vec::new();
+    for (val, ctx_env) in ctxs {
+        let mut tuple_ctxs: Vec<TupleCtx> = Vec::new();
+        if let Expr::Block { expressions, .. } = arena.get(lhs) {
+            let expressions = expressions.clone();
+            if expressions.len() == 1
+                && let Expr::Path {
+                    steps: inner_steps, ..
+                } = arena.get(expressions[0])
+            {
+                let inner_steps = inner_steps.clone();
+                tuple_ctxs =
+                    expand_path_tuple(arena, &inner_steps, &[(val.clone(), ctx_env.clone())])?;
+            }
+            if tuple_ctxs.is_empty() {
+                // Fallback: evaluate block normally.
+                let block_result = eval_no_stack_check(arena, lhs, val, ctx_env)?;
+                if block_result.is_undefined() {
+                    continue;
+                }
+                match block_result {
+                    Value::Array(arr) => {
+                        for item in arr.iter() {
+                            tuple_ctxs.push((item.clone(), ctx_env.clone()));
+                        }
+                    }
+                    other => tuple_ctxs.push((other, ctx_env.clone())),
+                }
+            }
+        }
+        for (tval, tenv) in &tuple_ctxs {
+            let pred_result = eval_no_stack_check(arena, rhs, tval, tenv)?;
+            if pred_result.to_boolean() {
+                next_ctxs.push((tval.clone(), tenv.clone()));
+            }
+        }
+    }
+    Ok(next_ctxs)
+}
+
+/// Focus-join subscript step (lhs@$focus[pred]): delegate to the join filter
+/// and bind the post-filter #$var index if the subscript node carries one.
+fn eval_tuple_join_step(
+    arena: &AstArena,
+    ctxs: &[TupleCtx],
+    lhs: NodeId,
+    rhs: NodeId,
+    focus_name: &str,
+    index_var: Option<&String>,
+    post_filter_index: Option<&String>,
+) -> JsonataResult<Vec<TupleCtx>> {
+    let next_ctxs = eval_join_filter(arena, ctxs, Vec::new(), lhs, rhs, focus_name, index_var)?;
+    if let Some(pfi_name) = post_filter_index {
+        for (k, (_, env)) in next_ctxs.iter().enumerate() {
+            env.bind(pfi_name.clone(), Value::Number(k as f64));
+        }
+    }
+    Ok(next_ctxs)
+}
+
+/// General tuple step: evaluate the step for every context, flatten the
+/// results, and create a child env per element carrying the % parent binding
+/// and any #$var/@$var bindings.
+fn eval_tuple_general_step(
+    arena: &AstArena,
+    step: NodeId,
+    step_idx: usize,
+    ctxs: &[TupleCtx],
+    keep_singleton_array: bool,
+) -> JsonataResult<Vec<TupleCtx>> {
+    let mut next_ctxs = Vec::new();
+    for (val, ctx_env) in ctxs {
+        // Collapse sequences between steps.
+        let val = collapse_val(val);
+        if step_idx > 0 && val.is_undefined() {
+            continue;
+        }
+
+        let result =
+            eval_path_step_no_group(arena, step, &val, ctx_env, false, keep_singleton_array)?;
+        if result.is_undefined() {
+            continue;
+        }
+
+        // Skip parent binding for step 0 when it is $ or $$
+        // (root references don't have a parent context).
+        let skip_parent = step_idx == 0
+            && matches!(
+                arena.get(step),
+                Expr::Variable { name, .. } if name.is_empty() || name == "$"
+            );
+
+        // Get index var and focus var from this step.
+        let (index_var, focus_var) = get_step_bindings(arena, step);
+        let is_join = focus_var.is_some();
+
+        // Flatten the result into individual (value, env) contexts.
+        let items = flatten_to_vec(result);
+
+        for (j, elem) in items.iter().enumerate() {
+            let child_env = Environment::new_child(Rc::clone(ctx_env));
+            // Bind parent context (for % operator), unless this is a root step.
+            if !skip_parent {
+                child_env.bind(PARENT_BINDING, val.clone());
+                if is_join {
+                    child_env.bind(JOIN_FLAG, Value::Bool(true));
+                }
+            }
+            // Bind index variable if present.
+            if let Some(ref var_name) = index_var {
+                child_env.bind(var_name.clone(), Value::Number(j as f64));
+            }
+            // Bind focus variable if present (join @$var).
+            if let Some(ref var_name) = focus_var {
+                child_env.bind(var_name.clone(), elem.clone());
+            }
+            // For join steps, the context value stays at parent level.
+            let ctx_value = if is_join { val.clone() } else { elem.clone() };
+            next_ctxs.push((ctx_value, Rc::new(child_env)));
+        }
+    }
+    Ok(next_ctxs)
+}
+
+/// Collapse final tuple contexts into the path result value.
+fn collect_tuple_results(ctxs: &[TupleCtx], keep_singleton_array: bool) -> Value {
     let mut seq = Sequence::new();
-    for (val, _) in &ctxs {
+    for (val, _) in ctxs {
         seq.append(val.clone());
     }
     let result = seq.into_value();
-
     if keep_singleton_array {
-        match result {
-            Value::Array(_) => return Ok(result),
-            Value::Undefined => return Ok(Value::Undefined),
-            _ => return Ok(Value::Array(Rc::from(vec![result]))),
-        }
+        return match result {
+            Value::Array(_) | Value::Undefined => result,
+            other => Value::Array(Rc::from(vec![other])),
+        };
     }
-    Ok(result)
+    result
 }
 
 /// Expand a sequence of path steps in tuple mode, preserving parent bindings.
@@ -1565,7 +1563,6 @@ fn eval_path_simple(
 }
 
 /// Evaluate a single path step, handling auto-mapping over arrays.
-#[allow(clippy::too_many_lines)]
 fn eval_path_step(
     arena: &AstArena,
     step: NodeId,
@@ -1596,31 +1593,7 @@ fn eval_path_step(
             return eval_no_stack_check(arena, step, input, env);
         }
         Expr::Descendant { .. } => {
-            // In path context, descendant includes the current node itself.
-            let mut seq = Sequence::new();
-            if !matches!(input, Value::Array(_)) {
-                seq.append(input.clone());
-            }
-            let descendants = descendant_lookup(input);
-            match descendants {
-                Value::Array(arr) => {
-                    for item in arr.iter() {
-                        seq.append(item.clone());
-                    }
-                }
-                Value::Sequence(s) => {
-                    for item in s.values {
-                        seq.append(item);
-                    }
-                }
-                Value::Undefined => {}
-                other => seq.append(other),
-            }
-            return if seq.values.is_empty() {
-                Ok(Value::Undefined)
-            } else {
-                Ok(Value::Sequence(Box::new(seq)))
-            };
+            return Ok(eval_descendant_step(input));
         }
         Expr::Binary { op, lhs, .. }
             if *op == BinaryOp::Subscript && !lhs.is_empty() && !prev_was_mapper =>
@@ -1656,22 +1629,7 @@ fn eval_path_step(
     if !is_group_step
         && let Some(mc) = crate::stdlib::hof_fast::analyze_mapped_call(step, arena, None, env)
     {
-        let mut seq = Sequence::with_capacity(arr.len());
-        for item in arr.iter() {
-            let val = crate::stdlib::hof_fast::exec_mapped_call(&mc, item, env, arena)?;
-            if val.is_undefined() {
-                continue;
-            }
-            match val {
-                Value::Array(inner) => seq.values.extend(inner.iter().cloned()),
-                Value::Sequence(s) => seq.values.extend(s.values),
-                other => seq.append(other),
-            }
-        }
-        if seq.values.is_empty() {
-            return Ok(Value::Undefined);
-        }
-        return Ok(seq.into_value());
+        return eval_mapped_call_step(&mc, &arr, env, arena);
     }
 
     let mut seq = Sequence::with_capacity(arr.len());
@@ -1701,6 +1659,60 @@ fn eval_path_step(
     }
     if is_group_step && keep_singleton_array {
         return Ok(Value::Array(Rc::from(seq.values)));
+    }
+    Ok(seq.into_value())
+}
+
+/// Descendant (**) step: in path context it includes the current node itself,
+/// then every recursive descendant.
+fn eval_descendant_step(input: &Value) -> Value {
+    let mut seq = Sequence::new();
+    if !matches!(input, Value::Array(_)) {
+        seq.append(input.clone());
+    }
+    match descendant_lookup(input) {
+        Value::Array(arr) => {
+            for item in arr.iter() {
+                seq.append(item.clone());
+            }
+        }
+        Value::Sequence(s) => {
+            for item in s.values {
+                seq.append(item);
+            }
+        }
+        Value::Undefined => {}
+        other => seq.append(other),
+    }
+    if seq.values.is_empty() {
+        Value::Undefined
+    } else {
+        Value::Sequence(Box::new(seq))
+    }
+}
+
+/// Run a lifted mapped call (analyzed once) over each array element,
+/// flattening results path-style.
+fn eval_mapped_call_step(
+    mc: &crate::stdlib::hof_fast::MappedCall,
+    arr: &[Value],
+    env: &Rc<Environment>,
+    arena: &AstArena,
+) -> JsonataResult {
+    let mut seq = Sequence::with_capacity(arr.len());
+    for item in arr {
+        let val = crate::stdlib::hof_fast::exec_mapped_call(mc, item, env, arena)?;
+        if val.is_undefined() {
+            continue;
+        }
+        match val {
+            Value::Array(inner) => seq.values.extend(inner.iter().cloned()),
+            Value::Sequence(s) => seq.values.extend(s.values),
+            other => seq.append(other),
+        }
+    }
+    if seq.values.is_empty() {
+        return Ok(Value::Undefined);
     }
     Ok(seq.into_value())
 }
@@ -1756,7 +1768,6 @@ fn eval_path_function_step(
 
 // Large dispatch function for all binary operator types.
 // Flattens left-associative chains iteratively to avoid deep recursion.
-#[allow(clippy::too_many_lines)]
 fn eval_binary(
     arena: &AstArena,
     node: NodeId,
@@ -1881,7 +1892,6 @@ fn eval_subscript_binary(
 
 /// Apply a single binary operator given a pre-evaluated left value and an unevaluated rhs node.
 /// `lhs_node` is the original LHS NodeId (used only for subscript `[` AST inspection).
-#[allow(clippy::too_many_lines)]
 fn apply_binary_op(
     arena: &AstArena,
     op: BinaryOp,
@@ -2164,7 +2174,6 @@ fn has_keep_array(arena: &AstArena, node: NodeId) -> bool {
     false
 }
 
-#[allow(clippy::too_many_lines)]
 fn eval_subscript(
     arena: &AstArena,
     rhs: NodeId,
@@ -2178,33 +2187,11 @@ fn eval_subscript(
     let needs_env = index_var.is_some() || node_has_parent_ref(arena, rhs);
 
     // For non-array inputs without index variable, evaluate directly.
+    // (With an index variable, fall through: the predicate filter path
+    // handles index binding correctly, like Go's evalSubscriptLeft.)
     if !matches!(left, Value::Array(_) | Value::Sequence(_)) && index_var.is_none() {
-        // Conditionally bind %% → input for the % operator.
-        let filter_env_owned;
-        let eval_env = if needs_env {
-            filter_env_owned = Rc::new(Environment::new_child(Rc::clone(env)));
-            filter_env_owned.bind(PARENT_BINDING, input.clone());
-            &filter_env_owned
-        } else {
-            env
-        };
-        let index = eval_no_stack_check(arena, rhs, left, eval_env)?;
-        if let Some(n) = index.as_f64() {
-            // Numeric index on a single value — treat as array of one.
-            let idx = n.trunc() as i64;
-            if idx == 0 || idx == -1 {
-                return Ok(left.clone());
-            }
-            return Ok(Value::Undefined);
-        }
-        // Boolean predicate on single value.
-        if index.to_boolean() {
-            return Ok(left.clone());
-        }
-        return Ok(Value::Undefined);
+        return eval_subscript_single(arena, rhs, left, input, env, needs_env);
     }
-    // When there's an index variable, wrap in array so the predicate filter
-    // path handles index binding correctly (like Go's evalSubscriptLeft).
 
     // Avoid cloning: borrow the array as a slice where possible.
     let owned_arr;
@@ -2232,37 +2219,11 @@ fn eval_subscript(
     );
     if rhs_could_be_numeric && let Ok(index) = eval_no_stack_check(arena, rhs, left, env) {
         // Array of all-numeric values → select those indices (e.g. [[1..4]]).
-        // Matches Go's selectByIndices: resolve negative indices (add len), sort
-        // ascending, then select. This ensures [[1..3,8,-1]] on a 10-element array
-        // gives sorted actual indices [1,2,3,8,9] → elements [2,3,4,9,10].
         if let Value::Array(ref indices) = index
             && !indices.is_empty()
             && indices.iter().all(|v| v.as_f64().is_some())
         {
-            let len = arr.len() as i64;
-            let mut actual_indices: Vec<i64> = indices
-                .iter()
-                .map(|v| {
-                    let idx = v.as_f64().unwrap_or(0.0) as i64;
-                    if idx < 0 { len + idx } else { idx }
-                })
-                .collect();
-            actual_indices.sort_unstable();
-            let result: Vec<Value> = actual_indices
-                .into_iter()
-                .filter_map(|actual| {
-                    if actual >= 0 && actual < len {
-                        Some(arr[actual as usize].clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            return if result.is_empty() {
-                Ok(Value::Undefined)
-            } else {
-                Ok(Value::Array(Rc::from(result)))
-            };
+            return Ok(select_by_indices(arr, indices));
         }
         // Single numeric index.
         if let Some(n) = index.as_f64() {
@@ -2311,6 +2272,73 @@ fn eval_subscript(
         }
     }
     Ok(seq.into_value())
+}
+
+/// Subscript on a single (non-array) value: numeric index 0/-1 selects the
+/// value itself; any other number selects nothing; otherwise the result is a
+/// boolean predicate on the value.
+fn eval_subscript_single(
+    arena: &AstArena,
+    rhs: NodeId,
+    left: &Value,
+    input: &Value,
+    env: &Rc<Environment>,
+    needs_env: bool,
+) -> JsonataResult {
+    // Conditionally bind %% → input for the % operator.
+    let filter_env_owned;
+    let eval_env = if needs_env {
+        filter_env_owned = Rc::new(Environment::new_child(Rc::clone(env)));
+        filter_env_owned.bind(PARENT_BINDING, input.clone());
+        &filter_env_owned
+    } else {
+        env
+    };
+    let index = eval_no_stack_check(arena, rhs, left, eval_env)?;
+    if let Some(n) = index.as_f64() {
+        // Numeric index on a single value — treat as array of one.
+        let idx = n.trunc() as i64;
+        if idx == 0 || idx == -1 {
+            return Ok(left.clone());
+        }
+        return Ok(Value::Undefined);
+    }
+    // Boolean predicate on single value.
+    if index.to_boolean() {
+        return Ok(left.clone());
+    }
+    Ok(Value::Undefined)
+}
+
+/// Select elements by an all-numeric index list (e.g. [[1..3,8,-1]]).
+/// Matches Go's selectByIndices: resolve negative indices (add len), sort
+/// ascending, then select — [[1..3,8,-1]] on a 10-element array gives sorted
+/// actual indices [1,2,3,8,9] → elements [2,3,4,9,10].
+fn select_by_indices(arr: &[Value], indices: &[Value]) -> Value {
+    let len = arr.len() as i64;
+    let mut actual_indices: Vec<i64> = indices
+        .iter()
+        .map(|v| {
+            let idx = v.as_f64().unwrap_or(0.0) as i64;
+            if idx < 0 { len + idx } else { idx }
+        })
+        .collect();
+    actual_indices.sort_unstable();
+    let result: Vec<Value> = actual_indices
+        .into_iter()
+        .filter_map(|actual| {
+            if actual >= 0 && actual < len {
+                Some(arr[actual as usize].clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if result.is_empty() {
+        Value::Undefined
+    } else {
+        Value::Array(Rc::from(result))
+    }
 }
 
 // ── Chain operator (~>) ─────────────────────────────────────────────
@@ -3201,7 +3229,6 @@ enum ValStrategy {
 }
 
 // Large dispatch function for group-by evaluation.
-#[allow(clippy::too_many_lines)]
 fn eval_group_by(
     arena: &AstArena,
     node: NodeId,
@@ -3244,96 +3271,16 @@ fn eval_group_by(
     };
 
     let mut out_obj = crate::value::ObjectMap::new();
-    let mut key_set: std::collections::HashSet<compact_str::CompactString> = std::collections::HashSet::new();
+    let mut key_set: std::collections::HashSet<compact_str::CompactString> =
+        std::collections::HashSet::new();
 
     for pair in &group.pairs {
         let key_node = pair[0];
         let val_node = pair[1];
+        let (key_strategy, val_strategy, val_keep_array) =
+            analyze_group_pair(arena, key_node, val_node);
 
-        // Analyze key expression once: simple Name → direct field lookup.
-        let key_strategy = match arena.get(key_node) {
-            Expr::Name {
-                value,
-                stages,
-                group: None,
-                focus: None,
-                index: None,
-                ..
-            } if stages.is_empty() => KeyStrategy::FieldAccess(value.clone()),
-            _ => KeyStrategy::FullEval(key_node),
-        };
-
-        // Analyze value expression once: determine if we need env bindings.
-        let val_strategy = if val_node.is_empty() {
-            ValStrategy::Identity
-        } else {
-            match arena.get(val_node) {
-                Expr::Name {
-                    value,
-                    stages,
-                    group: None,
-                    focus: None,
-                    index: None,
-                    ..
-                } if stages.is_empty() && !uses_group_bindings(arena, val_node) => {
-                    ValStrategy::FieldAccess(value.clone())
-                }
-                _ if uses_group_bindings(arena, val_node) => {
-                    ValStrategy::FullEvalWithBindings(val_node)
-                }
-                _ => ValStrategy::FullEvalNoBindings(val_node),
-            }
-        };
-
-        // Determine keep_array flag once per pair.
-        let val_keep_array = match arena.get(val_node) {
-            Expr::Name { keep_array, .. }
-            | Expr::Binary { keep_array, .. }
-            | Expr::Variable { keep_array, .. }
-            | Expr::Function { keep_array, .. }
-            | Expr::Sort { keep_array, .. }
-            | Expr::Unary { keep_array, .. } => *keep_array,
-            Expr::Path {
-                keep_singleton_array,
-                ..
-            } => *keep_singleton_array,
-            _ => false,
-        };
-
-        // Use IndexMap directly instead of HashMap + separate order Vec.
-        let mut groups: indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, usize)> =
-            indexmap::IndexMap::new();
-
-        for (i, item) in items.iter().enumerate() {
-            // Fast-path: direct field lookup for simple Name key expressions.
-            let key_val = match &key_strategy {
-                KeyStrategy::FieldAccess(field) => match item {
-                    Value::Object(obj) => match obj.get(field.as_str()) {
-                        Some(v) => v.clone(),
-                        None => Value::Undefined,
-                    },
-                    _ => Value::Undefined,
-                },
-                KeyStrategy::FullEval(node) => eval_no_stack_check(arena, *node, item, env)?,
-            };
-            if key_val.is_undefined() || key_val.is_null() {
-                continue;
-            }
-            let key: compact_str::CompactString = match &key_val {
-                Value::String(s) => s.clone(),
-                _ => {
-                    return Err(JsonataError::new(
-                        "T1003",
-                        "key expression must evaluate to a string",
-                    ));
-                }
-            };
-            if let Some(entry) = groups.get_mut(key.as_str()) {
-                entry.0.push(item.clone());
-            } else {
-                groups.insert(key, (vec![item.clone()], i));
-            }
-        }
+        let groups = collect_group_items(arena, &items, &key_strategy, env)?;
 
         // Iterate groups in insertion order (IndexMap guarantees this).
         for (key, (group_items, first_idx)) in &groups {
@@ -3349,21 +3296,8 @@ fn eval_group_by(
                 Value::Array(Rc::from(group_items.clone()))
             };
 
-            let mut val_result = match &val_strategy {
-                ValStrategy::Identity => group_input,
-                ValStrategy::FieldAccess(field) => eval_name(field, &group_input)?,
-                ValStrategy::FullEvalNoBindings(vn) => {
-                    // No $index/$key used — skip Environment::new_child.
-                    eval_no_stack_check(arena, *vn, &group_input, env)?
-                }
-                ValStrategy::FullEvalWithBindings(vn) => {
-                    let child_env = Environment::new_child(Rc::clone(env));
-                    child_env.bind("index", Value::Number(*first_idx as f64));
-                    child_env.bind("key", Value::String(key.clone()));
-                    let child_env = Rc::new(child_env);
-                    eval_no_stack_check(arena, *vn, &group_input, &child_env)?
-                }
-            };
+            let mut val_result =
+                eval_group_value(arena, &val_strategy, group_input, key, *first_idx, env)?;
 
             if val_keep_array {
                 val_result = apply_keep_array(val_result, Value::Array(Rc::from(vec![])));
@@ -3377,6 +3311,132 @@ fn eval_group_by(
     }
 
     Ok(Value::Object(Rc::new(out_obj)))
+}
+
+/// Analyze a group-by pair once: pick the key/value evaluation strategies and
+/// the value's keep-array flag.
+fn analyze_group_pair(
+    arena: &AstArena,
+    key_node: NodeId,
+    val_node: NodeId,
+) -> (KeyStrategy, ValStrategy, bool) {
+    // Simple Name key → direct field lookup.
+    let key_strategy = match arena.get(key_node) {
+        Expr::Name {
+            value,
+            stages,
+            group: None,
+            focus: None,
+            index: None,
+            ..
+        } if stages.is_empty() => KeyStrategy::FieldAccess(value.clone()),
+        _ => KeyStrategy::FullEval(key_node),
+    };
+
+    // Value expression: determine if we need env bindings.
+    let val_strategy = if val_node.is_empty() {
+        ValStrategy::Identity
+    } else {
+        match arena.get(val_node) {
+            Expr::Name {
+                value,
+                stages,
+                group: None,
+                focus: None,
+                index: None,
+                ..
+            } if stages.is_empty() && !uses_group_bindings(arena, val_node) => {
+                ValStrategy::FieldAccess(value.clone())
+            }
+            _ if uses_group_bindings(arena, val_node) => ValStrategy::FullEvalWithBindings(val_node),
+            _ => ValStrategy::FullEvalNoBindings(val_node),
+        }
+    };
+
+    let val_keep_array = match arena.get(val_node) {
+        Expr::Name { keep_array, .. }
+        | Expr::Binary { keep_array, .. }
+        | Expr::Variable { keep_array, .. }
+        | Expr::Function { keep_array, .. }
+        | Expr::Sort { keep_array, .. }
+        | Expr::Unary { keep_array, .. } => *keep_array,
+        Expr::Path {
+            keep_singleton_array,
+            ..
+        } => *keep_singleton_array,
+        _ => false,
+    };
+
+    (key_strategy, val_strategy, val_keep_array)
+}
+
+/// Bucket items by their evaluated key, preserving first-seen order and each
+/// group's first item index (for the $index binding).
+fn collect_group_items(
+    arena: &AstArena,
+    items: &[Value],
+    key_strategy: &KeyStrategy,
+    env: &Rc<Environment>,
+) -> JsonataResult<indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, usize)>> {
+    let mut groups: indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, usize)> =
+        indexmap::IndexMap::new();
+    for (i, item) in items.iter().enumerate() {
+        // Fast-path: direct field lookup for simple Name key expressions.
+        let key_val = match key_strategy {
+            KeyStrategy::FieldAccess(field) => match item {
+                Value::Object(obj) => match obj.get(field.as_str()) {
+                    Some(v) => v.clone(),
+                    None => Value::Undefined,
+                },
+                _ => Value::Undefined,
+            },
+            KeyStrategy::FullEval(node) => eval_no_stack_check(arena, *node, item, env)?,
+        };
+        if key_val.is_undefined() || key_val.is_null() {
+            continue;
+        }
+        let key: compact_str::CompactString = match &key_val {
+            Value::String(s) => s.clone(),
+            _ => {
+                return Err(JsonataError::new(
+                    "T1003",
+                    "key expression must evaluate to a string",
+                ));
+            }
+        };
+        if let Some(entry) = groups.get_mut(key.as_str()) {
+            entry.0.push(item.clone());
+        } else {
+            groups.insert(key, (vec![item.clone()], i));
+        }
+    }
+    Ok(groups)
+}
+
+/// Evaluate one group's value using the pre-analyzed strategy.
+fn eval_group_value(
+    arena: &AstArena,
+    val_strategy: &ValStrategy,
+    group_input: Value,
+    key: &compact_str::CompactString,
+    first_idx: usize,
+    env: &Rc<Environment>,
+) -> JsonataResult {
+    match val_strategy {
+        ValStrategy::Identity => Ok(group_input),
+        ValStrategy::FieldAccess(field) => eval_name(field, &group_input),
+        ValStrategy::FullEvalNoBindings(vn) => {
+            // No $index/$key used — skip Environment::new_child.
+            eval_no_stack_check(arena, *vn, &group_input, env)
+        }
+        ValStrategy::FullEvalWithBindings(vn) => {
+            let child_env = Environment::new_child(Rc::clone(env));
+            child_env.bind("index", Value::Number(first_idx as f64));
+            child_env.bind("key", Value::String(key.clone()));
+            let child_env = Rc::new(child_env);
+            eval_no_stack_check(arena, *vn, &group_input, &child_env)
+        }
+    }
 }
 
 #[cfg(test)]
