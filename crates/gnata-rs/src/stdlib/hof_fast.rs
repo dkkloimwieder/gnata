@@ -432,9 +432,7 @@ fn classify_template_operand(node: NodeId, arena: &AstArena, param: &str) -> Opt
                     };
                     let length = if arguments.len() == 3 {
                         match arena.get(arguments[2]) {
-                            Expr::NumberLit { value, .. } if *value >= 0.0 => {
-                                Some(*value as usize)
-                            }
+                            Expr::NumberLit { value, .. } if *value >= 0.0 => Some(*value as usize),
                             _ => return None,
                         }
                     } else {
@@ -860,12 +858,17 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
 fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
     match func_name {
         "formatNumber" => {
-            // args: [Field(number), Const(picture), optional Const(opts)]
+            // args: [Field(number), Const(picture), optional opts]
+            // An options argument changes FmtChars — defer to the general
+            // path rather than formatting with defaults and wrong output.
+            if args.len() > 2 {
+                return None;
+            }
             let picture = match args.get(1) {
                 Some(CallArg::Const(Value::String(s))) => s.to_string(),
                 _ => return None,
             };
-            let fc = super::format_number::FmtChars::default(); // TODO: handle opts arg
+            let fc = super::format_number::FmtChars::default();
             let pics = super::format_number::split_on_pattern_sep(&picture, fc.pattern_sep);
             if pics.len() > 2 {
                 return None;
@@ -1112,7 +1115,34 @@ mod tests {
             "fast path {fast:?} != general path {general:?}"
         );
         let expected = eval_expr("[0, 2, 2, 4, -0, -2, -2, 2]", &Value::Undefined);
-        assert!(fast.deep_equal(&expected), "banker's rounding expected, got {fast:?}");
+        assert!(
+            fast.deep_equal(&expected),
+            "banker's rounding expected, got {fast:?}"
+        );
+    }
+
+    /// Regression test for gnata-bec.2: the fast path formatted with default
+    /// separators, silently dropping the $formatNumber options argument.
+    /// With options present the call must not be lifted with defaults.
+    #[test]
+    fn format_number_fast_path_honors_options_arg() {
+        let input = nums_input(&[1234.56]);
+        let with_opts = eval_expr(
+            r##"nums.$formatNumber(x, "#.###,00", {"decimal-separator": ",", "grouping-separator": "."})"##,
+            &input,
+        );
+        let expected = eval_expr(r#""1.234,56""#, &Value::Undefined);
+        assert!(
+            with_opts.deep_equal(&expected),
+            "options ignored: got {with_opts:?}, expected {expected:?}"
+        );
+        // Without options the lift still applies and must agree with the general path.
+        let fast = eval_expr(r##"nums.$formatNumber(x, "#,###.00")"##, &input);
+        let general = eval_expr(r##"nums.($formatNumber(x + 0, "#,###.00"))"##, &input);
+        assert!(
+            fast.deep_equal(&general),
+            "fast path {fast:?} != general path {general:?}"
+        );
     }
 
     #[test]
