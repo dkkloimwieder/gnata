@@ -17,6 +17,31 @@ use simd_json::tape;
 use crate::parser::{AstArena, BinaryOp, Expr, NodeId};
 use crate::value::Value;
 
+/// Test-only escape hatch to force every fast path off so differential
+/// tests can compare fast-path results against the general evaluator.
+#[doc(hidden)]
+pub mod testing {
+    use std::cell::Cell;
+
+    thread_local! {
+        static FAST_PATHS_DISABLED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Disable (or re-enable) all fast paths on the current thread.
+    ///
+    /// For differential testing only — never use in production code.
+    #[doc(hidden)]
+    pub fn set_fast_paths_disabled(disabled: bool) {
+        FAST_PATHS_DISABLED.with(|c| c.set(disabled));
+    }
+
+    /// True when fast paths are disabled on the current thread.
+    #[inline]
+    pub(crate) fn fast_paths_disabled() -> bool {
+        FAST_PATHS_DISABLED.with(std::cell::Cell::get)
+    }
+}
+
 /// A literal value that is `Send + Sync` — used by `ComparisonFastPath`
 /// so that `FastPath` (and thus `Expression`) can be shared across threads.
 /// Comparison RHS values are always JSON scalars.
@@ -295,6 +320,9 @@ fn extract_literal(arena: &AstArena, node: NodeId) -> Option<Literal> {
 /// Evaluate a fast-path expression against input data.
 /// Returns `Some(result)` if handled, `None` if fallback to full eval is needed.
 pub fn eval_fast(fast_path: &FastPath, input: &Value) -> Option<Value> {
+    if testing::fast_paths_disabled() {
+        return None;
+    }
     match fast_path {
         FastPath::None => None,
         FastPath::PurePath(segments) => Some(eval_pure_path(segments, input)),
@@ -480,60 +508,77 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
         }
         FuncFastKind::Sum => {
             let mut total = 0.0_f64;
-            let mut found = false;
+            let mut count = 0usize;
+            let mut all_numbers = true;
             fold_pure_path(&func.path, input, &mut |v| {
+                count += 1;
                 if let Value::Number(n) = v {
                     total += n;
-                    found = true;
+                } else {
+                    all_numbers = false;
                 }
             });
-            return Some(if found {
-                Value::Number(total)
-            } else {
-                Value::Number(0.0)
-            });
+            // Non-number leaves (general path raises T0412) or an empty
+            // path (general returns Undefined) → defer to full eval.
+            if !all_numbers || count == 0 {
+                return None;
+            }
+            return Some(Value::Number(total));
         }
         FuncFastKind::Max => {
             let mut result: Option<f64> = None;
+            let mut all_numbers = true;
             fold_pure_path(&func.path, input, &mut |v| {
                 if let Value::Number(n) = v {
                     result = Some(result.map_or(*n, |cur| cur.max(*n)));
+                } else {
+                    all_numbers = false;
                 }
             });
+            if !all_numbers {
+                return None;
+            }
             return Some(result.map_or(Value::Undefined, Value::Number));
         }
         FuncFastKind::Min => {
             let mut result: Option<f64> = None;
+            let mut all_numbers = true;
             fold_pure_path(&func.path, input, &mut |v| {
                 if let Value::Number(n) = v {
                     result = Some(result.map_or(*n, |cur| cur.min(*n)));
+                } else {
+                    all_numbers = false;
                 }
             });
+            if !all_numbers {
+                return None;
+            }
             return Some(result.map_or(Value::Undefined, Value::Number));
         }
         FuncFastKind::Average => {
             let mut total = 0.0_f64;
             let mut count = 0_usize;
+            let mut all_numbers = true;
             fold_pure_path(&func.path, input, &mut |v| {
                 if let Value::Number(n) = v {
                     total += n;
                     count += 1;
+                } else {
+                    all_numbers = false;
                 }
             });
+            if !all_numbers {
+                return None;
+            }
             return Some(if count == 0 {
                 Value::Undefined
             } else {
                 Value::Number(total / count as f64)
             });
         }
-        FuncFastKind::Length => {
-            // $length on array path = count. On string path = char count (single value only).
-            let n = count_pure_path(&func.path, input);
-            if n != 1 {
-                return Some(Value::Number(n as f64));
-            }
-            // Single value — could be string length. Fall through to materialize.
-        }
+        // $length only accepts strings (general path raises T0410 for
+        // anything else) — materialize below and let apply_func handle
+        // the string case, deferring everything else to full eval.
         _ => {}
     }
 
@@ -801,6 +846,9 @@ pub fn eval_tape_path(
     fast_path: &FastPath,
     json_bytes: &[u8],
 ) -> Option<Result<Value, Box<dyn std::error::Error>>> {
+    if testing::fast_paths_disabled() {
+        return None;
+    }
     let FastPath::PurePath(segments) = fast_path else {
         return None;
     };
@@ -872,7 +920,9 @@ fn tape_to_value(val: tape::Value<'_, '_>) -> Value {
     if val.is_null() {
         return Value::Null;
     }
-    if let Some(n) = val.as_f64() {
+    // cast_f64, not as_f64: integers sit on the tape as I64/U64 static
+    // nodes and strict as_f64 returns None for them.
+    if let Some(n) = val.cast_f64() {
         return Value::Number(n);
     }
 

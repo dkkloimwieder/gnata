@@ -21,6 +21,9 @@ fn collapse_array(mut result: Vec<Value>) -> Value {
 
 /// Try to analyze a FunctionValue into a SimpleLambda for fast dispatch.
 fn try_fast_lambda(func: &FunctionValue, arena: &AstArena) -> Option<SimpleLambda> {
+    if crate::fast_path::testing::fast_paths_disabled() {
+        return None;
+    }
     if let FunctionValue::Lambda(lambda) = func {
         analyze_lambda(&lambda.params, lambda.body, arena)
     } else {
@@ -73,7 +76,7 @@ pub fn fn_map(
         Some(SimpleLambda::ConcatTemplate { ref pieces }) => {
             let mut seq = Sequence::new();
             for item in arr.iter() {
-                let val = hof_fast::eval_concat_template(item, pieces);
+                let val = hof_fast::eval_concat_template(item, pieces)?;
                 if !val.is_undefined() {
                     seq.values.push(val);
                 }
@@ -136,7 +139,7 @@ pub fn fn_filter(
                 let mut result = Vec::new();
                 for item in arr.iter() {
                     let fv = hof_fast::get_field(item, field);
-                    let val = hof_fast::eval_binary_simple(&fv, *op, literal);
+                    let val = hof_fast::eval_binary_simple(&fv, *op, literal)?;
                     if val.to_boolean() {
                         result.push(item.clone());
                     }
@@ -150,7 +153,7 @@ pub fn fn_filter(
                 for item in arr.iter() {
                     let fv1 = hof_fast::get_field(item, field1);
                     let fv2 = hof_fast::get_field(item, field2);
-                    let val = hof_fast::eval_binary_simple(&fv1, *op, &fv2);
+                    let val = hof_fast::eval_binary_simple(&fv1, *op, &fv2)?;
                     if val.to_boolean() {
                         result.push(item.clone());
                     }
@@ -165,7 +168,7 @@ pub fn fn_filter(
                 'outer: for item in arr.iter() {
                     for clause in clauses {
                         let fv = hof_fast::get_field(item, &clause.field);
-                        let pass = hof_fast::eval_binary_simple(&fv, clause.op, &clause.literal)
+                        let pass = hof_fast::eval_binary_simple(&fv, clause.op, &clause.literal)?
                             .to_boolean();
                         if is_and && !pass {
                             continue 'outer;
@@ -240,7 +243,7 @@ pub fn fn_reduce(
         Some(SimpleLambda::ReduceAccum { field, op, .. }) => {
             for item in &arr[start..] {
                 let fv = hof_fast::get_field(item, &field);
-                acc = hof_fast::eval_binary_simple(&acc, op, &fv);
+                acc = hof_fast::eval_binary_simple(&acc, op, &fv)?;
             }
             return Ok(acc);
         }
@@ -254,8 +257,8 @@ pub fn fn_reduce(
             for item in &arr[start..] {
                 let fv1 = hof_fast::get_field(item, &field1);
                 let fv2 = hof_fast::get_field(item, &field2);
-                let inner = hof_fast::eval_binary_simple(&fv1, inner_op, &fv2);
-                acc = hof_fast::eval_binary_simple(&acc, outer_op, &inner);
+                let inner = hof_fast::eval_binary_simple(&fv1, inner_op, &fv2)?;
+                acc = hof_fast::eval_binary_simple(&acc, outer_op, &inner)?;
             }
             return Ok(acc);
         }
@@ -400,20 +403,42 @@ pub fn fn_sort(
         return Ok(Value::Array(Rc::from(arr)));
     }
 
-    // Fast path: sort by field — function($a,$b){$a.field op $b.field}
-    // `>` / `>=` → ascending (compare_by_field natural order).
-    // `<` / `<=` → descending (reversed).
+    // Fast path: sort by field — function($a,$b){$a.field op $b.field}.
+    // Replicates the general comparator protocol below exactly (call
+    // fn(b, a), truthy → Less, falsy → Equal, errors propagate), only
+    // inlining the lambda body instead of dispatching call_function.
     if let Some(func) = &comparator
         && let Some(
             SimpleLambda::SortComparator { field, op, .. }
             | SimpleLambda::SortComparatorOp { field, op, .. },
         ) = try_fast_lambda(func, arena)
     {
-        let descending = op == BinaryOp::Lt || op == BinaryOp::Le;
+        let mut error: Option<JsonataError> = None;
         arr.sort_by(|a, b| {
-            let ord = hof_fast::compare_by_field(a, b, &field);
-            if descending { ord.reverse() } else { ord }
+            if error.is_some() {
+                return std::cmp::Ordering::Equal;
+            }
+            // fn(b, a) binds $a := b, $b := a, so the body
+            // `$a.field op $b.field` reads fields in that order.
+            let lhs = hof_fast::get_field(b, &field);
+            let rhs = hof_fast::get_field(a, &field);
+            match hof_fast::eval_binary_simple(&lhs, op, &rhs) {
+                Ok(val) => {
+                    if val.to_boolean() {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                }
+                Err(e) => {
+                    error = Some(e);
+                    std::cmp::Ordering::Equal
+                }
+            }
         });
+        if let Some(e) = error {
+            return Err(e);
+        }
         return Ok(Value::Array(Rc::from(arr)));
     }
 
@@ -471,6 +496,47 @@ pub fn fn_sort(
     Ok(Value::Array(Rc::from(arr)))
 }
 
+type FastPredicate = Box<dyn Fn(&Value) -> JsonataResult<bool>>;
+
+/// Build an inlined predicate for `$single`'s fast path, mirroring the
+/// general path's short-circuit and error semantics.
+fn fast_single_predicate(fast: &SimpleLambda) -> Option<FastPredicate> {
+    match fast {
+        SimpleLambda::FieldPredicate {
+            field, op, literal, ..
+        } => {
+            let field = field.clone();
+            let op = *op;
+            let literal = literal.clone();
+            Some(Box::new(move |item: &Value| {
+                let fv = hof_fast::get_field(item, &field);
+                Ok(hof_fast::eval_binary_simple(&fv, op, &literal)?.to_boolean())
+            }))
+        }
+        SimpleLambda::CompoundPredicate {
+            clauses, combiner, ..
+        } => {
+            let clauses = clauses.clone();
+            let is_and = *combiner == BinaryOp::And;
+            Some(Box::new(move |item: &Value| {
+                for clause in &clauses {
+                    let fv = hof_fast::get_field(item, &clause.field);
+                    let pass =
+                        hof_fast::eval_binary_simple(&fv, clause.op, &clause.literal)?.to_boolean();
+                    if is_and && !pass {
+                        return Ok(false);
+                    }
+                    if !is_and && pass {
+                        return Ok(true);
+                    }
+                }
+                Ok(is_and)
+            }))
+        }
+        _ => None,
+    }
+}
+
 pub fn fn_single(
     args: &[Value],
     _focus: &Value,
@@ -490,68 +556,29 @@ pub fn fn_single(
     });
 
     // Fast path: field predicate or compound predicate
-    if let Some(f) = &func {
-        if let Some(ref fast) = try_fast_lambda(f, arena) {
-            let predicate: Option<Box<dyn Fn(&Value) -> bool>> = match fast {
-                SimpleLambda::FieldPredicate {
-                    field, op, literal, ..
-                } => {
-                    let field = field.clone();
-                    let op = *op;
-                    let literal = literal.clone();
-                    Some(Box::new(move |item: &Value| {
-                        let fv = hof_fast::get_field(item, &field);
-                        hof_fast::eval_binary_simple(&fv, op, &literal).to_boolean()
-                    }))
+    if let Some(f) = &func
+        && let Some(ref fast) = try_fast_lambda(f, arena)
+        && let Some(pred) = fast_single_predicate(fast)
+    {
+        let mut matches = Vec::new();
+        for item in arr.iter() {
+            if pred(item)? {
+                matches.push(item.clone());
+                if matches.len() > 1 {
+                    return Err(JsonataError::new(
+                        "D3138",
+                        "$single: expected 1 match, found multiple",
+                    ));
                 }
-                SimpleLambda::CompoundPredicate {
-                    clauses, combiner, ..
-                } => {
-                    let clauses = clauses.clone();
-                    let is_and = *combiner == BinaryOp::And;
-                    Some(Box::new(move |item: &Value| {
-                        for clause in &clauses {
-                            let fv = hof_fast::get_field(item, &clause.field);
-                            let pass = hof_fast::eval_binary_simple(
-                                &fv,
-                                clause.op,
-                                &clause.literal,
-                            )
-                            .to_boolean();
-                            if is_and && !pass {
-                                return false;
-                            }
-                            if !is_and && pass {
-                                return true;
-                            }
-                        }
-                        is_and
-                    }))
-                }
-                _ => None,
-            };
-            if let Some(pred) = predicate {
-                let mut matches = Vec::new();
-                for item in arr.iter() {
-                    if pred(item) {
-                        matches.push(item.clone());
-                        if matches.len() > 1 {
-                            return Err(JsonataError::new(
-                                "D3138",
-                                "$single: expected 1 match, found multiple",
-                            ));
-                        }
-                    }
-                }
-                return match matches.len() {
-                    0 => Err(JsonataError::new(
-                        "D3139",
-                        "$single: expected 1 match, found 0",
-                    )),
-                    _ => Ok(matches.swap_remove(0)),
-                };
             }
         }
+        return match matches.len() {
+            0 => Err(JsonataError::new(
+                "D3139",
+                "$single: expected 1 match, found 0",
+            )),
+            _ => Ok(matches.swap_remove(0)),
+        };
     }
 
     let mut matches = Vec::new();

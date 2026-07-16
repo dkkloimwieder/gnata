@@ -2043,7 +2043,7 @@ fn compare_values(left: &Value, right: &Value, op: BinaryOp) -> JsonataResult {
 }
 
 /// Apply arithmetic operator to pre-evaluated values.
-fn apply_arithmetic(op: BinaryOp, left: &Value, right: &Value) -> JsonataResult {
+pub(crate) fn apply_arithmetic(op: BinaryOp, left: &Value, right: &Value) -> JsonataResult {
     // Fast path: both are numbers (the common case in arithmetic expressions).
     if let (Value::Number(ln), Value::Number(rn)) = (left, right) {
         return apply_arithmetic_nums(op, *ln, *rn);
@@ -2700,13 +2700,18 @@ fn eval_sort(
 
     // Fast path: if every sort term is a simple Name node, extract field names
     // and use direct field comparison (no evaluator dispatch per comparison).
-    let simple_fields: Option<Vec<(&str, bool)>> = terms
-        .iter()
-        .map(|t| match arena.get(t.expression) {
-            Expr::Name { value, .. } => Some((value.as_str(), t.descending)),
-            _ => None,
-        })
-        .collect();
+    let simple_fields: Option<Vec<(&str, bool)>> = if crate::fast_path::testing::fast_paths_disabled()
+    {
+        None
+    } else {
+        terms
+            .iter()
+            .map(|t| match arena.get(t.expression) {
+                Expr::Name { value, .. } => Some((value.as_str(), t.descending)),
+                _ => None,
+            })
+            .collect()
+    };
 
     if let Some(fields) = simple_fields {
         let mut sort_err: Option<JsonataError> = None;

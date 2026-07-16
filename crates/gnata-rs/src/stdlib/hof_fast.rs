@@ -540,69 +540,47 @@ pub fn get_field(item: &Value, field: &str) -> Value {
 }
 
 /// Evaluate a binary op on two Values (for predicates and comparators).
+///
+/// Delegates to the same primitives the general evaluator uses
+/// (`Value::compare`, `apply_binary_op`'s equality rules, and
+/// `apply_arithmetic`) so fast-path results — including error codes —
+/// cannot diverge from full evaluation.
+///
+/// # Errors
+/// Exactly the errors the general evaluator raises for the same
+/// operands: T2009/T2010 for invalid comparisons, T2001/T2002 for
+/// non-numeric arithmetic operands, D3001 for modulo by zero, D1001
+/// for out-of-range results.
 #[inline]
-pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> Value {
+pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> JsonataResult {
     match op {
-        BinaryOp::Gt => compare_simple(lhs, rhs, |a, b| a > b, |a, b| a > b),
-        BinaryOp::Lt => compare_simple(lhs, rhs, |a, b| a < b, |a, b| a < b),
-        BinaryOp::Ge => compare_simple(lhs, rhs, |a, b| a >= b, |a, b| a >= b),
-        BinaryOp::Le => compare_simple(lhs, rhs, |a, b| a <= b, |a, b| a <= b),
-        BinaryOp::Eq => Value::Bool(lhs.deep_equal(rhs)),
-        BinaryOp::Ne => Value::Bool(!lhs.deep_equal(rhs)),
-        BinaryOp::Add => arithmetic_simple(lhs, rhs, |a, b| a + b),
-        BinaryOp::Sub => arithmetic_simple(lhs, rhs, |a, b| a - b),
-        BinaryOp::Mul => arithmetic_simple(lhs, rhs, |a, b| a * b),
-        BinaryOp::Div => {
-            arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a / b })
+        BinaryOp::Gt => lhs.compare(rhs, ">"),
+        BinaryOp::Lt => lhs.compare(rhs, "<"),
+        BinaryOp::Ge => lhs.compare(rhs, ">="),
+        BinaryOp::Le => lhs.compare(rhs, "<="),
+        // Equality mirrors apply_binary_op: undefined operands → false.
+        BinaryOp::Eq => {
+            if lhs.is_undefined() || rhs.is_undefined() {
+                Ok(Value::Bool(false))
+            } else {
+                Ok(Value::Bool(lhs.deep_equal(rhs)))
+            }
         }
-        BinaryOp::Mod => {
-            arithmetic_simple(lhs, rhs, |a, b| if b == 0.0 { f64::NAN } else { a % b })
+        BinaryOp::Ne => {
+            if lhs.is_undefined() || rhs.is_undefined() {
+                Ok(Value::Bool(false))
+            } else {
+                Ok(Value::Bool(!lhs.deep_equal(rhs)))
+            }
         }
-        _ => Value::Undefined,
-    }
-}
-
-#[inline]
-fn compare_simple(
-    lhs: &Value,
-    rhs: &Value,
-    num_cmp: impl Fn(f64, f64) -> bool,
-    str_cmp: impl Fn(&str, &str) -> bool,
-) -> Value {
-    match (lhs, rhs) {
-        (Value::Number(a), Value::Number(b)) => Value::Bool(num_cmp(*a, *b)),
-        (Value::String(a), Value::String(b)) => Value::Bool(str_cmp(a.as_str(), b.as_str())),
-        _ => Value::Undefined,
-    }
-}
-
-#[inline]
-fn arithmetic_simple(lhs: &Value, rhs: &Value, op: impl Fn(f64, f64) -> f64) -> Value {
-    match (lhs, rhs) {
-        (Value::Number(a), Value::Number(b)) => Value::Number(op(*a, *b)),
-        _ => Value::Undefined,
-    }
-}
-
-/// Compare two items by a field for sorting. Returns Ordering.
-/// Used by the fast-path sort comparator.
-#[inline]
-pub fn compare_by_field(a: &Value, b: &Value, field: &str) -> std::cmp::Ordering {
-    let va = get_field(a, field);
-    let vb = get_field(b, field);
-    match (&va, &vb) {
-        (Value::Number(na), Value::Number(nb)) => {
-            na.partial_cmp(nb).unwrap_or(std::cmp::Ordering::Equal)
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            crate::evaluator::apply_arithmetic(op, lhs, rhs)
         }
-        (Value::String(sa), Value::String(sb)) => sa.cmp(sb),
-        (Value::Undefined, Value::Undefined) => std::cmp::Ordering::Equal,
-        (Value::Undefined, _) => std::cmp::Ordering::Greater,
-        (_, Value::Undefined) => std::cmp::Ordering::Less,
-        _ => std::cmp::Ordering::Equal,
+        _ => Ok(Value::Undefined),
     }
 }
 
-/// Like [`compare_by_field`], but surfaces JSONata sort type errors:
+/// Compare two items by a field for `^()` sorting, surfacing JSONata sort type errors:
 /// T2007 for string/number key mismatches, T2008 for non-sortable keys
 /// (null, boolean, array, object). Missing (undefined) keys sort last
 /// without error. Used by the `^()` operator fast path, which must match
@@ -621,7 +599,17 @@ pub fn compare_by_field_checked(
 }
 
 /// Evaluate a ConcatTemplate against an item, writing into a single buffer.
-pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
+///
+/// Function pieces delegate to the real builtins (`fn_substring`,
+/// `fn_lowercase`, `fn_uppercase`) so type errors and edge cases match
+/// the general path exactly; concat semantics append nothing for
+/// undefined piece values, mirroring the `&` operator.
+///
+/// # Errors
+/// Whatever the underlying builtin or stringification raises for the
+/// same inputs on the general path (e.g. T0410 for `$substring` on a
+/// non-string field).
+pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> JsonataResult {
     let mut buf = String::new();
     for piece in pieces {
         match piece {
@@ -632,15 +620,13 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
                     buf.push_str(s);
                 } else if !v.is_undefined() {
                     // Non-string field in concat — stringify it
-                    if v.stringify_into(&mut buf).is_err() {
-                        return Value::Undefined;
-                    }
+                    v.stringify_into(&mut buf)?;
                 }
             }
             TemplatePiece::StringifyField(field) => {
                 let v = get_field(item, field);
-                if !v.is_undefined() && v.stringify_into(&mut buf).is_err() {
-                    return Value::Undefined;
+                if !v.is_undefined() {
+                    v.stringify_into(&mut buf)?;
                 }
             }
             TemplatePiece::SubstringField {
@@ -648,41 +634,40 @@ pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
                 start,
                 length,
             } => {
-                let v = get_field(item, field);
-                if let Value::String(s) = &v {
-                    let chars: Vec<char> = s.chars().collect();
-                    let len = chars.len() as i64;
-                    // JSONata $substring semantics: negative start counts from end
-                    let start_idx = if *start < 0 {
-                        (len + start).max(0) as usize
-                    } else {
-                        (*start as usize).min(chars.len())
-                    };
-                    let end_idx = match length {
-                        Some(l) => (start_idx + l).min(chars.len()),
-                        None => chars.len(),
-                    };
-                    if start_idx < end_idx {
-                        let sub: String = chars[start_idx..end_idx].iter().collect();
-                        buf.push_str(&sub);
-                    }
+                let mut args = vec![get_field(item, field), Value::Number(*start as f64)];
+                if let Some(l) = length {
+                    args.push(Value::Number(*l as f64));
                 }
+                push_piece(
+                    &mut buf,
+                    super::string_funcs::fn_substring(&args, &Value::Undefined)?,
+                );
             }
             TemplatePiece::LowercaseField(field) => {
-                let v = get_field(item, field);
-                if let Value::String(s) = &v {
-                    buf.push_str(&s.to_lowercase());
-                }
+                let args = [get_field(item, field)];
+                push_piece(
+                    &mut buf,
+                    super::string_funcs::fn_lowercase(&args, &Value::Undefined)?,
+                );
             }
             TemplatePiece::UppercaseField(field) => {
-                let v = get_field(item, field);
-                if let Value::String(s) = &v {
-                    buf.push_str(&s.to_uppercase());
-                }
+                let args = [get_field(item, field)];
+                push_piece(
+                    &mut buf,
+                    super::string_funcs::fn_uppercase(&args, &Value::Undefined)?,
+                );
             }
         }
     }
-    Value::String(buf.into())
+    Ok(Value::String(buf.into()))
+}
+
+/// Append a builtin's result to the concat buffer (`&` semantics:
+/// undefined contributes nothing).
+fn push_piece(buf: &mut String, v: Value) {
+    if let Value::String(s) = &v {
+        buf.push_str(s);
+    }
 }
 
 // ── Lifted dispatch for mapped expressions ──────────────────────────────────
@@ -758,6 +743,9 @@ pub(crate) fn analyze_mapped_call(
     param: Option<&str>,
     env: &Rc<Environment>,
 ) -> Option<MappedCall> {
+    if crate::fast_path::testing::fast_paths_disabled() {
+        return None;
+    }
     // The node should be a Function call, possibly wrapped in a Block.
     let func_node = unwrap_block(node, arena);
 
@@ -1017,37 +1005,15 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
             };
             Some(Ok(Value::Bool(s.contains(needle.as_str()))))
         }
-        PreparedState::FormatBase { radix } => {
-            let n = match field_val {
-                Value::Number(f) => *f as i64,
-                _ => return None,
-            };
-            let formatted = match radix {
-                2 => format!("{n:b}"),
-                8 => format!("{n:o}"),
-                16 => format!("{n:x}"),
-                _ => {
-                    // Generic radix formatting
-                    if n == 0 {
-                        return Some(Ok(Value::String("0".into())));
-                    }
-                    let mut result = String::new();
-                    let mut val = n.unsigned_abs();
-                    let r = u64::from(*radix);
-                    while val > 0 {
-                        let digit = (val % r) as u32;
-                        result.push(char::from_digit(digit, *radix).unwrap_or('?'));
-                        val /= r;
-                    }
-                    if n < 0 {
-                        result.push('-');
-                    }
-                    let s: String = result.chars().rev().collect();
-                    return Some(Ok(Value::String(s.into())));
-                }
-            };
-            Some(Ok(Value::String(formatted.into())))
-        }
+        // Delegate to the real builtin: it owns rounding (2.5 → 3) and
+        // negative-number formatting, so the fast path cannot diverge.
+        PreparedState::FormatBase { radix } => match field_val {
+            Value::Number(_) => Some(super::numeric::fn_format_base(
+                &[field_val.clone(), Value::Number(f64::from(*radix))],
+                &Value::Undefined,
+            )),
+            _ => None,
+        },
         // For other prepared states, fall through to generic dispatch
         _ => None,
     }
