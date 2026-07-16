@@ -4,11 +4,17 @@
 
 use std::rc::Rc;
 
+// Backend selection: `regex` wins when both features are enabled.
 #[cfg(feature = "regex")]
 use regex::{Captures, Match, Regex, escape as regex_escape};
 
-#[cfg(feature = "regex-lite")]
+#[cfg(all(feature = "regex-lite", not(feature = "regex")))]
 use regex_lite::{Captures, Match, Regex, escape as regex_escape};
+
+#[cfg(not(any(feature = "regex", feature = "regex-lite")))]
+compile_error!(
+    "gnata requires a regex backend: enable feature \"regex\" (default) or \"regex-lite\""
+);
 
 use crate::error::{JsonataError, JsonataResult};
 use crate::evaluator::{Environment, FunctionValue, call_function};
