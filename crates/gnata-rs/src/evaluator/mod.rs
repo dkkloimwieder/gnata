@@ -1873,11 +1873,7 @@ fn eval_subscript_binary(
     let keep_array = has_keep_array(arena, node);
     let result = eval_subscript(arena, rhs, &left, input, env, index_var.as_ref())?;
     if keep_array {
-        match result {
-            Value::Array(_) => Ok(result),
-            Value::Undefined => Ok(Value::Array(Rc::from(vec![]))),
-            scalar => Ok(Value::Array(Rc::from(vec![scalar]))),
-        }
+        Ok(apply_keep_array(result, Value::Array(Rc::from(vec![]))))
     } else {
         Ok(result)
     }
@@ -2126,6 +2122,19 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
     Ok(Value::Array(Rc::from(arr)))
 }
 
+/// Apply the `[]` keep-array suffix to an evaluation result: sequences
+/// collapse with keep-singleton, arrays pass through, scalars are wrapped.
+/// `undefined` is what Undefined becomes — the suffix yields Undefined on
+/// function results but an empty array in subscript/group-value positions.
+pub(crate) fn apply_keep_array(result: Value, undefined: Value) -> Value {
+    match result {
+        Value::Sequence(seq) => seq.collapse_and_keep(true),
+        Value::Array(_) => result,
+        Value::Undefined => undefined,
+        scalar => Value::Array(Rc::from(vec![scalar])),
+    }
+}
+
 /// Walk the left chain of a Binary "[" node to check if keep_array is set
 /// on the node itself or anywhere in the LHS chain.
 /// Go equivalent: `hasKeepArrayInChain` in `eval_binary.go`.
@@ -2372,12 +2381,7 @@ fn eval_chain_step(
         let result = call_function(&func, &args, input, env, arena)?;
         // Apply keep_array wrapping if [] suffix present.
         if keep_array {
-            return match result {
-                Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
-                Value::Array(_) => Ok(result),
-                Value::Undefined => Ok(Value::Undefined),
-                scalar => Ok(Value::Array(Rc::from(vec![scalar]))),
-            };
+            return Ok(apply_keep_array(result, Value::Undefined));
         }
         // Collapse sequences from function results.
         return match result {
@@ -3362,11 +3366,7 @@ fn eval_group_by(
             };
 
             if val_keep_array {
-                val_result = match val_result {
-                    Value::Undefined => Value::Array(Rc::from(vec![])),
-                    Value::Array(_) => val_result,
-                    scalar => Value::Array(Rc::from(vec![scalar])),
-                };
+                val_result = apply_keep_array(val_result, Value::Array(Rc::from(vec![])));
             }
 
             if !val_result.is_undefined() {

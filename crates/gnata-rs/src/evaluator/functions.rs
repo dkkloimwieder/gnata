@@ -163,13 +163,7 @@ pub fn eval_function(
 
     let result = call_function(&func, &args, input, env, arena)?;
     if keep_array {
-        // Apply keep_array wrapping: collapse sequences and ensure array result.
-        match result {
-            Value::Sequence(seq) => Ok(seq.collapse_and_keep(true)),
-            Value::Array(_) => Ok(result),
-            Value::Undefined => Ok(Value::Undefined),
-            scalar => Ok(Value::Array(Rc::from(vec![scalar]))),
-        }
+        Ok(super::apply_keep_array(result, Value::Undefined))
     } else {
         Ok(result)
     }

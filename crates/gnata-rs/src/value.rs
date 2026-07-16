@@ -299,38 +299,32 @@ impl Value {
         if self.is_undefined() || other.is_undefined() {
             return Ok(Value::Undefined);
         }
-        match (self, other) {
-            (Value::Number(a), Value::Number(b)) => {
-                let result = match op {
-                    CompareOp::Lt => a < b,
-                    CompareOp::Le => a <= b,
-                    CompareOp::Gt => a > b,
-                    CompareOp::Ge => a >= b,
-                };
-                Ok(Value::Bool(result))
-            }
+        let ord = match (self, other) {
+            (Value::Number(a), Value::Number(b)) => a.partial_cmp(b),
+            (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
             (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_)) => {
-                Err(JsonataError::new(
+                return Err(JsonataError::new(
                     "T2009",
                     format!(
                         "the operands of the \"{op}\" operator must be both numbers or both strings"
                     ),
-                ))
+                ));
             }
-            (Value::String(a), Value::String(b)) => {
-                let result = match op {
-                    CompareOp::Lt => a < b,
-                    CompareOp::Le => a <= b,
-                    CompareOp::Gt => a > b,
-                    CompareOp::Ge => a >= b,
-                };
-                Ok(Value::Bool(result))
+            _ => {
+                return Err(JsonataError::new(
+                    "T2010",
+                    format!("the operands of the \"{op}\" operator must be numbers or strings"),
+                ));
             }
-            _ => Err(JsonataError::new(
-                "T2010",
-                format!("the operands of the \"{op}\" operator must be numbers or strings"),
-            )),
-        }
+        };
+        // None only for NaN operands: every NaN comparison is false (IEEE).
+        let result = ord.is_some_and(|o| match op {
+            CompareOp::Lt => o.is_lt(),
+            CompareOp::Le => o.is_le(),
+            CompareOp::Gt => o.is_gt(),
+            CompareOp::Ge => o.is_ge(),
+        });
+        Ok(Value::Bool(result))
     }
 
     // ── Stringify ────────────────────────────────────────────────────
