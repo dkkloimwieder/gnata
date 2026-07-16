@@ -8,7 +8,7 @@
 //! including error codes. This guards against the fast-path layer
 //! diverging from the general evaluator (gnata-bec.5).
 
-use gnata::value::Value;
+use gnata::Value;
 use gnata::{Expression, JsonataError};
 
 /// Items with clean, homogeneous fields — exercises happy paths.
@@ -204,14 +204,6 @@ const CASES: &[(&str, &str)] = &[
 
 type EvalResult = Result<Value, JsonataError>;
 
-/// Collapse a top-level Sequence the way API consumers see results.
-fn collapse(r: EvalResult) -> EvalResult {
-    r.map(|v| match v {
-        Value::Sequence(seq) => seq.into_value(),
-        other => other,
-    })
-}
-
 fn describe(r: &EvalResult) -> String {
     match r {
         Ok(v) => format!("Ok({v:?})"),
@@ -243,14 +235,14 @@ fn fast_paths_match_general_evaluator() {
             }
         };
 
-        gnata::fast_path::testing::set_fast_paths_disabled(false);
-        let fast_str = collapse(compiled.evaluate(data));
+        gnata::fast_path_testing::set_fast_paths_disabled(false);
+        let fast_str = compiled.evaluate(data);
         let input = Value::from_json_str(data).expect("test data is valid JSON");
-        let fast_val = collapse(compiled.evaluate_value(&input));
+        let fast_val = compiled.evaluate_value(&input);
 
-        gnata::fast_path::testing::set_fast_paths_disabled(true);
-        let general = collapse(compiled.evaluate_value(&input));
-        gnata::fast_path::testing::set_fast_paths_disabled(false);
+        gnata::fast_path_testing::set_fast_paths_disabled(true);
+        let general = compiled.evaluate_value(&input);
+        gnata::fast_path_testing::set_fast_paths_disabled(false);
 
         if diverged(&fast_str, &general) {
             mismatches.push(format!(

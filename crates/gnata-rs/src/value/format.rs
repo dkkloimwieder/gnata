@@ -162,23 +162,6 @@ fn clean_exponent(s: &str) -> String {
     format!("{mantissa}e{sign}{trimmed}")
 }
 
-/// Format a JSON number string to its canonical form.
-///
-/// If the string contains scientific notation (e/E), convert through f64
-/// and format via `format_float` to normalize. Otherwise return verbatim
-/// to preserve precision for integers beyond 2^53.
-///
-/// Go equivalent: `FormatNumber` in `eval_helpers.go`.
-pub fn format_number(s: &str) -> String {
-    if !s.contains('e') && !s.contains('E') {
-        return s.to_owned();
-    }
-    match s.parse::<f64>() {
-        Ok(f) => format_float(f),
-        Err(_) => s.to_owned(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,14 +209,6 @@ mod tests {
             format_float(999999999999999900000.0),
             "999999999999999900000"
         );
-    }
-
-    #[test]
-    fn format_number_preserves_precision() {
-        // Plain integers returned verbatim
-        assert_eq!(format_number("12345678901234567"), "12345678901234567");
-        // Scientific notation normalized through f64
-        assert_eq!(format_number("1e3"), "1000");
     }
 
     #[test]

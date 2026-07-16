@@ -19,46 +19,27 @@ use crate::value::{CompareOp, Value};
 #[derive(Debug)]
 pub enum SimpleLambda {
     /// function($v) { $v.field } — direct field access
-    FieldAccess { param: String, field: String },
+    FieldAccess { field: String },
     /// function($v) { $v.field op literal } — field compared to constant
     FieldPredicate {
-        param: String,
         field: String,
         op: BinaryOp,
         literal: Value,
     },
     /// function($v) { $v.field = $v.field2 } — two fields compared
     TwoFieldPredicate {
-        param: String,
         field1: String,
         op: BinaryOp,
         field2: String,
     },
     /// function($a, $b) { $a.field op $b.field } — sort comparator (same field both sides)
-    SortComparator {
-        param_a: String,
-        param_b: String,
-        field: String,
-        op: BinaryOp,
-    },
+    SortComparator { field: String, op: BinaryOp },
     /// function($a, $b) { $a.field op $b.field } — sort comparator with any relational op
-    SortComparatorOp {
-        param_a: String,
-        param_b: String,
-        field: String,
-        op: BinaryOp,
-    },
+    SortComparatorOp { field: String, op: BinaryOp },
     /// function($prev, $curr) { $prev op $curr.field } — simple reduce accumulator
-    ReduceAccum {
-        param_prev: String,
-        param_curr: String,
-        field: String,
-        op: BinaryOp,
-    },
+    ReduceAccum { field: String, op: BinaryOp },
     /// function($prev, $curr) { $prev op ($curr.field1 op2 $curr.field2) } — compound reduce
     ReduceCompoundAccum {
-        param_prev: String,
-        param_curr: String,
         field1: String,
         field2: String,
         outer_op: BinaryOp,
@@ -180,7 +161,6 @@ fn analyze_field_access(
             ..
         } if stages.is_empty() && group.is_none() && focus.is_none() && index.is_none() => {
             Some(SimpleLambda::FieldAccess {
-                param: param.clone(),
                 field: value.clone(),
             })
         }
@@ -228,19 +208,9 @@ fn analyze_binary(
             extract_param_dot_field(rhs, arena, param_b),
         ) {
             if field_a == field_b {
-                return Some(SimpleLambda::SortComparator {
-                    param_a: param_a.clone(),
-                    param_b: param_b.clone(),
-                    field: field_a,
-                    op,
-                });
+                return Some(SimpleLambda::SortComparator { field: field_a, op });
             }
-            return Some(SimpleLambda::SortComparatorOp {
-                param_a: param_a.clone(),
-                param_b: param_b.clone(),
-                field: field_a,
-                op,
-            });
+            return Some(SimpleLambda::SortComparatorOp { field: field_a, op });
         }
     }
 
@@ -252,12 +222,7 @@ fn analyze_binary(
         if is_param_ref(lhs, arena, param_prev) {
             // Simple: $prev op $curr.field
             if let Some(field) = extract_param_dot_field(rhs, arena, param_curr) {
-                return Some(SimpleLambda::ReduceAccum {
-                    param_prev: param_prev.clone(),
-                    param_curr: param_curr.clone(),
-                    field,
-                    op,
-                });
+                return Some(SimpleLambda::ReduceAccum { field, op });
             }
             // Compound: $prev op ($curr.field1 inner_op $curr.field2)
             if let Expr::Binary {
@@ -273,8 +238,6 @@ fn analyze_binary(
                         extract_param_dot_field(*inner_rhs, arena, param_curr),
                     ) {
                         return Some(SimpleLambda::ReduceCompoundAccum {
-                            param_prev: param_prev.clone(),
-                            param_curr: param_curr.clone(),
                             field1,
                             field2,
                             outer_op: op,
@@ -309,7 +272,6 @@ fn analyze_binary(
         if let Some(field) = extract_param_dot_field(lhs, arena, param) {
             if let Some(lit) = extract_literal(rhs, arena) {
                 return Some(SimpleLambda::FieldPredicate {
-                    param: param.clone(),
                     field,
                     op,
                     literal: lit,
@@ -318,7 +280,6 @@ fn analyze_binary(
             // $v.field1 op $v.field2
             if let Some(field2) = extract_param_dot_field(rhs, arena, param) {
                 return Some(SimpleLambda::TwoFieldPredicate {
-                    param: param.clone(),
                     field1: field,
                     op,
                     field2,
@@ -331,7 +292,6 @@ fn analyze_binary(
             && let Some(field) = extract_param_dot_field(rhs, arena, param)
         {
             return Some(SimpleLambda::FieldPredicate {
-                param: param.clone(),
                 field,
                 op: flip_relational(op),
                 literal: lit,

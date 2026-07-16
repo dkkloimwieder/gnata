@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use gnata::value::Value;
+use gnata::Value;
 use gnata::{Expression, JsonataError};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

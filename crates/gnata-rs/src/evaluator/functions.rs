@@ -170,15 +170,7 @@ pub fn eval_function(
 }
 
 /// Evaluate a lambda expression node, creating a closure.
-///
-/// # Errors
-/// Returns JSONata errors if parameter resolution fails.
-pub fn eval_lambda(
-    arena: &AstArena,
-    node: NodeId,
-    input: &Value,
-    env: &Rc<Environment>,
-) -> JsonataResult {
+pub fn eval_lambda(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> Value {
     let (params, body, signature, thunk) = match arena.get(node) {
         Expr::Lambda {
             params,
@@ -209,16 +201,14 @@ pub fn eval_lambda(
         })
         .unwrap_or_default();
 
-    Ok(Value::Function(Box::new(FunctionValue::Lambda(Rc::new(
-        Lambda {
-            params: param_names,
-            body,
-            closure: Rc::clone(env),
-            thunk,
-            signature: sig,
-            captured_focus: input.clone(),
-        },
-    )))))
+    Value::Function(Box::new(FunctionValue::Lambda(Rc::new(Lambda {
+        params: param_names,
+        body,
+        closure: Rc::clone(env),
+        thunk,
+        signature: sig,
+        captured_focus: input.clone(),
+    }))))
 }
 
 /// Evaluate a partial application node.

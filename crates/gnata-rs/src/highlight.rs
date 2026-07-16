@@ -23,7 +23,6 @@ pub enum HlType {
     ObjectKey,   // key in object constructor
     Regex,       // /pattern/flags
     Comment,     // /* ... */
-    Punctuation, // , ; : .
 }
 
 impl HlType {
@@ -42,7 +41,6 @@ impl HlType {
             Self::ObjectKey => "object-key",
             Self::Regex => "regex",
             Self::Comment => "comment",
-            Self::Punctuation => "punctuation",
         }
     }
 }

@@ -1,10 +1,8 @@
 //! Register Rust functions callable from JSONata expressions.
 
-use std::rc::Rc;
 use std::sync::Arc;
 
-use gnata::value::Value;
-use gnata::{CustomFunc, Expression, new_custom_env};
+use gnata::{CustomFunc, Expression, Value, new_custom_env};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- One-shot custom function ---
@@ -64,8 +62,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let env = new_custom_env(&[("tax".into(), tax)]);
-    let env = Rc::new(gnata::Environment::new_child(env));
-    gnata::stdlib::register_all_on_rc(&env);
 
     let expr = Expression::compile("$tax(price, 0.08)")?;
     let input = Value::from_json_str(r#"{"price": 100.0}"#)?;

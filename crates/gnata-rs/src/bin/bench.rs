@@ -6,8 +6,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use gnata::expression::Expression;
-use gnata::value::Value;
+use gnata::Expression;
+use gnata::Value;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -64,7 +64,7 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
     // Build environment ONCE and reuse across all iterations.
     // evaluate_value() rebuilds the env every call — 60+ stdlib registrations
     // per iteration was the source of a 30x regression on small payloads.
-    let env = gnata::expression::new_custom_env(&[]);
+    let env = gnata::new_custom_env(&[]);
     if !input.is_undefined() {
         env.bind("$", input.clone());
     }

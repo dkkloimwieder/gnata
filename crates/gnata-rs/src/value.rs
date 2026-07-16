@@ -1,7 +1,7 @@
 mod format;
 mod sequence;
 
-pub use format::{format_float, format_number};
+pub use format::format_float;
 pub use sequence::Sequence;
 
 use std::rc::Rc;
@@ -55,8 +55,12 @@ impl std::fmt::Display for CompareOp {
 ///
 /// Mutation requires `Rc::make_mut()` for copy-on-write semantics.
 /// `Undefined` and `Null` are distinct enum variants preserving JSONata semantics.
-/// `Sequence` is internal-only and never exposed to users.
+///
+/// The enum is `#[non_exhaustive]`: the hidden variants are internal to the
+/// evaluator and never escape the public API, so user matches need a
+/// wildcard arm only for forward compatibility.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Value {
     /// JSONata undefined — missing value, no representation in JSON.
     Undefined,
@@ -67,13 +71,20 @@ pub enum Value {
     String(CompactString),
     Array(Rc<[Value]>),
     Object(Rc<ObjectMap>),
-    /// Internal sequence used during evaluation. Never returned to users.
+    /// Internal sequence used during evaluation. Collapsed at the public
+    /// API boundary — user code never observes this variant.
     /// Boxed to keep Value at 16 bytes (same as Go's interface{}).
+    #[doc(hidden)]
+    #[non_exhaustive]
     Sequence(Box<Sequence>),
     /// Function value (built-in, lambda, partial application).
     /// Boxed to keep Value at 16 bytes.
+    #[doc(hidden)]
+    #[non_exhaustive]
     Function(Box<crate::evaluator::FunctionValue>),
     /// Tail-call sentinel for TCO trampoline. Internal only.
+    #[doc(hidden)]
+    #[non_exhaustive]
     TailCall(Box<crate::evaluator::TailCall>),
 }
 

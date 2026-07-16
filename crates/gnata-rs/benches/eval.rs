@@ -7,9 +7,9 @@ use std::rc::Rc;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use compact_str::CompactString;
-use gnata::evaluator::Environment;
-use gnata::expression::Expression;
-use gnata::value::Value;
+use gnata::Environment;
+use gnata::Expression;
+use gnata::Value;
 
 /// Short-key fixtures (original + mixed values). Same expressions apply.
 const FIXTURES_SHORT: &[(&str, &str)] = &[
@@ -38,7 +38,7 @@ impl PreparedInput {
         let json_str = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let value = Value::from_json_str(&json_str).unwrap();
         let mut env = Environment::new();
-        gnata::stdlib::register_all(&mut env);
+        gnata::register_all(&mut env);
         env.bind(CompactString::from("$"), value.clone());
         let env = Rc::new(env);
         PreparedInput { value, env }
@@ -132,7 +132,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                 b.iter(|| {
                     let value = Value::from_json_str(data).unwrap();
                     let mut env = Environment::new();
-                    gnata::stdlib::register_all(&mut env);
+                    gnata::register_all(&mut env);
                     env.bind(CompactString::from("$"), value.clone());
                     let env = Rc::new(env);
                     let result = compiled_short.evaluate_with_env(&value, &env).unwrap();
@@ -155,7 +155,7 @@ fn bench_end_to_end(c: &mut Criterion) {
                 b.iter(|| {
                     let value = Value::from_json_str(data).unwrap();
                     let mut env = Environment::new();
-                    gnata::stdlib::register_all(&mut env);
+                    gnata::register_all(&mut env);
                     env.bind(CompactString::from("$"), value.clone());
                     let env = Rc::new(env);
                     let result = compiled_long.evaluate_with_env(&value, &env).unwrap();

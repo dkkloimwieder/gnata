@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gnata::eval;
-use gnata::evaluator::Environment;
-use gnata::parser::{Parser, process_ast};
-use gnata::value::Value;
+use gnata::Environment;
+use gnata::{Parser, process_ast};
+use gnata::Value;
 
 fn testdata_dir() -> PathBuf {
     // crates/gnata-rs/tests/conformance.rs → testdata/ is at repo root
@@ -219,7 +219,7 @@ fn run_test_case(tc: &TestCase) -> Result<(), String> {
 
     // Set up environment with stdlib.
     let mut env = Environment::new();
-    gnata::stdlib::register_all(&mut env);
+    gnata::register_all(&mut env);
     // Bind $$ (root input reference) — Go does env.Bind("$", data).
     if !tc.input.is_undefined() {
         env.bind("$", tc.input.clone());

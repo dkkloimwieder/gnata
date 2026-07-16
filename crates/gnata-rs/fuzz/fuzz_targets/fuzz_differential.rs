@@ -7,7 +7,7 @@
 //! asserts both produce identical results including error codes.
 
 use arbitrary::Arbitrary;
-use gnata::value::{ObjectMap, Value};
+use gnata::{ObjectMap, Value};
 use gnata::Expression;
 use libfuzzer_sys::fuzz_target;
 use std::rc::Rc;
@@ -72,13 +72,6 @@ const EXPRS: &[&str] = &[
     "$distinct(items.name)",
 ];
 
-fn collapse(v: Value) -> Value {
-    match v {
-        Value::Sequence(seq) => seq.into_value(),
-        other => other,
-    }
-}
-
 fuzz_target!(|input: Input| {
     let expr = EXPRS[input.expr_idx as usize % EXPRS.len()];
     let compiled = Expression::compile(expr).expect("fixed exprs always compile");
@@ -105,11 +98,11 @@ fuzz_target!(|input: Input| {
     root.insert("items".into(), Value::Array(Rc::from(items)));
     let data = Value::Object(Rc::new(root));
 
-    gnata::fast_path::testing::set_fast_paths_disabled(false);
-    let fast = compiled.evaluate_value(&data).map(collapse);
-    gnata::fast_path::testing::set_fast_paths_disabled(true);
-    let general = compiled.evaluate_value(&data).map(collapse);
-    gnata::fast_path::testing::set_fast_paths_disabled(false);
+    gnata::fast_path_testing::set_fast_paths_disabled(false);
+    let fast = compiled.evaluate_value(&data);
+    gnata::fast_path_testing::set_fast_paths_disabled(true);
+    let general = compiled.evaluate_value(&data);
+    gnata::fast_path_testing::set_fast_paths_disabled(false);
 
     match (&fast, &general) {
         (Ok(a), Ok(b)) => {

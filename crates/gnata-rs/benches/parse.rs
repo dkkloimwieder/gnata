@@ -8,7 +8,7 @@
 //! Fixtures live in bench/data*.json.
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use gnata::value::Value;
+use gnata::Value;
 
 const FIXTURES: &[(&str, &str)] = &[
     ("tiny_4", "../../bench/data.json"),

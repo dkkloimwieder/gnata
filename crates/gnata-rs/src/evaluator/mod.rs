@@ -36,15 +36,19 @@ const JOIN_FLAG: &str = "%%j";
 /// to eval_inner which is used for all internal recursive calls (no stack check overhead).
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
-            eval_inner(arena, node, input, env)
-        })
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
+    let result = stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
         eval_inner(arena, node, input, env)
-    }
+    });
+    #[cfg(target_arch = "wasm32")]
+    let result = eval_inner(arena, node, input, env);
+
+    // Sequence is an internal representation — collapse it before it
+    // crosses the public API boundary. Internal recursion goes through
+    // eval_inner and never re-enters here.
+    result.map(|value| match value {
+        Value::Sequence(seq) => seq.into_value(),
+        other => other,
+    })
 }
 
 /// Internal eval without stack check. Used for all recursive calls within
@@ -223,27 +227,12 @@ fn eval_inner(
             Expr::Binary { .. } => return eval_binary(arena, cur_node, input, cur_env),
             Expr::Unary { .. } => return eval_unary(arena, cur_node, input, cur_env),
             Expr::Bind { .. } => return eval_bind(arena, cur_node, input, cur_env),
-            Expr::Lambda { .. } => return eval_lambda(arena, cur_node, input, cur_env),
+            Expr::Lambda { .. } => return Ok(eval_lambda(arena, cur_node, input, cur_env)),
             Expr::Partial { .. } => return eval_partial(arena, cur_node, input, cur_env),
             Expr::Sort { .. } => return eval_sort(arena, cur_node, input, cur_env),
             Expr::Transform { .. } => return eval_transform(arena, cur_node, input, cur_env),
         }
     }
-}
-
-/// Public API for calling any function value with given args.
-/// Used by standard library functions to dispatch callbacks.
-///
-/// # Errors
-/// Returns any error produced by the callee function.
-pub fn apply_function(
-    func: &FunctionValue,
-    args: &[Value],
-    focus: &Value,
-    env: &Rc<Environment>,
-    arena: &AstArena,
-) -> JsonataResult {
-    call_function(func, args, focus, env, arena)
 }
 
 // ── Literal evaluators ──────────────────────────────────────────────

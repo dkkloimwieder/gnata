@@ -9,17 +9,14 @@ use super::Value;
 /// collapsed before returning from evaluation.
 ///
 /// Go equivalent: `*Sequence` in `internal/evaluator/value.go`.
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct Sequence {
-    pub values: Vec<Value>,
+    pub(crate) values: Vec<Value>,
     /// Do NOT unwrap single-element sequences (set by `[]` suffix).
-    pub keep_singleton: bool,
+    pub(crate) keep_singleton: bool,
     /// Explicitly constructed via `[...]`; prevents flattening.
-    pub cons_array: bool,
-    /// Input was a JSON array; treated as a single document.
-    pub outer_wrapper: bool,
-    /// Contains tuple objects `{"@": value, varName: value}`.
-    pub tuple_stream: bool,
+    pub(crate) cons_array: bool,
 }
 
 impl Sequence {
@@ -29,8 +26,6 @@ impl Sequence {
             values: Vec::with_capacity(4),
             keep_singleton: false,
             cons_array: false,
-            outer_wrapper: false,
-            tuple_stream: false,
         }
     }
 
@@ -40,8 +35,6 @@ impl Sequence {
             values: Vec::with_capacity(cap),
             keep_singleton: false,
             cons_array: false,
-            outer_wrapper: false,
-            tuple_stream: false,
         }
     }
 
@@ -51,8 +44,6 @@ impl Sequence {
             values: items,
             keep_singleton: false,
             cons_array: false,
-            outer_wrapper: false,
-            tuple_stream: false,
         }
     }
 

@@ -1,6 +1,6 @@
 #![no_main]
 
-use gnata::value::{ObjectMap, Value};
+use gnata::{ObjectMap, Value};
 use gnata::Expression;
 use libfuzzer_sys::fuzz_target;
 use std::rc::Rc;

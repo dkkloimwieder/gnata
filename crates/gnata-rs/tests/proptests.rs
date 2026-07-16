@@ -8,7 +8,7 @@ use compact_str::CompactString;
 use proptest::prelude::*;
 
 use gnata::Expression;
-use gnata::value::{ObjectMap, Value};
+use gnata::{ObjectMap, Value};
 
 // ── Value strategy ──────────────────────────────────────────────────────────
 
@@ -94,7 +94,7 @@ proptest! {
     #[test]
     fn parse_signature_no_panic(s in "[ -~]{0,30}") {
         // Should return Ok or Err, never panic.
-        let _ = gnata::evaluator::parse_signature(&s);
+        let _ = gnata::parse_signature(&s);
     }
 }
 
@@ -103,7 +103,7 @@ proptest! {
 proptest! {
     #[test]
     fn parser_parse_no_panic(s in "[ -~]{0,50}") {
-        let _ = gnata::parser::Parser::parse(&s);
+        let _ = gnata::Parser::parse(&s);
     }
 }
 
@@ -271,7 +271,7 @@ proptest! {
 proptest! {
     #[test]
     fn number_format_parseable(n in any::<f64>().prop_filter("finite", |n| n.is_finite())) {
-        let formatted = gnata::value::format_float(n);
+        let formatted = gnata::format_float(n);
         // format_float (ryu-js) must always produce valid numeric output.
         let parsed: Result<f64, _> = formatted.parse();
         prop_assert!(parsed.is_ok(), "format_float produced unparseable output '{}' for {}", formatted, n);

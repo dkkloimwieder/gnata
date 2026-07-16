@@ -10,7 +10,7 @@ use std::rc::Rc;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use gnata::value::{ObjectMap, Value};
+use gnata::{ObjectMap, Value};
 
 /// Fuzzer-friendly Value generator. Limits depth and size to keep
 /// iterations fast while still covering all Value variants.

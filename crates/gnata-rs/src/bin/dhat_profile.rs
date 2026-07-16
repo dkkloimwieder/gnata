@@ -23,9 +23,9 @@ fn main() {
 
     #[cfg(feature = "dhat-heap")]
     {
-        use gnata::evaluator::Environment;
-        use gnata::expression::Expression;
-        use gnata::value::Value;
+        use gnata::Environment;
+        use gnata::Expression;
+        use gnata::Value;
         use std::rc::Rc;
 
         let _profiler = dhat::Profiler::new_heap();
@@ -83,7 +83,7 @@ fn main() {
                     std::process::exit(1);
                 });
                 let mut env = Environment::new();
-                gnata::stdlib::register_all(&mut env);
+                gnata::register_all(&mut env);
                 if !input.is_undefined() {
                     env.bind("$", input.clone());
                 }

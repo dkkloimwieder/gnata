@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gnata::value::Value;
+use gnata::Value;
 use gnata::{CustomFunc, Expression, StreamEvaluator};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

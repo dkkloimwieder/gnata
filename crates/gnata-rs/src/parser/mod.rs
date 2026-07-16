@@ -2,8 +2,7 @@ pub mod ast;
 pub mod process;
 
 pub use ast::{
-    AstArena, BinaryOp, Expr, GroupExpr, NodeId, Signature, Slot, SortTerm, Stage, StageKind,
-    UnaryOp,
+    AstArena, BinaryOp, Expr, GroupExpr, NodeId, Signature, SortTerm, StageKind, UnaryOp,
 };
 pub use process::process_ast;
 
