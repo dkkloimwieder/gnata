@@ -51,6 +51,10 @@ pub fn new_custom_env(custom_funcs: &[(String, CustomFunc)]) -> Rc<Environment> 
 /// `Expression` is `Send + Sync`: the AST is wrapped in `Arc` so the same
 /// compiled expression can be shared across threads. Per-evaluation state
 /// (`Environment`, `Value`) is created on the calling thread and never escapes.
+///
+/// Cloning is cheap: the AST is shared via `Arc`, so a clone copies only the
+/// fast-path metadata and the source string, never the parsed tree.
+#[derive(Clone)]
 pub struct Expression {
     arena: Arc<AstArena>,
     root: NodeId,
@@ -259,12 +263,20 @@ impl Expression {
         &self.source
     }
 
-    /// Access the underlying AST arena (for advanced use).
+    /// Access the underlying AST arena.
+    ///
+    /// Not part of the supported public API: the AST types are internal and
+    /// carry no stability guarantees.
+    #[doc(hidden)]
     pub fn arena(&self) -> &AstArena {
         &self.arena
     }
 
-    /// Access the root AST node (for advanced use).
+    /// Access the root AST node.
+    ///
+    /// Not part of the supported public API: the AST types are internal and
+    /// carry no stability guarantees.
+    #[doc(hidden)]
     pub fn root(&self) -> NodeId {
         self.root
     }
@@ -284,6 +296,17 @@ impl std::fmt::Debug for Expression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clone_shares_ast_and_outlives_original() -> JsonataResult<()> {
+        let expr = Expression::compile("a.b + 1")?;
+        let cloned = expr.clone();
+        assert!(Arc::ptr_eq(&expr.arena, &cloned.arena));
+        drop(expr);
+        let result = cloned.evaluate(r#"{"a": {"b": 41}}"#)?;
+        assert_eq!(result.as_f64(), Some(42.0));
+        Ok(())
+    }
 
     #[test]
     fn custom_func_basic() {
