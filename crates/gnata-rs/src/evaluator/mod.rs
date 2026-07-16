@@ -458,65 +458,21 @@ fn eval_path(
 
 /// Check whether any path step requires tuple-aware evaluation (#$var index bindings, @$var focus, or % parent refs).
 fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
-    for &step in steps {
-        // Direct check: step itself has index or focus.
-        match arena.get(step) {
-            Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => return true,
-            Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => {
-                return true;
-            }
-            Expr::Sort { index: Some(_), .. } | Expr::Sort { focus: Some(_), .. } => {
-                return true;
-            }
-            // A subscript step whose left child has an Index or Focus binding also requires
-            // tuple-aware path evaluation so each element gets its own env for $pos/$var.
-            Expr::Binary { op, lhs, .. } if *op == BinaryOp::Subscript && !lhs.is_empty() => {
-                let lhs = *lhs;
-                match arena.get(lhs) {
-                    Expr::Name { index: Some(_), .. }
-                    | Expr::Name { focus: Some(_), .. }
-                    | Expr::Variable { index: Some(_), .. }
-                    | Expr::Variable { focus: Some(_), .. }
-                    | Expr::Sort { index: Some(_), .. }
-                    | Expr::Sort { focus: Some(_), .. } => {
-                        return true;
-                    }
-                    // Also check for nested binary (e.g., books@$b[pred][1]).
-                    Expr::Binary {
-                        op: inner_op,
-                        lhs: inner_lhs,
-                        ..
-                    } if *inner_op == BinaryOp::Subscript && !inner_lhs.is_empty() => {
-                        let inner_lhs = *inner_lhs;
-                        if matches!(
-                            arena.get(inner_lhs),
-                            Expr::Name { focus: Some(_), .. }
-                                | Expr::Name { index: Some(_), .. }
-                                | Expr::Variable { focus: Some(_), .. }
-                                | Expr::Variable { index: Some(_), .. }
-                        ) {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-        // Recursive check for deeply nested bindings.
-        if node_has_index_binding(arena, step) {
-            return true;
-        }
-        // Any step that references % (Parent) requires parent-chain tracking.
-        if node_has_parent_ref(arena, step) {
-            return true;
-        }
-    }
-    false
+    steps.iter().any(|&step| {
+        node_has_index_binding(arena, step) || node_has_parent_ref(arena, step)
+    })
 }
 
-/// Recursively check if a node or its sub-expression contains an index (#$var) or focus (@$var) binding.
+/// Check if a node's path-local structure contains an index (#$var) or focus (@$var) binding.
+///
+/// Deliberately NOT a full-subtree search: only subscript operands, sort
+/// operands, and path steps are descended. Bindings inside lambda bodies,
+/// function arguments, etc. belong to those inner paths, not to the path
+/// being classified here.
 fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
+    if node.is_empty() {
+        return false;
+    }
     match arena.get(node) {
         Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => true,
         Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => true,
@@ -536,25 +492,62 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
     }
 }
 
-/// Recursively check if an AST node or any of its descendants is a Parent (%) reference.
-// Large recursive match over all AST variants.
-#[allow(clippy::too_many_lines)]
+/// Check if an AST subtree contains a % (Parent) reference anywhere.
 fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
-    if node.is_empty() {
-        return false;
-    }
-    match arena.get(node) {
-        Expr::Parent { .. } => true,
-        Expr::Name { stages, group, .. } => {
-            stages.iter().any(|s| match &s.kind {
-                crate::parser::StageKind::Filter { expression } => {
-                    node_has_parent_ref(arena, *expression)
-                }
-                crate::parser::StageKind::Index { .. } => false,
-            }) || group_has_parent_ref(arena, group.as_ref())
+    subtree_any(arena, node, |e| matches!(e, Expr::Parent { .. }))
+}
+
+/// Short-circuiting search over an AST subtree: does `pred` match the node
+/// or any descendant?
+///
+/// Descends every child edge — operands, path steps, group pairs, stage
+/// filters, and sort terms — via an explicit worklist (no recursion, no
+/// clones). Lambda params are skipped: they declare names, not uses.
+fn subtree_any(arena: &AstArena, root: NodeId, pred: impl Fn(&Expr) -> bool) -> bool {
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if id.is_empty() {
+            continue;
         }
-        Expr::Binary { lhs, rhs, .. } => {
-            node_has_parent_ref(arena, *lhs) || node_has_parent_ref(arena, *rhs)
+        let expr = arena.get(id);
+        if pred(expr) {
+            return true;
+        }
+        push_children(expr, &mut stack);
+    }
+    false
+}
+
+fn push_group_pairs(group: Option<&crate::parser::GroupExpr>, out: &mut Vec<NodeId>) {
+    if let Some(g) = group {
+        for pair in &g.pairs {
+            out.push(pair[0]);
+            out.push(pair[1]);
+        }
+    }
+}
+
+/// Push every child NodeId of `expr` onto `out` — the single place that
+/// knows the AST's child edges.
+fn push_children(expr: &Expr, out: &mut Vec<NodeId>) {
+    match expr {
+        Expr::Name { stages, group, .. } => {
+            for s in stages {
+                if let crate::parser::StageKind::Filter { expression } = &s.kind {
+                    out.push(*expression);
+                }
+            }
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Variable { group, .. } => push_group_pairs(group.as_ref(), out),
+        Expr::Path { steps, group, .. } => {
+            out.extend_from_slice(steps);
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Binary { lhs, rhs, group, .. } => {
+            out.push(*lhs);
+            out.push(*rhs);
+            push_group_pairs(group.as_ref(), out);
         }
         Expr::Unary {
             operand,
@@ -563,103 +556,72 @@ fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
             group,
             ..
         } => {
-            let operand = *operand;
-            let expressions = expressions.clone();
-            let lhs = lhs.clone();
-            let group = group.clone();
-            node_has_parent_ref(arena, operand)
-                || expressions.iter().any(|&e| node_has_parent_ref(arena, e))
-                || lhs.iter().any(|&e| node_has_parent_ref(arena, e))
-                || group_has_parent_ref(arena, group.as_ref())
+            out.push(*operand);
+            out.extend_from_slice(expressions);
+            out.extend_from_slice(lhs);
+            push_group_pairs(group.as_ref(), out);
         }
-        Expr::Path { steps, group, .. } => {
-            let steps = steps.clone();
-            let group = group.clone();
-            steps.iter().any(|&s| node_has_parent_ref(arena, s))
-                || group_has_parent_ref(arena, group.as_ref())
-        }
-        Expr::Block { expressions, .. } => {
-            let expressions = expressions.clone();
-            expressions.iter().any(|&e| node_has_parent_ref(arena, e))
-        }
+        Expr::Block { expressions, .. } => out.extend_from_slice(expressions),
         Expr::Condition {
             condition,
             then,
             else_,
             ..
         } => {
-            let (condition, then, else_) = (*condition, *then, *else_);
-            node_has_parent_ref(arena, condition)
-                || node_has_parent_ref(arena, then)
-                || else_.is_some_and(|e| node_has_parent_ref(arena, e))
+            out.push(*condition);
+            out.push(*then);
+            if let Some(e) = else_ {
+                out.push(*e);
+            }
+        }
+        Expr::Bind { lhs, rhs, .. } => {
+            out.push(*lhs);
+            out.push(*rhs);
         }
         Expr::Function {
             procedure,
             arguments,
+            group,
             ..
         } => {
-            let procedure = *procedure;
-            let arguments = arguments.clone();
-            node_has_parent_ref(arena, procedure)
-                || arguments.iter().any(|&a| node_has_parent_ref(arena, a))
-        }
-        Expr::Lambda { body, .. } => {
-            let body = *body;
-            node_has_parent_ref(arena, body)
-        }
-        Expr::Sort { expr, terms, .. } => {
-            let expr = *expr;
-            let terms = terms.clone();
-            node_has_parent_ref(arena, expr)
-                || terms
-                    .iter()
-                    .any(|t| node_has_parent_ref(arena, t.expression))
-        }
-        Expr::Bind { lhs, rhs, .. } => {
-            let (lhs, rhs) = (*lhs, *rhs);
-            node_has_parent_ref(arena, lhs) || node_has_parent_ref(arena, rhs)
-        }
-        Expr::Transform {
-            pattern,
-            update,
-            delete,
-            ..
-        } => {
-            let (pattern, update, delete) = (*pattern, *update, *delete);
-            node_has_parent_ref(arena, pattern)
-                || node_has_parent_ref(arena, update)
-                || delete.is_some_and(|d| node_has_parent_ref(arena, d))
+            out.push(*procedure);
+            out.extend_from_slice(arguments);
+            push_group_pairs(group.as_ref(), out);
         }
         Expr::Partial {
             procedure,
             arguments,
             ..
         } => {
-            let procedure = *procedure;
-            let arguments = arguments.clone();
-            node_has_parent_ref(arena, procedure)
-                || arguments.iter().any(|&a| node_has_parent_ref(arena, a))
+            out.push(*procedure);
+            out.extend_from_slice(arguments);
         }
-        // Leaf nodes that can't contain % references.
+        Expr::Lambda { body, .. } => out.push(*body),
+        Expr::Transform {
+            pattern,
+            update,
+            delete,
+            ..
+        } => {
+            out.push(*pattern);
+            out.push(*update);
+            if let Some(d) = delete {
+                out.push(*d);
+            }
+        }
+        Expr::Sort { expr, terms, .. } => {
+            out.push(*expr);
+            out.extend(terms.iter().map(|t| t.expression));
+        }
+        // Leaves.
         Expr::StringLit { .. }
         | Expr::NumberLit { .. }
         | Expr::ValueLit { .. }
-        | Expr::Variable { .. }
         | Expr::Wildcard { .. }
         | Expr::Descendant { .. }
+        | Expr::Parent { .. }
         | Expr::Regex { .. }
-        | Expr::Placeholder { .. } => false,
-    }
-}
-
-/// Check if a GroupExpr contains any % (Parent) references in its key/value expressions.
-fn group_has_parent_ref(arena: &AstArena, group: Option<&crate::parser::GroupExpr>) -> bool {
-    match group {
-        Some(grp) => grp
-            .pairs
-            .iter()
-            .any(|pair| node_has_parent_ref(arena, pair[0]) || node_has_parent_ref(arena, pair[1])),
-        None => false,
+        | Expr::Placeholder { .. } => {}
     }
 }
 
@@ -3206,90 +3168,12 @@ fn validate_transform_clauses(
 
 /// Check whether an AST subtree references `$index` or `$key` variables.
 /// When it doesn't, we can skip `Environment::new_child` for group-by pairs.
+/// Over-detection merely creates an unneeded child env; missing a use would
+/// evaluate the pair without its bindings.
 fn uses_group_bindings(arena: &AstArena, node: NodeId) -> bool {
-    if node.is_empty() {
-        return false;
-    }
-    match arena.get(node) {
-        Expr::Variable { name, group, .. } => {
-            name == "index"
-                || name == "key"
-                || group.as_ref().is_some_and(|g| {
-                    g.pairs.iter().any(|p| {
-                        uses_group_bindings(arena, p[0]) || uses_group_bindings(arena, p[1])
-                    })
-                })
-        }
-        Expr::Path { steps, group, .. } => {
-            steps.iter().any(|&s| uses_group_bindings(arena, s))
-                || group.as_ref().is_some_and(|g| {
-                    g.pairs.iter().any(|p| {
-                        uses_group_bindings(arena, p[0]) || uses_group_bindings(arena, p[1])
-                    })
-                })
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            uses_group_bindings(arena, *lhs) || uses_group_bindings(arena, *rhs)
-        }
-        Expr::Unary {
-            operand,
-            expressions,
-            lhs,
-            ..
-        } => {
-            uses_group_bindings(arena, *operand)
-                || expressions.iter().any(|&n| uses_group_bindings(arena, n))
-                || lhs.iter().any(|&n| uses_group_bindings(arena, n))
-        }
-        Expr::Function {
-            procedure,
-            arguments,
-            ..
-        } => {
-            uses_group_bindings(arena, *procedure)
-                || arguments.iter().any(|&n| uses_group_bindings(arena, n))
-        }
-        Expr::Block { expressions, .. } => {
-            expressions.iter().any(|&n| uses_group_bindings(arena, n))
-        }
-        Expr::Condition {
-            condition,
-            then,
-            else_,
-            ..
-        } => {
-            uses_group_bindings(arena, *condition)
-                || uses_group_bindings(arena, *then)
-                || else_.is_some_and(|e| uses_group_bindings(arena, e))
-        }
-        Expr::Bind { lhs, rhs, .. } => {
-            uses_group_bindings(arena, *lhs) || uses_group_bindings(arena, *rhs)
-        }
-        Expr::Lambda { body, .. } => uses_group_bindings(arena, *body),
-        Expr::Sort { expr, .. } => uses_group_bindings(arena, *expr),
-        Expr::Transform {
-            pattern, update, delete, ..
-        } => {
-            uses_group_bindings(arena, *pattern)
-                || uses_group_bindings(arena, *update)
-                || delete.is_some_and(|d| uses_group_bindings(arena, d))
-        }
-        Expr::Name { group, .. } => group.as_ref().is_some_and(|g| {
-            g.pairs.iter().any(|p| {
-                uses_group_bindings(arena, p[0]) || uses_group_bindings(arena, p[1])
-            })
-        }),
-        Expr::Partial {
-            procedure,
-            arguments,
-            ..
-        } => {
-            uses_group_bindings(arena, *procedure)
-                || arguments.iter().any(|&n| uses_group_bindings(arena, n))
-        }
-        // Leaves: literals, wildcard, descendant, parent, regex, placeholder
-        _ => false,
-    }
+    subtree_any(arena, node, |e| {
+        matches!(e, Expr::Variable { name, .. } if name == "index" || name == "key")
+    })
 }
 
 /// Fast-path key evaluation strategy, determined once per group pair.
