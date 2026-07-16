@@ -984,16 +984,11 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
                 Value::Number(f) => *f,
                 _ => return None,
             };
-            let p = *precision;
-            let factor = 10f64.powi(p as i32);
-            // Round-half-away-from-zero (JSONata spec)
-            let rounded = if p >= 0 {
-                (n * factor + 0.5_f64.copysign(n * factor)).trunc() / factor
-            } else {
-                let inv = 10f64.powi((-p) as i32);
-                (n / inv + 0.5_f64.copysign(n / inv)).trunc() * inv
-            };
-            Some(Ok(Value::Number(rounded)))
+            // Must match $round exactly: half-to-even, same as numeric::fn_round.
+            Some(Ok(Value::Number(super::numeric::bankers_round(
+                n,
+                *precision as i32,
+            ))))
         }
         PreparedState::Contains { needle } => {
             let Value::String(s) = field_val else {
@@ -1069,4 +1064,65 @@ pub(crate) fn exec_mapped_call(
         }
     }
     call_function(&mc.func, &args, item, env, arena)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::evaluator::{Environment, eval};
+    use crate::parser::{Parser, process_ast};
+    use crate::value::Value;
+    use std::rc::Rc;
+
+    /// Helper: parse, process, and evaluate against `input`.
+    fn eval_expr(src: &str, input: &Value) -> Value {
+        let (mut arena, root) = Parser::parse(src).expect("parse failed");
+        let root = process_ast(&mut arena, root).expect("process failed");
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        env.bind("$", input.clone());
+        let env = Rc::new(env);
+        eval(&arena, root, input, &env).expect("eval failed")
+    }
+
+    fn nums_input(values: &[f64]) -> Value {
+        let items: Vec<Value> = values
+            .iter()
+            .map(|&x| {
+                let mut obj = crate::value::ObjectMap::new();
+                obj.insert("x".into(), Value::Number(x));
+                Value::Object(Rc::new(obj))
+            })
+            .collect();
+        let mut root = crate::value::ObjectMap::new();
+        root.insert("nums".into(), Value::Array(Rc::from(items)));
+        Value::Object(Rc::new(root))
+    }
+
+    /// Regression test for gnata-bec.1: the mapped-call fast path used
+    /// round-half-away-from-zero while $round is half-to-even (banker's).
+    /// `nums.$round(x)` is lifted by analyze_mapped_call; `nums.($round(x + 0))`
+    /// has a complex argument, so it takes the general path. Both must agree.
+    #[test]
+    fn round_fast_path_matches_general_path() {
+        let input = nums_input(&[0.5, 1.5, 2.5, 3.5, -0.5, -1.5, -2.5, 2.345]);
+        let fast = eval_expr("nums.$round(x)", &input);
+        let general = eval_expr("nums.($round(x + 0))", &input);
+        assert!(
+            fast.deep_equal(&general),
+            "fast path {fast:?} != general path {general:?}"
+        );
+        let expected = eval_expr("[0, 2, 2, 4, -0, -2, -2, 2]", &Value::Undefined);
+        assert!(fast.deep_equal(&expected), "banker's rounding expected, got {fast:?}");
+    }
+
+    #[test]
+    fn round_fast_path_with_precision_matches_general_path() {
+        let input = nums_input(&[0.25, 0.35, -0.25, 1.05]);
+        let fast = eval_expr("nums.$round(x, 1)", &input);
+        let general = eval_expr("nums.($round(x + 0, 1))", &input);
+        assert!(
+            fast.deep_equal(&general),
+            "fast path {fast:?} != general path {general:?}"
+        );
+    }
 }

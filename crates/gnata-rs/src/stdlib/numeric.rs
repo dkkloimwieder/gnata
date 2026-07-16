@@ -140,7 +140,7 @@ pub fn fn_round(args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::Number(bankers_round(n, scale)))
 }
 
-fn bankers_round(n: f64, scale: i32) -> f64 {
+pub(crate) fn bankers_round(n: f64, scale: i32) -> f64 {
     if !n.is_finite() {
         return n;
     }
