@@ -602,6 +602,24 @@ pub fn compare_by_field(a: &Value, b: &Value, field: &str) -> std::cmp::Ordering
     }
 }
 
+/// Like [`compare_by_field`], but surfaces JSONata sort type errors:
+/// T2007 for string/number key mismatches, T2008 for non-sortable keys
+/// (null, boolean, array, object). Missing (undefined) keys sort last
+/// without error. Used by the `^()` operator fast path, which must match
+/// the general path's error behavior (`Value::compare_order`).
+///
+/// # Errors
+/// Returns T2007 or T2008 as described above.
+pub fn compare_by_field_checked(
+    a: &Value,
+    b: &Value,
+    field: &str,
+) -> JsonataResult<std::cmp::Ordering> {
+    let va = get_field(a, field);
+    let vb = get_field(b, field);
+    Ok(va.compare_order(&vb)?.cmp(&0))
+}
+
 /// Evaluate a ConcatTemplate against an item, writing into a single buffer.
 pub fn eval_concat_template(item: &Value, pieces: &[TemplatePiece]) -> Value {
     let mut buf = String::new();

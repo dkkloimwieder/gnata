@@ -2709,15 +2709,26 @@ fn eval_sort(
         .collect();
 
     if let Some(fields) = simple_fields {
+        let mut sort_err: Option<JsonataError> = None;
         arr.sort_by(|a, b| {
+            if sort_err.is_some() {
+                return std::cmp::Ordering::Equal;
+            }
             for &(field, descending) in &fields {
-                let ord = crate::stdlib::hof_fast::compare_by_field(a, b, field);
-                if ord != std::cmp::Ordering::Equal {
-                    return if descending { ord.reverse() } else { ord };
+                match crate::stdlib::hof_fast::compare_by_field_checked(a, b, field) {
+                    Ok(std::cmp::Ordering::Equal) => {}
+                    Ok(ord) => return if descending { ord.reverse() } else { ord },
+                    Err(e) => {
+                        sort_err = Some(e);
+                        return std::cmp::Ordering::Equal;
+                    }
                 }
             }
             std::cmp::Ordering::Equal
         });
+        if let Some(e) = sort_err {
+            return Err(e);
+        }
     } else {
         // Full evaluator path for complex sort term expressions.
         let mut sort_err: Option<JsonataError> = None;
@@ -4189,6 +4200,51 @@ mod tests {
                 assert_eq!(arr[2], Value::from_json(serde_json::json!({"value": 1})));
             }
             other => panic!("expected Array, got {:?}", other),
+        }
+    }
+
+    /// Regression tests for gnata-bec.3: the `^()` fast path (simple Name
+    /// terms) silently sorted instead of raising T2007/T2008 like the
+    /// general path.
+    #[test]
+    fn sort_mixed_string_number_raises_t2007() {
+        let input =
+            Value::from_json_str(r#"{"items": [{"value": "foo"}, {"value": 2}, {"value": 1}]}"#)
+                .expect("invalid JSON");
+        let err = eval_expr("items^(value)", &input).unwrap_err();
+        assert_eq!(err.code, "T2007");
+    }
+
+    #[test]
+    fn sort_boolean_key_raises_t2008() {
+        let input =
+            Value::from_json_str(r#"{"items": [{"value": true}, {"value": 2}, {"value": 1}]}"#)
+                .expect("invalid JSON");
+        let err = eval_expr("items^(value)", &input).unwrap_err();
+        assert_eq!(err.code, "T2008");
+    }
+
+    #[test]
+    fn sort_null_key_raises_t2008() {
+        let input =
+            Value::from_json_str(r#"{"items": [{"value": 2}, {"value": null}, {"value": 1}]}"#)
+                .expect("invalid JSON");
+        let err = eval_expr("items^(value)", &input).unwrap_err();
+        assert_eq!(err.code, "T2008");
+    }
+
+    #[test]
+    fn sort_missing_key_sorts_last_without_error() {
+        let result = eval_with_data(
+            "items^(value)",
+            r#"{"items": [{"value": 2}, {"other": 9}, {"value": 1}]}"#,
+        );
+        match result {
+            Value::Array(arr) => {
+                assert_eq!(arr[0], Value::from_json(serde_json::json!({"value": 1})));
+                assert_eq!(arr[2], Value::from_json(serde_json::json!({"other": 9})));
+            }
+            other => panic!("expected Array, got {other:?}"),
         }
     }
 
