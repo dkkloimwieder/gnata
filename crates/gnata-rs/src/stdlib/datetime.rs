@@ -3,6 +3,10 @@
 //! Implements XPath/JSONata picture-format datetime formatting and parsing.
 //! Port of Go `functions/datetime_funcs.go`, `datetime_format.go`, `datetime_parse.go`.
 
+use super::number_words::{
+    ONES, TENS, int_to_words, int_to_words_ordinal, ordinal_suffix, roman_value, to_alphabetic,
+    to_roman,
+};
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
@@ -1313,20 +1317,8 @@ fn parse_ordinal_number(runes: &[char]) -> (i64, i64) {
 }
 
 fn parse_roman(runes: &[char]) -> (i64, i64) {
-    let roman_val = |c: char| -> Option<i64> {
-        match c.to_uppercase().next().unwrap_or(c) {
-            'I' => Some(1),
-            'V' => Some(5),
-            'X' => Some(10),
-            'L' => Some(50),
-            'C' => Some(100),
-            'D' => Some(500),
-            'M' => Some(1000),
-            _ => None,
-        }
-    };
     let mut i = 0;
-    while i < runes.len() && roman_val(runes[i]).is_some() {
+    while i < runes.len() && roman_value(runes[i]).is_some() {
         i += 1;
     }
     if i == 0 {
@@ -1335,7 +1327,7 @@ fn parse_roman(runes: &[char]) -> (i64, i64) {
     let mut total: i64 = 0;
     let mut prev: i64 = 0;
     for j in (0..i).rev() {
-        let v = roman_val(runes[j]).unwrap_or(0);
+        let v = roman_value(runes[j]).unwrap_or(0);
         if v < prev {
             total -= v;
         } else {
@@ -1515,33 +1507,7 @@ fn parse_tz_from_input(runes: &[char], component: char) -> (i32, usize) {
 
 fn parse_word_number_from_string(s: &str) -> (usize, i64) {
     let s_lower = s.to_lowercase();
-    let ones = &[
-        "zero",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-    ];
-    let tens = &[
-        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-    ];
-    let (consumed, val) = parse_complex_number(&s_lower, ones, tens);
-    (consumed, val)
+    parse_complex_number(&s_lower, &ONES, &TENS)
 }
 
 struct WordParser<'a> {
@@ -1765,210 +1731,6 @@ const MONTH_NAMES: &[&str] = &[
 const VALID_COMPONENTS: &[char] = &[
     'Y', 'M', 'D', 'd', 'H', 'h', 'm', 's', 'f', 'F', 'Z', 'z', 'P', 'C', 'E', 'W', 'w', 'X', 'x',
 ];
-
-fn to_roman(n: i64, upper: bool) -> String {
-    if n <= 0 {
-        return String::new();
-    }
-    let vals: &[i64] = &[1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
-    let syms: &[&str] = &[
-        "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I",
-    ];
-    let mut n = n;
-    let mut s = String::new();
-    for (i, &v) in vals.iter().enumerate() {
-        while n >= v {
-            s.push_str(syms[i]);
-            n -= v;
-        }
-    }
-    if upper { s } else { s.to_lowercase() }
-}
-
-fn to_alphabetic(n: i64, base: char) -> String {
-    if n <= 0 {
-        return String::new();
-    }
-    let mut n = n;
-    let mut result: Vec<char> = Vec::new();
-    while n > 0 {
-        n -= 1;
-        result.insert(
-            0,
-            char::from_u32(base as u32 + (n % 26) as u32).unwrap_or('?'),
-        );
-        n /= 26;
-    }
-    result.iter().collect()
-}
-
-fn int_to_words(n: i64) -> String {
-    fn below_thousand(n: i64, ones: &[&str], tens: &[&str]) -> String {
-        if n == 0 {
-            return String::new();
-        }
-        if n < 20 {
-            return ones[n as usize].to_string();
-        }
-        if n < 100 {
-            return if n % 10 == 0 {
-                tens[(n / 10) as usize].to_string()
-            } else {
-                format!("{}-{}", tens[(n / 10) as usize], ones[(n % 10) as usize])
-            };
-        }
-        let rem = n % 100;
-        if rem == 0 {
-            format!("{} hundred", ones[(n / 100) as usize])
-        } else {
-            format!(
-                "{} hundred and {}",
-                ones[(n / 100) as usize],
-                below_thousand(rem, ones, tens)
-            )
-        }
-    }
-
-    fn to_words(n: i64, ones: &[&str], tens: &[&str]) -> String {
-        use std::fmt::Write;
-        if n == 0 {
-            return String::new();
-        }
-        if n < 1000 {
-            return below_thousand(n, ones, tens);
-        }
-        let scales: &[(i64, &str)] = &[
-            (1_000_000_000_000, "trillion"),
-            (1_000_000_000, "billion"),
-            (1_000_000, "million"),
-            (1_000, "thousand"),
-        ];
-        for &(scale, name) in scales {
-            if n >= scale {
-                let q = n / scale;
-                let rem = n % scale;
-                let q_word = to_words(q, ones, tens);
-                let mut result = format!("{q_word} {name}");
-                if rem > 0 {
-                    let rem_word = to_words(rem, ones, tens);
-                    if rem < 100 {
-                        let _ = write!(result, " and {rem_word}");
-                    } else {
-                        let _ = write!(result, ", {rem_word}");
-                    }
-                }
-                return result;
-            }
-        }
-        below_thousand(n, ones, tens)
-    }
-
-    if n == 0 {
-        return "zero".to_string();
-    }
-    if n < 0 {
-        return format!("minus {}", int_to_words(-n));
-    }
-    let ones = [
-        "",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-    ];
-    let tens = [
-        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-    ];
-
-    to_words(n, &ones, &tens)
-}
-
-fn int_to_words_ordinal(n: i64) -> String {
-    apply_ordinal_word(&int_to_words(n))
-}
-
-fn apply_ordinal_word(word: &str) -> String {
-    let ordinals: &[(&str, &str)] = &[
-        ("one", "first"),
-        ("two", "second"),
-        ("three", "third"),
-        ("four", "fourth"),
-        ("five", "fifth"),
-        ("six", "sixth"),
-        ("seven", "seventh"),
-        ("eight", "eighth"),
-        ("nine", "ninth"),
-        ("ten", "tenth"),
-        ("eleven", "eleventh"),
-        ("twelve", "twelfth"),
-        ("thirteen", "thirteenth"),
-        ("fourteen", "fourteenth"),
-        ("fifteen", "fifteenth"),
-        ("sixteen", "sixteenth"),
-        ("seventeen", "seventeenth"),
-        ("eighteen", "eighteenth"),
-        ("nineteen", "nineteenth"),
-        ("twenty", "twentieth"),
-        ("thirty", "thirtieth"),
-        ("forty", "fortieth"),
-        ("fifty", "fiftieth"),
-        ("sixty", "sixtieth"),
-        ("seventy", "seventieth"),
-        ("eighty", "eightieth"),
-        ("ninety", "ninetieth"),
-        ("hundred", "hundredth"),
-        ("thousand", "thousandth"),
-        ("million", "millionth"),
-        ("billion", "billionth"),
-        ("trillion", "trillionth"),
-    ];
-    // Find last word.
-    let (prefix, sep, last) = if let Some(pos) = word.rfind([' ', '-']) {
-        let sep = &word[pos..=pos];
-        (&word[..pos], sep, &word[pos + 1..])
-    } else {
-        ("", "", word)
-    };
-    for &(from, to) in ordinals {
-        if last == from {
-            return format!("{prefix}{sep}{to}");
-        }
-    }
-    if let Some(stem) = last.strip_suffix('y') {
-        return format!("{prefix}{sep}{stem}ieth");
-    }
-    format!("{prefix}{sep}{last}th")
-}
-
-fn ordinal_suffix(n: i64) -> &'static str {
-    let abs = n.unsigned_abs();
-    let mod100 = abs % 100;
-    let mod10 = abs % 10;
-    if (11..=13).contains(&mod100) {
-        return "th";
-    }
-    match mod10 {
-        1 => "st",
-        2 => "nd",
-        3 => "rd",
-        _ => "th",
-    }
-}
 
 // ── Calendar math (pure arithmetic, no external crate) ──────────────────────
 

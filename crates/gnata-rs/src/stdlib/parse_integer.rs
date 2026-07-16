@@ -2,6 +2,7 @@
 //!
 //! Port of Go `functions/string_format_integer.go` `fnParseInteger`.
 
+use super::number_words::{roman_value, split_picture_modifier, unicode_digit_zero};
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
@@ -49,29 +50,6 @@ pub fn fn_parse_integer(args: &[Value], _focus: &Value) -> JsonataResult {
         }
         Err(e) => Err(e),
     }
-}
-
-fn split_picture_modifier(picture: &str) -> (&str, &str) {
-    if let Some(idx) = picture.find(';') {
-        (&picture[..idx], &picture[idx + 1..])
-    } else {
-        (picture, "c")
-    }
-}
-
-static UNICODE_ZEROS: &[char] = &[
-    '\u{0660}', '\u{06F0}', '\u{07C0}', '\u{0966}', '\u{09E6}', '\u{0A66}', '\u{0AE6}', '\u{0B66}',
-    '\u{0BE6}', '\u{0C66}', '\u{0CE6}', '\u{0D66}', '\u{0DE6}', '\u{0E50}', '\u{0ED0}', '\u{0F20}',
-    '\u{1040}', '\u{1090}', '\u{17E0}', '\u{1810}', '\u{1946}', '\u{19D0}', '\u{1A80}', '\u{1A90}',
-    '\u{1B50}', '\u{1BB0}', '\u{1C40}', '\u{1C50}', '\u{A620}', '\u{A8D0}', '\u{A900}', '\u{A9D0}',
-    '\u{A9F0}', '\u{AA50}', '\u{ABF0}', '\u{FF10}',
-];
-
-fn unicode_digit_zero(c: char) -> Option<char> {
-    UNICODE_ZEROS
-        .iter()
-        .find(|&&z| c >= z && c <= char::from_u32(z as u32 + 9).unwrap_or(z))
-        .copied()
 }
 
 fn parse_integer_with_picture(s: &str, picture: &str) -> Result<i64, JsonataError> {
@@ -303,24 +281,11 @@ fn words_to_int(s: &str) -> Result<i64, JsonataError> {
 // ── Roman numerals ───────────────────────────────────────────────────────────
 
 fn from_roman(s: &str) -> Result<i64, JsonataError> {
-    fn roman_val(c: char) -> Option<i64> {
-        match c {
-            'I' => Some(1),
-            'V' => Some(5),
-            'X' => Some(10),
-            'L' => Some(50),
-            'C' => Some(100),
-            'D' => Some(500),
-            'M' => Some(1000),
-            _ => None,
-        }
-    }
-
     let chars: Vec<char> = s.chars().collect();
     let mut total: i64 = 0;
 
     for (i, &c) in chars.iter().enumerate() {
-        let v = roman_val(c).ok_or_else(|| {
+        let v = roman_value(c).ok_or_else(|| {
             JsonataError::new(
                 "D3137",
                 format!("$parseInteger: invalid Roman numeral {c:?}"),
@@ -328,7 +293,7 @@ fn from_roman(s: &str) -> Result<i64, JsonataError> {
         })?;
 
         if i + 1 < chars.len()
-            && let Some(next) = roman_val(chars[i + 1])
+            && let Some(next) = roman_value(chars[i + 1])
             && next > v
         {
             total -= v;

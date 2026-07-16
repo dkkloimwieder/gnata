@@ -10,6 +10,7 @@ mod format_integer;
 pub(crate) mod format_number;
 mod hof;
 pub mod hof_fast;
+mod number_words;
 mod numeric;
 mod object;
 mod parse_integer;

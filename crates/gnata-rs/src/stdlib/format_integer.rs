@@ -2,6 +2,10 @@
 //!
 //! Port of Go `functions/string_format_integer.go`, function `fnFormatInteger`.
 
+use super::number_words::{
+    apply_ordinal_word, int_to_words, is_unicode_digit, ordinal_suffix, split_picture_modifier,
+    to_alphabetic, to_roman, unicode_digit_zero,
+};
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
@@ -105,7 +109,7 @@ fn format_integer_with_picture(n: i64, picture: &str) -> Result<String, JsonataE
             // Must contain at least one digit placeholder
             if !chars
                 .iter()
-                .any(|&c| c == '#' || c.is_ascii_digit() || unicode_digit_zero(c) != '\0')
+                .any(|&c| c == '#' || c.is_ascii_digit() || is_unicode_digit(c))
             {
                 return Err(JsonataError::new(
                     "D3130",
@@ -129,14 +133,6 @@ fn format_integer_with_picture(n: i64, picture: &str) -> Result<String, JsonataE
     Ok(result)
 }
 
-fn split_picture_modifier(picture: &str) -> (&str, &str) {
-    if let Some(idx) = picture.find(';') {
-        (&picture[..idx], &picture[idx + 1..])
-    } else {
-        (picture, "c")
-    }
-}
-
 // ── Decimal formatting ───────────────────────────────────────────────────────
 
 fn format_integer_decimal(n: i64, picture: &str) -> Result<String, JsonataError> {
@@ -157,8 +153,7 @@ fn format_integer_decimal(n: i64, picture: &str) -> Result<String, JsonataError>
             found_family = true;
             continue;
         }
-        let z = unicode_digit_zero(c);
-        if z != '\0' {
+        if let Some(z) = unicode_digit_zero(c) {
             if found_family && zero_rune != z {
                 return Err(JsonataError::new(
                     "D3131",
@@ -282,223 +277,6 @@ fn apply_digit_family_rune(s: &str, zero: char) -> String {
     result
 }
 
-// ── Unicode digit support ────────────────────────────────────────────────────
-
-const UNICODE_ZEROS: &[char] = &[
-    '\u{0660}', '\u{06F0}', '\u{07C0}', '\u{0966}', '\u{09E6}', '\u{0A66}', '\u{0AE6}', '\u{0B66}',
-    '\u{0BE6}', '\u{0C66}', '\u{0CE6}', '\u{0D66}', '\u{0DE6}', '\u{0E50}', '\u{0ED0}', '\u{0F20}',
-    '\u{1040}', '\u{1090}', '\u{17E0}', '\u{1810}', '\u{1946}', '\u{19D0}', '\u{1A80}', '\u{1A90}',
-    '\u{1B50}', '\u{1BB0}', '\u{1C40}', '\u{1C50}', '\u{A620}', '\u{A8D0}', '\u{A900}', '\u{A9D0}',
-    '\u{A9F0}', '\u{AA50}', '\u{ABF0}', '\u{FF10}',
-];
-
-fn unicode_digit_zero(c: char) -> char {
-    for &z in UNICODE_ZEROS {
-        let z_u32 = z as u32;
-        let c_u32 = c as u32;
-        if c_u32 >= z_u32 && c_u32 <= z_u32 + 9 {
-            return z;
-        }
-    }
-    '\0'
-}
-
-fn is_unicode_digit(c: char) -> bool {
-    unicode_digit_zero(c) != '\0'
-}
-
-// ── Ordinal suffix ───────────────────────────────────────────────────────────
-
-fn ordinal_suffix(n: i64) -> &'static str {
-    let abs = n.unsigned_abs();
-    let mod100 = abs % 100;
-    let mod10 = abs % 10;
-    if (11..=13).contains(&mod100) {
-        return "th";
-    }
-    match mod10 {
-        1 => "st",
-        2 => "nd",
-        3 => "rd",
-        _ => "th",
-    }
-}
-
-// ── Ordinal words ────────────────────────────────────────────────────────────
-
-fn apply_ordinal_word(word: &str) -> String {
-    let ordinals: &[(&str, &str)] = &[
-        ("one", "first"),
-        ("two", "second"),
-        ("three", "third"),
-        ("four", "fourth"),
-        ("five", "fifth"),
-        ("six", "sixth"),
-        ("seven", "seventh"),
-        ("eight", "eighth"),
-        ("nine", "ninth"),
-        ("ten", "tenth"),
-        ("eleven", "eleventh"),
-        ("twelve", "twelfth"),
-        ("thirteen", "thirteenth"),
-        ("fourteen", "fourteenth"),
-        ("fifteen", "fifteenth"),
-        ("sixteen", "sixteenth"),
-        ("seventeen", "seventeenth"),
-        ("eighteen", "eighteenth"),
-        ("nineteen", "nineteenth"),
-        ("twenty", "twentieth"),
-        ("thirty", "thirtieth"),
-        ("forty", "fortieth"),
-        ("fifty", "fiftieth"),
-        ("sixty", "sixtieth"),
-        ("seventy", "seventieth"),
-        ("eighty", "eightieth"),
-        ("ninety", "ninetieth"),
-        ("hundred", "hundredth"),
-        ("thousand", "thousandth"),
-        ("million", "millionth"),
-        ("billion", "billionth"),
-        ("trillion", "trillionth"),
-    ];
-
-    // Find last word and its separator
-    let (prefix, sep, last) = {
-        let mut last_idx = None;
-        let mut sep_char = ' ';
-        for (i, c) in word.char_indices().rev() {
-            if c == ' ' || c == '-' {
-                last_idx = Some(i);
-                sep_char = c;
-                break;
-            }
-        }
-        match last_idx {
-            Some(idx) => {
-                let prefix = &word[..idx];
-                let last = &word[idx + sep_char.len_utf8()..];
-                (prefix, sep_char.to_string(), last)
-            }
-            None => ("", String::new(), word),
-        }
-    };
-
-    // Check ordinal map
-    for &(cardinal, ordinal) in ordinals {
-        if last == cardinal {
-            return format!("{prefix}{sep}{ordinal}");
-        }
-    }
-
-    // Ends in "y" -> "ieth"
-    if let Some(stem) = last.strip_suffix('y') {
-        return format!("{prefix}{sep}{stem}ieth");
-    }
-
-    // Default: append "th"
-    format!("{prefix}{sep}{last}th")
-}
-
-// ── Number to words ──────────────────────────────────────────────────────────
-
-fn int_to_words(n: i64) -> String {
-    if n == 0 {
-        return "zero".to_string();
-    }
-    if n < 0 {
-        return format!("minus {}", int_to_words(-n));
-    }
-    to_words(n)
-}
-
-fn below_thousand(n: i64) -> String {
-    const ONES: &[&str] = &[
-        "",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-    ];
-    const TENS: &[&str] = &[
-        "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-    ];
-
-    if n == 0 {
-        return String::new();
-    }
-    if n < 20 {
-        return ONES[n as usize].to_string();
-    }
-    if n < 100 {
-        if n % 10 == 0 {
-            return TENS[(n / 10) as usize].to_string();
-        }
-        return format!("{}-{}", TENS[(n / 10) as usize], ONES[(n % 10) as usize]);
-    }
-    // n < 1000
-    let rem = n % 100;
-    if rem == 0 {
-        return format!("{} hundred", ONES[(n / 100) as usize]);
-    }
-    format!(
-        "{} hundred and {}",
-        ONES[(n / 100) as usize],
-        below_thousand(rem)
-    )
-}
-
-const SCALES: &[(&str, i64)] = &[
-    ("trillion", 1_000_000_000_000),
-    ("billion", 1_000_000_000),
-    ("million", 1_000_000),
-    ("thousand", 1_000),
-];
-
-fn to_words(n: i64) -> String {
-    if n == 0 {
-        return String::new();
-    }
-    if n < 1000 {
-        return below_thousand(n);
-    }
-    for &(name, val) in SCALES {
-        if n < val {
-            continue;
-        }
-        let q = n / val;
-        let rem = n % val;
-        let q_word = to_words(q);
-        let mut result = format!("{q_word} {name}");
-        if rem > 0 {
-            let rem_word = to_words(rem);
-            if rem < 100 {
-                result.push_str(" and ");
-                result.push_str(&rem_word);
-            } else {
-                result.push_str(", ");
-                result.push_str(&rem_word);
-            }
-        }
-        return result;
-    }
-    below_thousand(n)
-}
-
 // ── Float to words (for very large numbers) ──────────────────────────────────
 
 fn float_to_words(f: f64) -> String {
@@ -591,51 +369,4 @@ fn to_title_case(s: &str) -> String {
     }
     flush(&mut word_buf, &mut result, &mut capitalize_next);
     result
-}
-
-// ── Roman numerals ───────────────────────────────────────────────────────────
-
-fn to_roman(mut n: i64, upper: bool) -> String {
-    if n <= 0 {
-        return String::new();
-    }
-    let vals: &[(i64, &str)] = &[
-        (1000, "M"),
-        (900, "CM"),
-        (500, "D"),
-        (400, "CD"),
-        (100, "C"),
-        (90, "XC"),
-        (50, "L"),
-        (40, "XL"),
-        (10, "X"),
-        (9, "IX"),
-        (5, "V"),
-        (4, "IV"),
-        (1, "I"),
-    ];
-    let mut result = String::new();
-    for &(v, sym) in vals {
-        while n >= v {
-            result.push_str(sym);
-            n -= v;
-        }
-    }
-    if upper { result } else { result.to_lowercase() }
-}
-
-// ── Alphabetic sequences ─────────────────────────────────────────────────────
-
-fn to_alphabetic(mut n: i64, base: char) -> String {
-    if n <= 0 {
-        return String::new();
-    }
-    let mut result: Vec<char> = Vec::new();
-    while n > 0 {
-        n -= 1;
-        result.push(char::from_u32(base as u32 + (n % 26) as u32).unwrap_or(base));
-        n /= 26;
-    }
-    result.reverse();
-    result.into_iter().collect()
 }
