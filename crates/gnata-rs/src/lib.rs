@@ -41,6 +41,20 @@ pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
 pub use stream::{MetricsHook, StreamEvaluator, StreamStats};
 pub use value::{CompareOp, ObjectMap, Value};
 
+/// Remaining-stack threshold (bytes) below which `stacker::maybe_grow`
+/// allocates a new segment before recursing.
+///
+/// 128 KiB comfortably covers the deepest run of parser/evaluator frames
+/// between two stack checks, so growth triggers before genuine overflow.
+/// Not used on wasm32, where the stack cannot be grown.
+pub(crate) const STACK_RED_ZONE: usize = 128 * 1024;
+
+/// Size (bytes) of each stack segment `stacker::maybe_grow` allocates.
+///
+/// 1 MiB holds thousands of recursion frames per segment, amortizing
+/// allocation cost across deeply nested expressions.
+pub(crate) const STACK_GROW_SIZE: usize = 1024 * 1024;
+
 /// Compare two values with JSONata equality semantics.
 ///
 /// Equivalent to Go's `gnata.DeepEqual(a, b)`. Follows JSONata rules:

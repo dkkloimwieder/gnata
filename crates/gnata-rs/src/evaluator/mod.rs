@@ -37,7 +37,7 @@ const JOIN_FLAG: &str = "%%j";
 pub fn eval(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> JsonataResult {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+        stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
             eval_inner(arena, node, input, env)
         })
     }
@@ -69,7 +69,7 @@ pub(crate) fn eval_with_stack_check(
 ) -> JsonataResult {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+        stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
             eval_inner(arena, node, input, env)
         })
     }
@@ -2076,6 +2076,12 @@ fn apply_arithmetic_nums(op: BinaryOp, ln: f64, rn: f64) -> JsonataResult {
     Ok(Value::Number(result))
 }
 
+/// Maximum number of elements the range operator (`..`) may produce.
+///
+/// Larger ranges error with `D2014`, matching the reference
+/// implementation's 1e7 cap.
+const MAX_RANGE_SIZE: i128 = 10_000_000;
+
 /// Apply range operator to pre-evaluated values.
 fn apply_range(left: &Value, right: &Value) -> JsonataResult {
     // Type-check non-undefined operands BEFORE undefined propagation.
@@ -2124,7 +2130,7 @@ fn apply_range(left: &Value, right: &Value) -> JsonataResult {
         return Ok(Value::Undefined);
     }
     let count_wide = i128::from(end) - i128::from(start) + 1;
-    if count_wide > 10_000_000 {
+    if count_wide > MAX_RANGE_SIZE {
         return Err(JsonataError::new("D2014", "range operator too large"));
     }
     let mut arr = Vec::with_capacity(count_wide as usize);

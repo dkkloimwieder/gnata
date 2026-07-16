@@ -307,6 +307,13 @@ pub fn eval_partial(
     ))))
 }
 
+/// Trampoline iteration budget per unit of configured recursion depth.
+///
+/// A tail-call chain may bounce `counter.max * this` times before the
+/// trampoline reports `U1001`, matching the reference implementation's
+/// cap of max iterations = depth * 10000.
+const TAIL_CALL_ITERATIONS_PER_DEPTH: usize = 10_000;
+
 /// Call a function value with arguments. Contains the trampoline loop for TCO.
 ///
 /// # Errors
@@ -328,7 +335,7 @@ pub fn call_function(
     }
 
     let counter = env.call_counter();
-    let max_iter = counter.max as usize * 10000;
+    let max_iter = counter.max as usize * TAIL_CALL_ITERATIONS_PER_DEPTH;
     let mut current_func = func.clone();
     let mut current_args: Vec<Value> = args.to_vec();
     let mut iter = 0;

@@ -102,7 +102,9 @@ impl Parser {
     fn expression(&mut self, rbp: i32) -> Result<NodeId, JsonataError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            stacker::maybe_grow(128 * 1024, 1024 * 1024, || self.expression_inner(rbp))
+            stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
+                self.expression_inner(rbp)
+            })
         }
         #[cfg(target_arch = "wasm32")]
         {
