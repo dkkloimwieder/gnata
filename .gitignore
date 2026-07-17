@@ -8,6 +8,19 @@ bench/data_100k*.json
 
 # Benchmark results (transient, per-run)
 bench/results/
+bench/results_json/
+bench/result_*.json
+
+# Profiling artifacts (regenerate with perf / cargo flamegraph)
+perf.data*
+bench/flamegraph*.svg
+
+# Compiled Go bench binary (source: bench/go_bench.go)
+bench/go_bench
+
+# Wrapper scripts generated and deleted by bench/run_full.sh
+bench/_go.sh
+bench/_rs.sh
 
 # Large generated fixtures (regenerate with: python3 bench/generate_fixtures.py --sizes 10k,100k)
 bench/fixtures/logs/10k.json
