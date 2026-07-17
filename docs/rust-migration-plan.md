@@ -1,6 +1,15 @@
 # Rust Migration Plan
 
-This document captures all Rust-specific design decisions, dependency choices, and the implementation roadmap for porting gnata from Go to Rust. It is the single source of truth for architectural decisions.
+> **Historical document (2026-04).** This is the plan the port started from,
+> preserved for context. Several decisions changed during implementation: the
+> `Value` enum is reference-counted (`Rc`/`CompactString`) rather than
+> lifetime-free-and-Rc-less, the environment chain is `Rc`+`RefCell` (no
+> bumpalo), errors are a hand-rolled `JsonataError` (no thiserror), datetime
+> math is hand-rolled (no jiff), and arc-swap/dashmap/parking_lot were never
+> needed. For the architecture as built, see the root `CLAUDE.md` and the
+> code in `crates/gnata-rs`.
+
+This document captures all Rust-specific design decisions, dependency choices, and the implementation roadmap for porting gnata from Go to Rust.
 
 ---
 

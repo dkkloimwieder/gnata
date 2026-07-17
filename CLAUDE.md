@@ -1,122 +1,93 @@
 # CLAUDE.md
 
-This file provides authoritative guidance for Claude Code sessions working on the gnata Rust migration.
+Guidance for Claude Code sessions in this repo.
 
-## Project Identity
+## What this is
 
-**gnata-rs** is a Rust port of gnata, a full JSONata 2.x query and transformation language engine originally written in Go (~16K lines). The Go reference implementation lives alongside the Rust code during migration.
+**gnata** is a JSONata 2.x query and transformation engine. The production
+implementation is the Rust crate in `crates/gnata-rs` (crate name `gnata`);
+the original Go implementation (repo root `*.go`, `internal/`, `functions/`)
+is kept as the behavioral reference. The port is feature-complete: all 1,733
+conformance cases pass, and `tests/conformance.rs` asserts zero failures.
 
-- **Branch**: `init-rs`
-- **Goal**: Feature-complete Rust implementation passing all 1,349 test cases (1,283 conformance + 66 supplemental)
-- **Reference**: Go source in repo root (`*.go`) and `internal/`, `functions/`
-
-## Architecture Principles -- Memory Model (Path B Hybrid)
-
-**AST**: Index-based arena (`AstArena` with `Vec<Expr>` and `NodeId(u32)`). No `Box<Node>`, `Rc`, or lifetime annotations. `Send + Sync`. Parser takes `&mut AstArena`, returns `NodeId`. Evaluator takes `&AstArena`.
-
-**Values**: The `Value` enum uses standard owned types (`String`, `Vec`, `IndexMap`). It explicitly **DOES NOT** use lifetimes (`<'bump>`), ensuring the public API is clean and return values are fully owned.
-
-**Sequences**: Implement a dedicated `Sequence` struct (wrapped in `Value::Sequence`) to handle `KeepSingleton` and `ConsArray` flags, distinct from standard `Value::Array`. This is an internal-only variant -- never exposed to users.
-
-**State**: Use `bumpalo::Bump` internally per-evaluation **strictly** for the `Environment` chain and intermediate state to ensure fast O(1) cleanup. NOT for AST, NOT for return values.
-
-**Concurrency**: `ArcSwap` for lock-free COW snapshots of the AST and execution plans. `DashMap` for regex caches -- **must clone the `Arc` before execution to drop the shard lock**.
-
-**Type Fidelity**: `Undefined != Null` semantics must be preserved via `Value::Undefined` and `Value::Null`.
-
-**Error Handling**: `Result<Value, JsonataError>` everywhere. No panics. Use `thiserror` for JSONata spec error codes.
-
-**Execution**: TCO must be implemented via a **Trampoline loop** returning a `TailCall` state, preventing stack overflows on deep recursion.
-
-## Development Commands
+## Commands (run in `crates/gnata-rs`)
 
 ```sh
-# Go (reference implementation)
-go test ./...                  # Run all Go tests (1,283 conformance + unit tests)
-go test -run TestName          # Run specific Go test
-go test -bench=. -benchmem     # Benchmarks
-golangci-lint run              # Lint Go code
-
-# Rust (port)
-cargo build                    # Build
-cargo test                     # Run all tests
-cargo test -- --nocapture      # Tests with stdout
-cargo clippy                   # Lint
-cargo bench                    # Benchmarks
-cargo build --target wasm32-unknown-unknown  # WASM build
+cargo test                             # all tests; conformance gate is strict
+cargo clippy --release --all-targets   # gate: 121 warnings, 0 errors — do not add any
+cargo fmt --check                      # must stay clean
+cargo bench                            # criterion benches
+cargo check --target wasm32-unknown-unknown --no-default-features --features regex-lite
+../../scripts/build-wasm.sh            # optimized WASM build (run from repo root)
+go test ./...                          # Go reference suite (repo root)
 ```
 
-## Testing Strategy
+## Architecture (as built)
 
-- Port the conformance test harness from `suite_test.go` to load JSON test cases from `testdata/groups/`
-- Same test case format: `expr`, `data`/`dataset`, `result`/`undefinedResult`/`code`
-- Run Go tests (`go test ./...`) to validate any new test cases added
-- Track conformance progress: X/1349 passing
+- **AST**: index-based arena (`AstArena` = `Vec<Expr>` + `NodeId(u32)`), built
+  by a hand-written Pratt parser; `process_ast` flattens `.` chains into paths
+  and marks tail calls. `Expression` wraps the arena in an `Arc`: `Send + Sync`,
+  cheap to clone — compile once, evaluate from any thread.
+- **`Value`**: 16-byte enum; the size is load-bearing (Rc-wrapping experiments
+  that grew it regressed benchmarks 12–40%). Strings are `CompactString` (inline
+  ≤24 bytes; beat `Rc<str>` on cache locality in A/B tests), arrays/objects are
+  `Rc<[Value]>` / `Rc<ObjectMap>` with copy-on-write via `Rc::make_mut`,
+  functions are `Box<FunctionValue>`. Deliberately `!Send`: share the
+  `Expression`, build input `Value`s per thread.
+- **`Sequence`**: internal-only `Value` variant carrying the
+  `keep_singleton`/`cons_array` flags. `eval()` collapses it at the API
+  boundary; it must never reach users.
+- **`Environment`**: `Rc` parent chain with `RefCell` bindings and a small
+  cache for non-local lookups; carries the shared call counter and an
+  `Arc<AtomicBool>` cancellation flag.
+- **Errors**: hand-rolled `JsonataError { code, token, value, message }` with
+  JSONata spec codes; `Result` everywhere. Panics only for documented caller
+  bugs (e.g. foreign `NodeId` in `AstArena::get`).
+- **Recursion**: tail calls run through a trampoline over a `TailCall` value
+  (max iterations = max call depth × 10,000); other deep recursion is covered
+  by `stacker::maybe_grow` on native targets (wasm cannot grow its stack).
+- **Fast paths**: `fast_path.rs` (simple path/tape evaluation) and
+  `stdlib/hof_fast.rs` (lambda recognition for HOFs) bypass general dispatch.
+  They must be semantics-preserving: `tests/differential.rs` and the fuzz
+  targets compare them against the general path. When a pattern is ambiguous,
+  don't lift it.
+- **JSON**: simd-json parses input; serde_json (`arbitrary_precision` +
+  `preserve_order`) serializes output; `ryu-js` gives exact ECMAScript
+  `Number.toString()`. indexmap keeps object key order.
+- **Datetime / encodings**: hand-rolled calendar math (no jiff/chrono);
+  base64 and percent-encoding crates for the encoding builtins.
+- **Regex**: `regex` (default) or `regex-lite` (small WASM builds) — enable
+  exactly one; both are finite-automaton, no backtracking.
+- **Public API**: the curated re-exports in `lib.rs`; all modules are
+  `pub(crate)`. The `#[doc(hidden)]` re-exports exist for in-repo
+  tests/benches/fuzz only and carry no stability guarantee.
 
-## Key Dependencies & Why
+## Behavioral invariants (DO NOT VIOLATE)
 
-| Crate | Purpose | Replaces |
-|---|---|---|
-| `arc-swap` | Lock-free COW snapshots | Go `atomic.Pointer` |
-| `dashmap` | Concurrent HashMap | Go `sync.Map` |
-| `parking_lot` | Faster Mutex/RwLock | Go `sync.Mutex` |
-| `bumpalo` | Per-eval bump allocator for environments | Go GC |
-| `regex` | RE2-semantics regex | Go `regexp` |
-| `serde_json` + `arbitrary_precision` + `preserve_order` | JSON with precision + ordered maps | Go `encoding/json` + `OrderedMap` |
-| `indexmap` | Insertion-ordered maps | Go `OrderedMap` |
-| `ryu-js` | ECMAScript `Number.toString()` formatting | Go `FormatFloat` |
-| `jiff` | Timezone-aware datetime | Go `time` |
-| `thiserror` | Structured error types | Go `JSONataError` |
-| `base64` | Base64 encode/decode | Go `encoding/base64` |
-| `percent-encoding` | URL encoding | Go `net/url` |
-| `unicode-segmentation` | Grapheme cluster awareness | Go `unicode` |
-| `fastrand` | Fast non-crypto RNG | Go `math/rand` |
-| `wasm-bindgen` | WASM JS interop (wasm32 only) | Go `syscall/js` |
+1. `undefined = undefined` → `false`; `null = null` → `true`
+2. Sequence collapse: 0 items → undefined, 1 → unwrapped (unless
+   keep-singleton), >1 → array
+3. Field access on arrays auto-maps and flattens
+4. Object key insertion order is preserved through all operations
+5. Number output matches JS `Number.toString()`; `$round` is half-to-even
+6. Boolean coercion: `"0"` truthy, `""` falsy, `"false"` truthy
+7. Sort is stable; nils sort after non-nils
+8. `$eval()` shares the call counter with its parent evaluation
 
-## Behavioral Invariants (DO NOT VIOLATE)
+## Conventions
 
-1. `undefined = undefined` returns `false` (not `true`)
-2. `null = null` returns `true`
-3. Sequence collapse: len 0 -> None, len 1 -> unwrap (unless KeepSingleton), len > 1 -> array
-4. Auto-mapping: field access on arrays maps across elements and flattens
-5. `$eval()` shares call counter with parent evaluation
-6. Tail-call optimization via trampoline (max iterations = depth * 10000)
-7. Sort is stable; multi-key comparison; nil sorts after non-nil
-8. Object key insertion order must be preserved throughout all operations
-9. Number formatting must match JavaScript's `Number.toString()` (use `ryu-js`)
-10. Boolean coercion: `"0"` is truthy, `""` is falsy, `"false"` is truthy
+- Lint suppressions use `#[expect(...)]`, with a `reason` when non-obvious;
+  tests may unwrap/panic (see `clippy.toml`). Keep `cargo fmt --check` clean.
+- Gate performance changes with a same-session A/B (saved criterion baselines
+  drift); gate correctness changes on the conformance suite.
 
-## Go Compilation Pipeline (Reference)
+## References
 
-```
-Expression String -> Lexer -> Parser -> ProcessAST -> AnalyzeFastPath -> Expression
-```
-
-1. **Lexer** (`internal/lexer/`) -- 54 token types, context-sensitive `/`
-2. **Parser** (`internal/parser/`) -- Pratt parser with binding power table
-3. **AST Processing** (`parser.ProcessAST`) -- flattens `.` chains into paths, marks tail calls
-4. **Fast-Path Analysis** (`parser.AnalyzeFastPath`) -- classifies for GJSON optimization (defer in Rust)
-5. **Evaluation** (`internal/evaluator/`) -- tree-walking dispatch by node type
-
-## Key Design Decisions
-
-- **Parser**: Hand-written Pratt parser, directly translated from Go. No parser combinator libraries.
-- **Regex**: `regex` crate -- same RE2/finite-automaton semantics as Go's `regexp`. Named captures, flags, no backtracking.
-- **Concurrency**: `arc-swap` -- direct translation of Go's COW pattern. No architectural redesign.
-- **Fast-Path**: Deferred until after full evaluator passes all tests. Performance feature, not correctness.
-- **WASM**: 50-200 KB binaries (vs 2-3 MB Go). `wasm-bindgen` + `wasm-pack` + `wasm-opt`.
-- **Number formatting**: `ryu-js` for exact ECMAScript `Number.toString()`. Custom helper for round-half-away-from-zero (Rust's `f64::round()` uses banker's rounding).
-- **Cancellation**: `Arc<AtomicBool>` checked at expression boundaries. No async needed.
-
-See `docs/rust-migration-plan.md` for full rationale, code examples, and the 13-phase implementation sequence.
-
-## Reference
-
-- **Migration plan**: `docs/rust-migration-plan.md` -- dependencies, architecture, implementation phases
-- **Behavioral spec**: `docs/spec.md` -- 1,966-line authoritative reference for all JSONata semantics
-- **Migration hazards**: `docs/migration-hazards.md` -- 10 ranked Go→Rust pitfalls with code examples
-- **Behaviors catalog**: `docs/behaviors.md` -- truth tables, error codes, equality rules
-- **Go source**: `*.go`, `internal/`, `functions/`
-- **Test suite**: `testdata/groups/` (113 directories, 1,349 cases)
-- **Test datasets**: `testdata/datasets/`
-- **JSONata spec**: https://jsonata.org
+- `docs/spec.md` — authoritative behavioral spec (derived from the Go code)
+- `docs/behaviors.md` — truth tables, error codes, equality rules
+- `docs/migration-hazards.md` — Go→Rust pitfalls encountered in the port
+- `docs/rust-migration-plan.md` — **historical**: the original plan; several
+  decisions changed during implementation. Where it disagrees with the code
+  or this file, the code wins.
+- Test suite: `testdata/groups/` (112 groups) + `testdata/datasets/`
+- JSONata language: https://jsonata.org
