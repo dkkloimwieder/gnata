@@ -13,7 +13,7 @@ DHAT_BIN="$RUST_DIR/target/profiling/gnata-dhat"
 
 echo "=== Building ==="
 cd "$ROOT" && go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
-cd "$RUST_DIR" && cargo build --release --bin gnata-bench 2>&1 | tail -1
+cd "$RUST_DIR" && cargo build --release --features bench-bin --bin gnata-bench 2>&1 | tail -1
 cargo build --features dhat-heap --bin gnata-dhat --profile profiling 2>&1 | tail -1
 
 # Short-key expression

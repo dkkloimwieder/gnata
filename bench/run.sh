@@ -23,11 +23,11 @@ go build -o "$GO_BIN" "$BENCH_DIR/go_bench.go"
 
 echo "=== Building Rust benchmark CLI (release) ==="
 cd "$RUST_DIR"
-cargo build --release --bin gnata-bench 2>&1 | tail -1
+cargo build --release --features bench-bin --bin gnata-bench 2>&1 | tail -1
 
 echo "=== Building WASI benchmark CLI (release) ==="
 cd "$RUST_DIR"
-cargo build --release --target wasm32-wasip2 --bin gnata-bench 2>&1 | tail -1
+cargo build --release --target wasm32-wasip2 --features bench-bin --bin gnata-bench 2>&1 | tail -1
 
 echo "=== Checking JS (jsonata-js) dependency ==="
 cd "$BENCH_DIR"

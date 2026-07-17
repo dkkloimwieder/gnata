@@ -2,8 +2,26 @@
 name = "gnata"
 version = "0.1.0"
 edition = "2024"
+# Floor derives from let-chains (stabilized 1.88); edition 2024 itself needs
+# only 1.85. Older toolchains are not tested in CI.
+rust-version = "1.88"
 description = "JSONata 2.x query and transformation engine"
 license = "MIT"
+repository = "https://github.com/dkkloimwieder/gnata"
+readme = "README.md"
+keywords = ["jsonata", "json", "query", "transformation", "wasm"]
+categories = ["parser-implementations", "wasm"]
+# Only library sources ship to crates.io. The integration tests need
+# testdata/ and the benches need bench/ data files, both at the repo root
+# outside this package; bench sources are still included so the [[bench]]
+# targets below remain valid.
+include = [
+    "src/**",
+    "benches/**",
+    "examples/**",
+    "README.md",
+    "LICENSE",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -11,41 +29,39 @@ crate-type = ["cdylib", "rlib"]
 bench = false
 
 [dependencies]
-
-# Parsing & Regex — default uses full `regex` crate with Unicode support.
-# Enable `regex-lite` feature for smaller WASM builds (~250KB savings).
+# Regex backend — enable exactly one. The default `regex` feature uses the
+# full crate (Unicode-complete, RE2 semantics, same model as Go's regexp).
+# The `regex-lite` feature shrinks WASM builds by ~250 KB.
 regex = { version = "1.12", optional = true }
 regex-lite = { version = "0.1", optional = true }
 
-# JSON & Serialization
+# JSON parsing & serialization. simd-json parses input documents; serde_json
+# provides arbitrary-precision numbers and ordered maps for output.
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
+simd-json = { version = "0.17.0", features = ["serde_impl"] }
 
-# Error handling — hand-rolled JsonataError, no thiserror needed
+# Value internals: insertion-ordered object maps (behavioral invariant #8)
+# and inline small strings for keys and string values.
+indexmap = "2"
+compact_str = { version = "0.9.0", features = ["serde"] }
 
-# Numeric formatting
+# Exact ECMAScript Number.toString() formatting (behavioral invariant #9).
 ryu-js = "1.0"
 
-
-# Encoding
+# Encoding builtins: $base64encode/$base64decode, $encodeUrl/$decodeUrl.
 base64 = "0.22"
 percent-encoding = "2.3"
 
-
-
-# RNG
+# Non-crypto RNG for $random and $shuffle.
 fastrand = "2"
 
-
-# Stack growth (mirrors Go's auto-growing goroutine stacks) — not available on WASM
-# stacker is in [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-
-# Profiling (optional)
+# Heap profiling for the gnata-dhat bin only (feature: dhat-heap).
 dhat = { version = "0.3", optional = true }
-simd-json = { version = "0.17.0", features = ["serde_impl"] }
-indexmap = "2"
-compact_str = { version = "0.9.0", features = ["serde"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Segmented stack growth at recursion entry points (mirrors Go's growable
+# goroutine stacks). WASM cannot grow its stack, so it is excluded there.
 stacker = "0.1"
 mimalloc = { version = "0.1", optional = true }
 
@@ -55,23 +71,33 @@ js-sys = "0.3"
 
 [features]
 default = ["mimalloc-alloc", "regex"]
-regex-lite = ["dep:regex-lite"]
+# Full Unicode regex backend (recommended).
 regex = ["dep:regex"]
-dhat-heap = ["dhat"]
+# Lighter regex backend for smaller WASM builds.
+regex-lite = ["dep:regex-lite"]
+# mimalloc as the global allocator on native targets.
 mimalloc-alloc = ["mimalloc"]
+# Heap profiling instrumentation for the gnata-dhat bin.
+dhat-heap = ["dhat"]
+# Build the gnata-bench CLI (repo benchmarking tool, not part of the library).
+bench-bin = []
 
 [dev-dependencies]
 serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_order"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.11.0"
 
+# Repo tooling bins, gated behind features so `cargo install gnata` and
+# `cargo publish --dry-run` never build them.
 [[bin]]
 name = "gnata-bench"
 path = "src/bin/bench.rs"
+required-features = ["bench-bin"]
 
 [[bin]]
 name = "gnata-dhat"
 path = "src/bin/dhat_profile.rs"
+required-features = ["dhat-heap"]
 
 [[bench]]
 name = "eval"
