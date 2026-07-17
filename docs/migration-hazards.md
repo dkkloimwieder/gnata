@@ -319,6 +319,39 @@ The call counter should be a `Cell<u32>` allocated in the bump arena, with a raw
 
 ---
 
+## Hazard 11: Two Number-Formatting Layers
+
+### Go Pattern
+```go
+// internal/evaluator/eval_helpers.go:72 — $string() casting only
+func FormatFloat(n float64) string {
+    // strconv.FormatFloat(n, 'g', 15, 64) — 15 significant digits
+}
+
+// bench/go_bench.go:68 — JSON output of results
+out, _ := json.Marshal(result)  // shortest round-trip, ES6-style
+```
+
+### Why It's Dangerous
+The Go reference formats numbers differently at two layers: `$string()` and
+string coercion use `FormatFloat` ('g', 15 — an approximation of JS
+`Number.toString()` that truncates to 15 significant digits), while JSON
+serialization of results uses `encoding/json` (shortest round-trip, matching
+`JSON.stringify`). The two agree for almost all doubles, so a port that wires
+the `$string` formatter into JSON output passes the conformance suite and
+still silently corrupts any value whose shortest form needs 16–17 digits:
+`25.1 * 3 * (1 - 0.1)` = `67.77000000000001` serializes as `67.77`, which
+re-parses one ULP off. Found only by byte-diffing benchmark output against
+the reference engines (gnata-1jc).
+
+### Rust Approach
+Keep the layers separate: `format_float` ('g' 15) for `$string()`/casting per
+`docs/spec.md`, and ryu-js (`Buffer::format_finite`, exact ECMAScript
+`Number.toString()`) in `Value::to_json`/`write_json`. The regression test
+`json_number_output_round_trips` pins both behaviors.
+
+---
+
 ## Summary: Migration Risk Ranking
 
 | # | Hazard | Risk | Complexity |

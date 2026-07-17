@@ -488,8 +488,10 @@ impl Value {
                     // NaN/Inf → null in JSON (matches JS behavior)
                     serde_json::Value::Null
                 } else {
-                    // Use ryu-js formatting to get JS-compatible string, then parse as Number
-                    let s = format_float(*n);
+                    // ryu-js: exact ECMAScript Number.toString(). JSON output
+                    // must round-trip (like JS JSON.stringify / Go json.Marshal);
+                    // format_float's 'g'15 is only for $string() casting.
+                    let s = ryu_js::Buffer::new().format_finite(*n).to_owned();
                     Number::from_string_unchecked(s).into()
                 }
             }
@@ -517,8 +519,9 @@ impl Value {
                 if n.is_nan() || n.is_infinite() {
                     buf.extend_from_slice(b"null");
                 } else {
-                    let s = format_float(*n);
-                    buf.extend_from_slice(s.as_bytes());
+                    // ryu-js, not format_float: JSON output must round-trip
+                    // (see to_json).
+                    buf.extend_from_slice(ryu_js::Buffer::new().format_finite(*n).as_bytes());
                 }
             }
             Value::String(s) => {
@@ -809,6 +812,26 @@ mod tests {
         let nested = Value::Object(Rc::new(obj));
         let expected = serde_json::to_string(&nested.to_json()).unwrap();
         assert_eq!(expected, nested.to_json_string());
+    }
+
+    /// JSON output must round-trip: numbers needing more than 15 significant
+    /// digits keep full precision (ryu-js), unlike `$string()`'s 'g'15
+    /// casting. Regression test for gnata-1jc, where `$sum` bench results
+    /// printed 1 ULP off the js/Go reference output.
+    #[test]
+    fn json_number_output_round_trips() {
+        // 25.1 * 3 * (1 - 0.1) in f64 — shortest form needs 16 digits.
+        let n = 67.770_000_000_000_01_f64;
+        let v = Value::Number(n);
+        assert_eq!(v.to_json_string(), "67.77000000000001");
+        assert_eq!(
+            serde_json::to_string(&v.to_json()).unwrap(),
+            "67.77000000000001"
+        );
+        let back = Value::from_json_str(&v.to_json_string()).unwrap();
+        assert_eq!(back.as_f64().map(f64::to_bits), Some(n.to_bits()));
+        // $string() casting intentionally stays at 15 significant digits.
+        assert_eq!(format_float(n), "67.77");
     }
 
     // ── Size validation ───────────────────────────────────────────────
