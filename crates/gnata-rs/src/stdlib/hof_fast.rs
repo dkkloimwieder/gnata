@@ -1173,12 +1173,12 @@ mod tests {
         let items: Vec<Value> = values
             .iter()
             .map(|&x| {
-                let mut obj = crate::value::ObjectMap::new();
+                let mut obj = crate::value::ObjectMap::default();
                 obj.insert("x".into(), Value::Number(x));
                 Value::Object(Rc::new(obj))
             })
             .collect();
-        let mut root = crate::value::ObjectMap::new();
+        let mut root = crate::value::ObjectMap::default();
         root.insert("nums".into(), Value::Array(Rc::from(items)));
         Value::Object(Rc::new(root))
     }

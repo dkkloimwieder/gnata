@@ -81,16 +81,16 @@ impl FuzzValue {
                 let vals: Vec<Value> = items.iter().map(FuzzLeaf::to_value).collect();
                 Value::Array(Rc::from(vals))
             }
-            FuzzValue::EmptyObject => Value::Object(Rc::new(ObjectMap::new())),
+            FuzzValue::EmptyObject => Value::Object(Rc::new(ObjectMap::default())),
             FuzzValue::SmallObject(pairs) => {
-                let mut map = ObjectMap::new();
+                let mut map = ObjectMap::default();
                 for (k, v) in pairs {
                     map.insert(k.as_str().into(), v.to_value());
                 }
                 Value::Object(Rc::new(map))
             }
             FuzzValue::Nested(n) => {
-                let mut map = ObjectMap::new();
+                let mut map = ObjectMap::default();
                 map.insert(n.key.as_str().into(), n.inner.to_value());
                 let arr: Vec<Value> = n.extra.iter().map(FuzzLeaf::to_value).collect();
                 map.insert("arr".into(), Value::Array(Rc::from(arr)));

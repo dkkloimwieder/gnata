@@ -7,14 +7,14 @@ use std::rc::Rc;
 
 /// Inputs spanning every Value shape: scalars, strings, arrays, nested objects.
 fn build_datasets() -> Vec<Value> {
-    let mut item1 = ObjectMap::new();
+    let mut item1 = ObjectMap::default();
     item1.insert("x".into(), Value::Number(1.0));
     item1.insert("name".into(), Value::String("alpha".into()));
-    let mut item2 = ObjectMap::new();
+    let mut item2 = ObjectMap::default();
     item2.insert("x".into(), Value::Number(2.5));
     item2.insert("name".into(), Value::String("beta".into()));
 
-    let mut inner = ObjectMap::new();
+    let mut inner = ObjectMap::default();
     inner.insert(
         "b".into(),
         Value::Array(Rc::from(vec![
@@ -23,7 +23,7 @@ fn build_datasets() -> Vec<Value> {
             Value::Number(3.0),
         ])),
     );
-    let mut root = ObjectMap::new();
+    let mut root = ObjectMap::default();
     root.insert("a".into(), Value::Object(Rc::new(inner)));
     root.insert("name".into(), Value::String("root".into()));
     root.insert("flag".into(), Value::Bool(true));
@@ -51,7 +51,7 @@ fn build_datasets() -> Vec<Value> {
             Value::Null,
             Value::Bool(true),
         ])),
-        Value::Object(Rc::new(ObjectMap::new())),
+        Value::Object(Rc::new(ObjectMap::default())),
         Value::Object(Rc::new(root)),
     ]
 }

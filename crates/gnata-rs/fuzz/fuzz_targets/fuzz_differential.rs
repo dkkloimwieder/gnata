@@ -81,7 +81,7 @@ fuzz_target!(|input: Input| {
         .iter()
         .take(64)
         .map(|item| {
-            let mut obj = ObjectMap::new();
+            let mut obj = ObjectMap::default();
             if let Some(v) = item.x.to_value() {
                 obj.insert("x".into(), v);
             }
@@ -94,7 +94,7 @@ fuzz_target!(|input: Input| {
             Value::Object(Rc::new(obj))
         })
         .collect();
-    let mut root = ObjectMap::new();
+    let mut root = ObjectMap::default();
     root.insert("items".into(), Value::Array(Rc::from(items)));
     let data = Value::Object(Rc::new(root));
 

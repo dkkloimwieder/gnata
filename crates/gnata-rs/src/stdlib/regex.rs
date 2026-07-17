@@ -84,7 +84,7 @@ fn build_match_object(s: &str, caps: &Captures, m: &Match) -> Value {
         }
     }
 
-    let mut obj = crate::value::ObjectMap::new();
+    let mut obj = crate::value::ObjectMap::default();
     obj.insert("match".into(), Value::String(match_str));
     obj.insert("start".into(), Value::Number(start));
     obj.insert("end".into(), Value::Number(end));
@@ -181,7 +181,7 @@ fn match_with_custom_matcher(
             .cloned()
             .unwrap_or(Value::Array(Rc::from(vec![])));
 
-        let mut match_obj = crate::value::ObjectMap::new();
+        let mut match_obj = crate::value::ObjectMap::default();
         match_obj.insert("match".into(), match_val);
         match_obj.insert("index".into(), start_val);
         match_obj.insert("groups".into(), groups_val);

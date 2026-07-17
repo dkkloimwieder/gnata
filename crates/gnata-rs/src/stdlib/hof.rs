@@ -615,7 +615,7 @@ fn sift_object(
     env: &Rc<Environment>,
     arena: &AstArena,
 ) -> JsonataResult {
-    let mut result = crate::value::ObjectMap::new();
+    let mut result = crate::value::ObjectMap::default();
     for (key, val) in obj.iter() {
         let call_args = vec![
             val.clone(),

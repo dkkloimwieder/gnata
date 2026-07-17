@@ -58,6 +58,7 @@ fastrand = "2"
 
 # Heap profiling for the gnata-dhat bin only (feature: dhat-heap).
 dhat = { version = "0.3", optional = true }
+foldhash = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Segmented stack growth at recursion entry points (mirrors Go's growable

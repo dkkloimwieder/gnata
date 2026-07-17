@@ -234,7 +234,7 @@ mod tests {
             .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
         );
         let obj = |k: f64| {
-            let mut m = crate::value::ObjectMap::new();
+            let mut m = crate::value::ObjectMap::default();
             m.insert("a".into(), n(k));
             Value::Object(Rc::new(m))
         };

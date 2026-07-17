@@ -398,7 +398,7 @@ fn collect_descendants(input: &Value, seq: &mut Sequence) {
 fn eval_regex(pattern: &str, flags: &str) -> Value {
     // For now, return a map with pattern and flags for the regex.
     // Full regex evaluation will be implemented with the stdlib.
-    let mut obj = crate::value::ObjectMap::new();
+    let mut obj = crate::value::ObjectMap::default();
     obj.insert("pattern".into(), Value::String(pattern.into()));
     obj.insert("flags".into(), Value::String(flags.into()));
     Value::Object(Rc::new(obj))
@@ -1353,7 +1353,7 @@ fn eval_tuple_group(
     group: &crate::parser::GroupExpr,
     ctxs: &[(Value, Rc<Environment>)],
 ) -> JsonataResult {
-    let mut result_map = crate::value::ObjectMap::new();
+    let mut result_map = crate::value::ObjectMap::default();
 
     for pair in &group.pairs {
         let key_node = pair[0];
@@ -2480,7 +2480,7 @@ fn apply_regex_chain(piped: &Value, regex_obj: &crate::value::ObjectMap) -> Json
             )
         })?;
         // Build match object similar to $match.
-        let mut obj = crate::value::ObjectMap::new();
+        let mut obj = crate::value::ObjectMap::default();
         obj.insert("match".into(), Value::String(m.as_str().into()));
         let start = s[..m.start()].chars().count();
         let end = s[..m.end()].chars().count();
@@ -2567,7 +2567,7 @@ fn eval_unary(
         }
         UnaryOp::ObjCons => {
             // Object constructor.
-            let mut obj = crate::value::ObjectMap::new();
+            let mut obj = crate::value::ObjectMap::default();
             // lhs is flat [k0,v0,k1,v1,...]
             let mut i = 0;
             while i + 1 < lhs_nodes.len() {
@@ -3227,7 +3227,7 @@ fn eval_group_by(
         other => vec![other],
     };
 
-    let mut out_obj = crate::value::ObjectMap::new();
+    let mut out_obj = crate::value::ObjectMap::default();
     let mut key_set: std::collections::HashSet<compact_str::CompactString> =
         std::collections::HashSet::new();
 
@@ -4217,7 +4217,7 @@ mod tests {
         let result = eval_expr(r#"$${id: value}"#, &Value::from_json_str("[]").unwrap()).unwrap();
         assert_eq!(
             result,
-            Value::Object(Rc::new(crate::value::ObjectMap::new()))
+            Value::Object(Rc::new(crate::value::ObjectMap::default()))
         );
     }
 

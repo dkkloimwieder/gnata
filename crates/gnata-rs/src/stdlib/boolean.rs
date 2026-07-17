@@ -82,7 +82,7 @@ mod tests {
         )));
         // Objects: empty → false, non-empty → true.
         assert!(!b(fn_boolean(
-            &[Value::Object(Rc::new(crate::value::ObjectMap::new()))],
+            &[Value::Object(Rc::new(crate::value::ObjectMap::default()))],
             U
         )));
         // Undefined propagates.

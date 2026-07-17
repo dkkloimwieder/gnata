@@ -395,6 +395,7 @@ dependencies = [
  "criterion",
  "dhat",
  "fastrand",
+ "foldhash 0.2.0",
  "indexmap",
  "js-sys",
  "mimalloc",

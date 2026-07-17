@@ -79,7 +79,7 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
     let spread_one = |obj: &crate::value::ObjectMap| -> Vec<Value> {
         obj.iter()
             .map(|(k, v)| {
-                let mut m = crate::value::ObjectMap::new();
+                let mut m = crate::value::ObjectMap::default();
                 m.insert(k.clone(), v.clone());
                 Value::Object(Rc::new(m))
             })
@@ -112,7 +112,7 @@ pub fn fn_merge(args: &[Value], _focus: &Value) -> JsonataResult {
     if args[0].is_undefined() {
         return Ok(Value::Undefined);
     }
-    let mut merged = crate::value::ObjectMap::new();
+    let mut merged = crate::value::ObjectMap::default();
     let merge_obj = |merged: &mut crate::value::ObjectMap, obj: &crate::value::ObjectMap| {
         for (k, v) in obj {
             merged.insert(k.clone(), v.clone());
@@ -190,7 +190,7 @@ mod tests {
     const U: &Value = &Value::Undefined;
 
     fn obj(pairs: &[(&str, f64)]) -> Value {
-        let mut m = crate::value::ObjectMap::new();
+        let mut m = crate::value::ObjectMap::default();
         for (k, v) in pairs {
             m.insert((*k).into(), Value::Number(*v));
         }

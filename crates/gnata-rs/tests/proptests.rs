@@ -36,7 +36,7 @@ fn arb_value() -> impl Strategy<Value = Value> {
                 // Objects
                 prop::collection::vec(("[a-zA-Z_][a-zA-Z0-9_]{0,10}", inner), 0..5,).prop_map(
                     |pairs| {
-                        let mut map = ObjectMap::new();
+                        let mut map = ObjectMap::default();
                         for (k, v) in pairs {
                             map.insert(CompactString::from(k), v);
                         }

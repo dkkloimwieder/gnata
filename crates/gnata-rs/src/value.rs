@@ -14,7 +14,10 @@ use crate::error::{JsonataError, JsonataResult};
 /// Object map used in Value::Object. Uses IndexMap to preserve insertion
 /// order (JSONata behavioral invariant #8). CompactString keys inline ≤24
 /// bytes — covers all common JSON field names with zero heap allocation.
-pub type ObjectMap = indexmap::IndexMap<CompactString, Value>;
+/// foldhash instead of SipHash: key lookup dominates path evaluation on
+/// long field names (~16ns → ~11ns per get), and insertion order — the
+/// only order JSONata semantics depend on — is hasher-independent.
+pub type ObjectMap = indexmap::IndexMap<CompactString, Value, foldhash::fast::RandomState>;
 
 /// Ordering comparison operators accepted by [`Value::compare`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -672,7 +675,10 @@ impl<'de> serde::de::Visitor<'de> for ValueVisitor {
     where
         A: serde::de::MapAccess<'de>,
     {
-        let mut obj = ObjectMap::with_capacity(map.size_hint().unwrap_or(0));
+        let mut obj = ObjectMap::with_capacity_and_hasher(
+            map.size_hint().unwrap_or(0),
+            foldhash::fast::RandomState::default(),
+        );
         while let Some(key) = map.next_key::<CompactString>()? {
             let val: Value = map.next_value()?;
             obj.insert(key, val);
@@ -792,7 +798,7 @@ mod tests {
                 Value::String("two".into()),
             ])),
             Value::Array(Rc::from(vec![])),
-            Value::Object(Rc::new(ObjectMap::new())),
+            Value::Object(Rc::new(ObjectMap::default())),
         ];
 
         for val in &cases {
@@ -802,7 +808,7 @@ mod tests {
         }
 
         // Nested object
-        let mut obj = ObjectMap::new();
+        let mut obj = ObjectMap::default();
         obj.insert("key".into(), Value::String("val".into()));
         obj.insert("num".into(), Value::Number(99.0));
         obj.insert(
@@ -912,11 +918,11 @@ mod tests {
 
     #[test]
     fn deep_equal_objects() {
-        let mut a = ObjectMap::new();
+        let mut a = ObjectMap::default();
         a.insert(CompactString::from("x"), Value::Number(1.0));
         a.insert(CompactString::from("y"), Value::Number(2.0));
 
-        let mut b = ObjectMap::new();
+        let mut b = ObjectMap::default();
         b.insert(CompactString::from("y"), Value::Number(2.0));
         b.insert(CompactString::from("x"), Value::Number(1.0));
 

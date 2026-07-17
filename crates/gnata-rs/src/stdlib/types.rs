@@ -78,7 +78,7 @@ mod tests {
             "array"
         );
         assert_eq!(
-            type_name(Value::Object(Rc::new(crate::value::ObjectMap::new()))),
+            type_name(Value::Object(Rc::new(crate::value::ObjectMap::default()))),
             "object"
         );
         assert!(matches!(
