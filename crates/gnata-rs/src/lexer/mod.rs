@@ -13,6 +13,7 @@ pub struct Lexer {
 }
 
 impl Lexer {
+    /// Create a lexer over a JSONata source string.
     pub fn new(src: &str) -> Self {
         Self {
             src: src.as_bytes().to_vec(),

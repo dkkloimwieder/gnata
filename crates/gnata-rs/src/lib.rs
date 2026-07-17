@@ -1,5 +1,56 @@
+//! A [JSONata](https://jsonata.org) 2.x query and transformation engine.
+//!
+//! Compile an expression once with [`Expression::compile`], then evaluate it
+//! against any number of inputs:
+//!
+//! ```
+//! use gnata::Expression;
+//!
+//! # fn main() -> Result<(), gnata::JsonataError> {
+//! let expr = Expression::compile("$sum(Order.Product.(Price * Quantity))")?;
+//! let result = expr.evaluate(r#"{
+//!     "Order": [
+//!         {"Product": [{"Price": 34.5, "Quantity": 2}]},
+//!         {"Product": [{"Price": 21.5, "Quantity": 1}]}
+//!     ]
+//! }"#)?;
+//! assert_eq!(result.as_f64(), Some(90.5));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # API overview
+//!
+//! - [`Expression`] — a compiled expression; `Send + Sync` and cheap to
+//!   clone, so compile once and share across threads.
+//! - [`Value`] — the JSON-plus-`undefined` value type results come in.
+//!   Deliberately `!Send` (reference-counted, copy-on-write); build inputs
+//!   per thread.
+//! - [`JsonataError`] — structured errors carrying JSONata spec codes.
+//! - [`new_custom_env`] / [`CustomFunc`] — register Rust functions callable
+//!   from expressions.
+//! - [`StreamEvaluator`] — run many expressions over a stream of inputs.
+//! - [`format()`](fn@format) / [`highlight`] — pretty-print or
+//!   syntax-highlight JSONata source.
+//!
+//! # Semantics
+//!
+//! This engine preserves JSONata reference semantics: `undefined` and
+//! `null` are distinct, object key order is insertion order, number
+//! formatting matches JavaScript's `Number.toString()`, and tail calls are
+//! trampolined so deep recursion cannot overflow the stack.
+//!
+//! # Cargo features
+//!
+//! - `regex` *(default)* — full Unicode regex backend.
+//! - `regex-lite` — lighter backend for smaller WASM builds (enable exactly
+//!   one of the two).
+//! - `mimalloc-alloc` *(default)* — mimalloc as the global allocator on
+//!   native targets.
+
 // Pedantic by default, with targeted allows
 #![warn(clippy::pedantic)]
+#![warn(missing_docs)]
 // Cast family -- too noisy for f64-based numeric engine
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]

@@ -2,6 +2,10 @@
 //!
 //! Port of Go `internal/evaluator/eval_function.go` and `env.go` function types.
 
+// Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
+// not part of the documented public API.
+#![allow(missing_docs)]
+
 use std::fmt;
 use std::rc::Rc;
 

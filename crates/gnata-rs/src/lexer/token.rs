@@ -1,3 +1,7 @@
+// Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
+// not part of the documented public API.
+#![allow(missing_docs)]
+
 /// Token type identifying the category of a lexed token.
 ///
 /// Binding power comments indicate Pratt parser precedence (used in Phase 3).

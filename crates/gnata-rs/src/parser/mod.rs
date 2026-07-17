@@ -9,15 +9,14 @@ pub use process::process_ast;
 use crate::error::JsonataError;
 use crate::lexer::{Lexer, Token, TokenType};
 
-/// Hand-written Pratt parser for JSONata expressions.
-///
-/// Direct port of Go `internal/parser/parser.go`.
-/// Takes `&mut AstArena`, returns `NodeId` for the root expression.
 /// Maximum nesting depth for expressions. Prevents stack overflow from deeply
 /// nested input like `-(-(-(-(...)))) `.
 const MAX_PARSE_DEPTH: usize = 500;
 
-
+/// Hand-written Pratt parser for JSONata expressions.
+///
+/// Direct port of Go `internal/parser/parser.go`.
+/// Takes `&mut AstArena`, returns `NodeId` for the root expression.
 pub struct Parser {
     lex: Lexer,
     token: Token,

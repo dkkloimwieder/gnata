@@ -13,13 +13,18 @@ use std::fmt;
 /// - U1001: Stack overflow
 #[derive(Debug, Clone)]
 pub struct JsonataError {
+    /// JSONata spec error code, e.g. `"S0201"` or `"T2010"`.
     pub code: &'static str,
+    /// Source token the error is attached to, if any (parse errors).
     pub token: String,
+    /// Offending value rendered as text, if the error carries one.
     pub value: Option<String>,
+    /// Human-readable description of the error.
     pub message: String,
 }
 
 impl JsonataError {
+    /// Create an error with a spec code and message.
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -29,6 +34,7 @@ impl JsonataError {
         }
     }
 
+    /// Create an error carrying only a spec code, with no message.
     pub fn with_code(code: &'static str) -> Self {
         Self {
             code,
@@ -38,12 +44,14 @@ impl JsonataError {
         }
     }
 
+    /// Attach the source token the error refers to.
     #[must_use]
     pub fn with_token(mut self, token: impl Into<String>) -> Self {
         self.token = token.into();
         self
     }
 
+    /// Attach the offending value, rendered as text.
     #[must_use]
     pub fn with_value(mut self, value: impl Into<String>) -> Self {
         self.value = Some(value.into());

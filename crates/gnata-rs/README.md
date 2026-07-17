@@ -16,11 +16,11 @@ fn main() -> Result<(), gnata::JsonataError> {
     let expr = Expression::compile("$sum(Order.Product.(Price * Quantity))")?;
     let result = expr.evaluate(r#"{
         "Order": [
-            {"Product": [{"Price": 34.45, "Quantity": 2}]},
-            {"Product": [{"Price": 21.67, "Quantity": 1}]}
+            {"Product": [{"Price": 34.5, "Quantity": 2}]},
+            {"Product": [{"Price": 21.5, "Quantity": 1}]}
         ]
     }"#)?;
-    println!("{}", result.stringify(false)?); // 90.57
+    println!("{}", result.stringify(false)?); // 90.5
     Ok(())
 }
 ```

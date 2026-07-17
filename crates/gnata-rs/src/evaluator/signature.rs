@@ -2,6 +2,9 @@
 //!
 //! Port of Go `internal/parser/signature.go` and `internal/evaluator/signature.go`.
 
+// Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
+// not part of the documented public API.
+#![allow(missing_docs)]
 use std::rc::Rc;
 
 use crate::error::JsonataError;

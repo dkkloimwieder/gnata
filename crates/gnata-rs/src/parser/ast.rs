@@ -1,3 +1,7 @@
+// Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
+// not part of the documented public API.
+#![allow(missing_docs)]
+
 /// Binary operator tag — replaces String for zero-cost match dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BinaryOp {

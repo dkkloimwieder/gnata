@@ -53,6 +53,12 @@ impl std::fmt::Display for CompareOp {
 /// O(1) clone via reference counting. This eliminates the deep-copy overhead
 /// that dominated the profile (62% of CPU was malloc/free/clone/drop).
 ///
+/// `Value` is deliberately **`!Send`**: `Rc` (not `Arc`) keeps clone and
+/// drop free of atomic operations, and keeps the enum at exactly 16 bytes —
+/// both measured as load-bearing for evaluation throughput. Share a compiled
+/// [`Expression`](crate::Expression) across threads (it is `Send + Sync`)
+/// and let each thread parse or build its own input `Value`.
+///
 /// Mutation requires `Rc::make_mut()` for copy-on-write semantics.
 /// `Undefined` and `Null` are distinct enum variants preserving JSONata semantics.
 ///
@@ -66,10 +72,15 @@ pub enum Value {
     Undefined,
     /// JSON null — explicit null value.
     Null,
+    /// Boolean.
     Bool(bool),
+    /// Number. JSONata numbers are IEEE-754 doubles.
     Number(f64),
+    /// String, stored inline when 24 bytes or shorter.
     String(CompactString),
+    /// Array, shared by reference count.
     Array(Rc<[Value]>),
+    /// Object with insertion-ordered keys, shared by reference count.
     Object(Rc<ObjectMap>),
     /// Internal sequence used during evaluation. Collapsed at the public
     /// API boundary — user code never observes this variant.
@@ -89,38 +100,50 @@ pub enum Value {
 }
 
 impl Value {
+    /// Returns true if this is `Value::Undefined` (a missing value).
     pub fn is_undefined(&self) -> bool {
         matches!(self, Value::Undefined)
     }
 
+    /// Returns true if this is `Value::Null` (an explicit JSON null).
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
 
+    /// Returns true if this is a number (including NaN and infinities).
     pub fn is_number(&self) -> bool {
         matches!(self, Value::Number(_))
     }
 
+    /// Returns true if this is a string.
     pub fn is_string(&self) -> bool {
         matches!(self, Value::String(_))
     }
 
+    /// Returns true if this is a boolean.
     pub fn is_bool(&self) -> bool {
         matches!(self, Value::Bool(_))
     }
 
+    /// Returns true if this is an array.
     pub fn is_array(&self) -> bool {
         matches!(self, Value::Array(_))
     }
 
+    /// Returns true if this is an object.
     pub fn is_object(&self) -> bool {
         matches!(self, Value::Object(_))
     }
 
+    /// Returns true if this is an internal evaluation sequence.
+    ///
+    /// Always false for values obtained from the public API, which
+    /// collapses sequences before returning.
     pub fn is_sequence(&self) -> bool {
         matches!(self, Value::Sequence(_))
     }
 
+    /// Returns true if this is a function value (built-in or lambda).
     pub fn is_function(&self) -> bool {
         matches!(self, Value::Function(_))
     }
@@ -141,6 +164,7 @@ impl Value {
         }
     }
 
+    /// Borrow as `&str` if this is a String variant.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
@@ -148,6 +172,7 @@ impl Value {
         }
     }
 
+    /// Extract as bool if this is a Bool variant.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
@@ -155,6 +180,7 @@ impl Value {
         }
     }
 
+    /// Borrow as a slice if this is an Array variant.
     pub fn as_array(&self) -> Option<&[Value]> {
         match self {
             Value::Array(a) => Some(a),
@@ -162,6 +188,7 @@ impl Value {
         }
     }
 
+    /// Borrow the ordered key/value map if this is an Object variant.
     pub fn as_object(&self) -> Option<&ObjectMap> {
         match self {
             Value::Object(o) => Some(o),
