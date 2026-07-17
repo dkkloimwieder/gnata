@@ -74,10 +74,13 @@ fraction of the size of the equivalent Go/TinyGo build.
 ## Performance
 
 Compiled natively, this engine outperforms the Go implementation on all 32
-benchmarks in the repository's cross-language suite (median 1.6x, up to
-2.4x), and the reference JavaScript implementation by a wide margin. The
-WASM build also beats native Go on the same suite. See
-`bench/benchmark_results.csv` in the repository for the full data.
+benchmarks in the repository's cross-language suite (median 1.7x, up to
+2.5x), the competing Rust implementation
+[jsonata-core](https://crates.io/crates/jsonata-core) (v2.2.5) on 31 of 32
+(median 2.2x), and the reference JavaScript implementation by roughly an
+order of magnitude (median 9x). The WASM build (WASI) typically lands
+within ~1.4x of native Go. See `bench/benchmark_results.csv` in the
+repository for the full data.
 
 ## Semantics guarantees
 
