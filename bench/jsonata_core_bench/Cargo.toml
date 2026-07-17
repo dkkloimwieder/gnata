@@ -1,0 +1,19 @@
+[package]
+name = "jsonata-core-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Benchmark CLI wrapping jsonata-core, driven by bench/run_full.sh"
+
+[dependencies]
+# Pinned so the numbers in bench/benchmark_results.csv are reproducible.
+# Default features (as shipped from crates.io).
+jsonata-core = "=2.2.5"
+
+# Same release profile gnata-bench is built with (crates/gnata-rs/Cargo.toml)
+# so both Rust engines get identical codegen settings.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

@@ -19,8 +19,7 @@ bench/flamegraph*.svg
 bench/go_bench
 
 # Wrapper scripts generated and deleted by bench/run_full.sh
-bench/_go.sh
-bench/_rs.sh
+bench/_*.sh
 
 # Large generated fixtures (regenerate with: python3 bench/generate_fixtures.py --sizes 10k,100k)
 bench/fixtures/logs/10k.json
