@@ -370,3 +370,38 @@ fn to_title_case(s: &str) -> String {
     flush(&mut word_buf, &mut result, &mut capitalize_next);
     result
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    fn fmt(n: f64, picture: &str) -> String {
+        match fn_format_integer(
+            &[Value::Number(n), Value::String(picture.into())],
+            &Value::Undefined,
+        ) {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        }
+    }
+
+    /// 'w' and roman-numeral expectations come from the JSONata
+    /// documentation examples for $formatInteger.
+    #[test]
+    fn format_integer_pictures() {
+        assert_eq!(fmt(2789.0, "w"), "two thousand, seven hundred and eighty-nine");
+        assert_eq!(fmt(1999.0, "I"), "MCMXCIX");
+        assert_eq!(fmt(1999.0, "i"), "mcmxcix");
+        assert_eq!(fmt(123.0, "0000"), "0123");
+    }
+
+    /// The ';o' modifier produces ordinals (spec.md §5.2.22).
+    #[test]
+    fn ordinal_modifier() {
+        assert_eq!(fmt(12.0, "w;o"), "twelfth");
+        assert_eq!(fmt(12.0, "1;o"), "12th");
+        assert_eq!(fmt(2.0, "1;o"), "2nd");
+    }
+}

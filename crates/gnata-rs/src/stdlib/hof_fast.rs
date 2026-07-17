@@ -34,8 +34,6 @@ pub enum SimpleLambda {
     },
     /// function($a, $b) { $a.field op $b.field } — sort comparator (same field both sides)
     SortComparator { field: String, op: BinaryOp },
-    /// function($a, $b) { $a.field op $b.field } — sort comparator with any relational op
-    SortComparatorOp { field: String, op: BinaryOp },
     /// function($prev, $curr) { $prev op $curr.field } — simple reduce accumulator
     ReduceAccum { field: String, op: BinaryOp },
     /// function($prev, $curr) { $prev op ($curr.field1 op2 $curr.field2) } — compound reduce
@@ -207,10 +205,12 @@ fn analyze_binary(
             extract_param_dot_field(lhs, arena, param_a),
             extract_param_dot_field(rhs, arena, param_b),
         ) {
+            // Different fields on each side ($a.x > $b.y) cannot be lifted:
+            // the fast comparator reads ONE field from both items, which
+            // would silently diverge from the general path.
             if field_a == field_b {
                 return Some(SimpleLambda::SortComparator { field: field_a, op });
             }
-            return Some(SimpleLambda::SortComparatorOp { field: field_a, op });
         }
     }
 
@@ -1015,10 +1015,151 @@ pub(crate) fn exec_mapped_call(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::{PredicateClause, SimpleLambda, TemplatePiece, analyze_lambda};
+    use crate::evaluator::functions::FunctionValue;
     use crate::evaluator::{Environment, eval};
+    use crate::parser::ast::BinaryOp;
     use crate::parser::{Parser, process_ast};
     use crate::value::Value;
     use std::rc::Rc;
+
+    /// Helper: parse a lambda literal and run the fast-path analyzer on it.
+    fn analyze_src(src: &str) -> Option<SimpleLambda> {
+        let (mut arena, root) = Parser::parse(src).expect("parse failed");
+        let root = process_ast(&mut arena, root).expect("process failed");
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(env);
+        match eval(&arena, root, &Value::Undefined, &env).expect("eval failed") {
+            Value::Function(f) => match *f {
+                FunctionValue::Lambda(lam) => analyze_lambda(&lam.params, lam.body, &arena),
+                other => panic!("expected lambda, got {other:?}"),
+            },
+            other => panic!("expected function, got {other:?}"),
+        }
+    }
+
+    // ── analyze_lambda recognition table ────────────────────────────────
+
+    #[test]
+    fn analyzer_recognizes_field_access() {
+        assert!(matches!(
+            analyze_src("function($v){$v.price}"),
+            Some(SimpleLambda::FieldAccess { ref field }) if field == "price"
+        ));
+    }
+
+    #[test]
+    fn analyzer_recognizes_field_predicates_and_normalizes_reversed_literals() {
+        assert!(matches!(
+            analyze_src("function($v){$v.qty >= 10}"),
+            Some(SimpleLambda::FieldPredicate {
+                ref field,
+                op: BinaryOp::Ge,
+                literal: Value::Number(n),
+            }) if field == "qty" && n == 10.0
+        ));
+        // Literal on the left flips the operator: 10 < $v.qty ≡ $v.qty > 10.
+        assert!(matches!(
+            analyze_src("function($v){10 < $v.qty}"),
+            Some(SimpleLambda::FieldPredicate {
+                ref field,
+                op: BinaryOp::Gt,
+                literal: Value::Number(n),
+            }) if field == "qty" && n == 10.0
+        ));
+    }
+
+    #[test]
+    fn analyzer_recognizes_two_field_predicate() {
+        assert!(matches!(
+            analyze_src("function($v){$v.a = $v.b}"),
+            Some(SimpleLambda::TwoFieldPredicate {
+                ref field1,
+                op: BinaryOp::Eq,
+                ref field2,
+            }) if field1 == "a" && field2 == "b"
+        ));
+    }
+
+    #[test]
+    fn analyzer_recognizes_same_field_sort_comparator() {
+        assert!(matches!(
+            analyze_src("function($a,$b){$a.price > $b.price}"),
+            Some(SimpleLambda::SortComparator { ref field, op: BinaryOp::Gt })
+                if field == "price"
+        ));
+    }
+
+    /// A comparator reading DIFFERENT fields from each item must not be
+    /// lifted: the fast sort comparator reads a single field from both
+    /// sides, which would silently diverge from the general path.
+    #[test]
+    fn analyzer_rejects_cross_field_sort_comparator() {
+        assert!(analyze_src("function($a,$b){$a.x > $b.y}").is_none());
+    }
+
+    #[test]
+    fn analyzer_recognizes_reduce_accumulators() {
+        assert!(matches!(
+            analyze_src("function($p,$c){$p + $c.amount}"),
+            Some(SimpleLambda::ReduceAccum { ref field, op: BinaryOp::Add })
+                if field == "amount"
+        ));
+        assert!(matches!(
+            analyze_src("function($p,$c){$p + $c.price * $c.qty}"),
+            Some(SimpleLambda::ReduceCompoundAccum {
+                ref field1,
+                ref field2,
+                outer_op: BinaryOp::Add,
+                inner_op: BinaryOp::Mul,
+            }) if field1 == "price" && field2 == "qty"
+        ));
+    }
+
+    #[test]
+    fn analyzer_recognizes_concat_template_pieces() {
+        let Some(SimpleLambda::ConcatTemplate { pieces }) =
+            analyze_src(r#"function($v){$v.first & " " & $string($v.n)}"#)
+        else {
+            panic!("expected ConcatTemplate");
+        };
+        assert_eq!(pieces.len(), 3);
+        assert!(matches!(&pieces[0], TemplatePiece::Field(f) if f == "first"));
+        assert!(matches!(&pieces[1], TemplatePiece::Literal(l) if l == " "));
+        assert!(matches!(&pieces[2], TemplatePiece::StringifyField(f) if f == "n"));
+    }
+
+    #[test]
+    fn analyzer_recognizes_compound_predicate() {
+        let Some(SimpleLambda::CompoundPredicate { clauses, combiner }) =
+            analyze_src("function($v){$v.a > 1 and $v.b < 5}")
+        else {
+            panic!("expected CompoundPredicate");
+        };
+        assert_eq!(combiner, BinaryOp::And);
+        assert_eq!(clauses.len(), 2);
+        assert!(matches!(
+            &clauses[1],
+            PredicateClause { field, op: BinaryOp::Lt, .. } if field == "b"
+        ));
+    }
+
+    #[test]
+    fn analyzer_rejects_unsupported_bodies() {
+        // Deep path — only single-step field access is lifted.
+        assert!(analyze_src("function($v){$v.a.b}").is_none());
+        // Variable other than the parameter.
+        assert!(analyze_src("function($v){$x.a}").is_none());
+        // Function call bodies are not lifted.
+        assert!(analyze_src("function($v){$sum($v.a)}").is_none());
+        // No parameters to bind.
+        assert!(analyze_src("function(){1}").is_none());
+        // Mixed and/or combiners cannot form a compound predicate.
+        assert!(analyze_src("function($v){$v.a > 1 and $v.b < 5 or $v.c = 2}").is_none());
+    }
 
     /// Helper: parse, process, and evaluate against `input`.
     fn eval_expr(src: &str, input: &Value) -> Value {

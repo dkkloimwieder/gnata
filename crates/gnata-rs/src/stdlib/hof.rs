@@ -408,10 +408,7 @@ pub fn fn_sort(
     // fn(b, a), truthy → Less, falsy → Equal, errors propagate), only
     // inlining the lambda body instead of dispatching call_function.
     if let Some(func) = &comparator
-        && let Some(
-            SimpleLambda::SortComparator { field, op, .. }
-            | SimpleLambda::SortComparatorOp { field, op, .. },
-        ) = try_fast_lambda(func, arena)
+        && let Some(SimpleLambda::SortComparator { field, op }) = try_fast_lambda(func, arena)
     {
         let mut error: Option<JsonataError> = None;
         arr.sort_by(|a, b| {
@@ -634,4 +631,100 @@ fn sift_object(
         return Ok(Value::Undefined);
     }
     Ok(Value::Object(Rc::new(result)))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::evaluator::eval;
+    use crate::parser::{Parser, process_ast};
+
+    /// Helper: parse, process, and evaluate a full expression.
+    fn eval_expr(src: &str) -> Value {
+        let (mut arena, root) = Parser::parse(src).expect("parse failed");
+        let root = process_ast(&mut arena, root).expect("process failed");
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(env);
+        eval(&arena, root, &Value::Undefined, &env).expect("eval failed")
+    }
+
+    fn eval_err(src: &str) -> JsonataError {
+        let (mut arena, root) = Parser::parse(src).expect("parse failed");
+        let root = process_ast(&mut arena, root).expect("process failed");
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(env);
+        match eval(&arena, root, &Value::Undefined, &env) {
+            Err(e) => e,
+            Ok(v) => panic!("expected error, got {v:?}"),
+        }
+    }
+
+    fn assert_evals_to(src: &str, expected: &str) {
+        let actual = eval_expr(src);
+        let expected = eval_expr(expected);
+        assert!(
+            actual.deep_equal(&expected),
+            "{src}: got {actual:?}, expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn map_passes_value_and_index() {
+        assert_evals_to("$map([1,2,3], function($v){$v*2})", "[2,4,6]");
+        assert_evals_to("$map([10,20], function($v,$i){$i})", "[0,1]");
+    }
+
+    #[test]
+    fn filter_and_sift_select_matching_entries() {
+        assert_evals_to("$filter([1,2,3,4], function($v){$v > 2})", "[3,4]");
+        assert_evals_to(
+            r#"$sift({"a":1, "b":10}, function($v){$v > 5})"#,
+            r#"{"b":10}"#,
+        );
+    }
+
+    #[test]
+    fn reduce_folds_with_optional_init() {
+        assert_evals_to("$reduce([1,2,3,4], function($p,$c){$p+$c})", "10");
+        assert_evals_to("$reduce([1,2,3], function($p,$c){$p+$c}, 10)", "16");
+    }
+
+    #[test]
+    fn each_maps_value_key_pairs() {
+        assert_evals_to(
+            r#"$each({"a":1, "b":2}, function($v,$k){$k & $v})"#,
+            r#"["a1", "b2"]"#,
+        );
+    }
+
+    /// Sort is stable for equal keys (behavioral invariant #7) — on both
+    /// the lifted fast path and the general comparator path.
+    #[test]
+    fn sort_is_stable_for_equal_keys() {
+        // Same-field comparator → fast path.
+        assert_evals_to(
+            r#"$sort([{"k":1,"t":"a"},{"k":1,"t":"b"},{"k":0,"t":"c"}],
+                       function($l,$r){$l.k > $r.k}).t"#,
+            r#"["c","a","b"]"#,
+        );
+        // Complex rhs defeats the lift → general call path must agree.
+        assert_evals_to(
+            r#"$sort([{"k":1,"t":"a"},{"k":1,"t":"b"},{"k":0,"t":"c"}],
+                       function($l,$r){$l.k > $r.k + 0}).t"#,
+            r#"["c","a","b"]"#,
+        );
+    }
+
+    #[test]
+    fn single_returns_the_unique_match_or_errors() {
+        assert_evals_to("$single([1,2,3], function($v){$v = 2})", "2");
+        let err = eval_err("$single([1,2,3], function($v){$v > 1})");
+        assert_eq!(err.code, "D3138");
+        let err = eval_err("$single([1,2,3], function($v){$v > 9})");
+        assert_eq!(err.code, "D3139");
+    }
 }

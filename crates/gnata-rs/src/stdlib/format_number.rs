@@ -643,3 +643,38 @@ fn format_number_picture(
     let inner = apply_digit_family(&inner, fc.zero_digit);
     Ok(format!("{}{}{}", sp.prefix, inner, sp.suffix))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+    use crate::value::Value;
+
+    fn fmt(n: f64, picture: &str) -> String {
+        match fn_format_number(
+            &[Value::Number(n), Value::String(picture.into())],
+            &Value::Undefined,
+        ) {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        }
+    }
+
+    /// Expected values are taken from the JSONata documentation examples
+    /// for $formatNumber (XPath F&O picture strings).
+    #[test]
+    fn format_number_matches_jsonata_documentation_examples() {
+        assert_eq!(fmt(12345.6, "#,###.00"), "12,345.60");
+        assert_eq!(fmt(1234.5678, "00.000e0"), "12.346e2");
+        assert_eq!(fmt(0.14, "01%"), "14%");
+        assert_eq!(fmt(1234.5678, "#,##0.00"), "1,234.57");
+    }
+
+    /// The second sub-picture formats negative numbers.
+    #[test]
+    fn negative_sub_picture_is_applied() {
+        assert_eq!(fmt(-1.0, "#0.00;(#0.00)"), "(1.00)");
+        assert_eq!(fmt(1.0, "#0.00;(#0.00)"), "1.00");
+    }
+}

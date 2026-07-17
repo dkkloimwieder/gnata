@@ -659,3 +659,130 @@ pub fn fn_decode_url_component(args: &[Value], _focus: &Value) -> JsonataResult 
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    const U: &Value = &Value::Undefined;
+
+    fn s(v: &str) -> Value {
+        Value::String(v.into())
+    }
+    fn n(x: f64) -> Value {
+        Value::Number(x)
+    }
+    fn text(r: JsonataResult) -> String {
+        match r {
+            Ok(Value::String(v)) => v.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        }
+    }
+    fn strings(r: JsonataResult) -> Vec<String> {
+        match r {
+            Ok(Value::Array(items)) => items
+                .iter()
+                .map(|v| match v {
+                    Value::String(x) => x.to_string(),
+                    other => panic!("expected string element, got {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+    fn code(r: JsonataResult) -> &'static str {
+        match r {
+            Err(e) => e.code,
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    /// $substring operates on characters, not bytes (spec.md §5.2.3).
+    #[test]
+    fn substring_is_unicode_aware_with_negative_start() {
+        assert_eq!(text(fn_substring(&[s("hello world"), n(0.0), n(5.0)], U)), "hello");
+        // Negative start counts from the end, clamped to 0.
+        assert_eq!(text(fn_substring(&[s("hello"), n(-2.0)], U)), "lo");
+        assert_eq!(text(fn_substring(&[s("hello"), n(-99.0), n(2.0)], U)), "he");
+        // Start past the end → empty.
+        assert_eq!(text(fn_substring(&[s("hello"), n(9.0)], U)), "");
+        // Character-based, not byte-based.
+        assert_eq!(text(fn_substring(&[s("héllo"), n(1.0), n(2.0)], U)), "él");
+    }
+
+    /// Separator not found → original string unchanged (spec.md §5.2.4).
+    #[test]
+    fn substring_before_after_split_on_first_separator() {
+        assert_eq!(text(fn_substring_before(&[s("a-b-c"), s("-")], U)), "a");
+        assert_eq!(text(fn_substring_after(&[s("a-b-c"), s("-")], U)), "b-c");
+        assert_eq!(text(fn_substring_before(&[s("abc"), s("|")], U)), "abc");
+        assert_eq!(text(fn_substring_after(&[s("abc"), s("|")], U)), "abc");
+    }
+
+    /// $trim collapses runs of internal whitespace to a single space.
+    #[test]
+    fn trim_collapses_internal_whitespace() {
+        assert_eq!(text(fn_trim(&[s("  a \t\n b  ")], U)), "a b");
+    }
+
+    /// $pad direction follows the width's sign; width counts characters.
+    #[test]
+    fn pad_pads_by_sign_and_counts_chars() {
+        assert_eq!(text(fn_pad(&[s("abc"), n(5.0)], U)), "abc  ");
+        assert_eq!(text(fn_pad(&[s("abc"), n(-5.0)], U)), "  abc");
+        assert_eq!(text(fn_pad(&[s("abc"), n(5.0), s("-")], U)), "abc--");
+        assert_eq!(text(fn_pad(&[s("abc"), n(2.0)], U)), "abc");
+        assert_eq!(text(fn_pad(&[s("éé"), n(3.0)], U)), "éé ");
+    }
+
+    #[test]
+    fn split_supports_limits_and_char_mode() {
+        assert_eq!(strings(fn_split(&[s("a,b,c"), s(",")], U)), ["a", "b", "c"]);
+        assert_eq!(strings(fn_split(&[s("a,b,c"), s(","), n(2.0)], U)), ["a", "b"]);
+        // Empty separator splits into characters.
+        assert_eq!(strings(fn_split(&[s("héllo"), s("")], U)), ["h", "é", "l", "l", "o"]);
+        // Negative limit is an error.
+        assert_eq!(code(fn_split(&[s("a,b"), s(","), n(-1.0)], U)), "D3020");
+    }
+
+    #[test]
+    fn join_concatenates_with_separator() {
+        let items = Value::Array(Rc::from(vec![s("a"), s("b"), s("c")]));
+        assert_eq!(text(fn_join(&[items, s("-")], U)), "a-b-c");
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        assert_eq!(text(fn_base64_encode(&[s("hello")], U)), "aGVsbG8=");
+        assert_eq!(text(fn_base64_decode(&[s("aGVsbG8=")], U)), "hello");
+    }
+
+    /// $encodeUrl keeps URL structure characters; the component variant
+    /// encodes them (ECMAScript encodeURI vs encodeURIComponent).
+    #[test]
+    fn url_component_encoding_is_stricter_than_url_encoding() {
+        assert_eq!(
+            text(fn_encode_url(&[s("http://x.com/a b?q=1")], U)),
+            "http://x.com/a%20b?q=1"
+        );
+        assert_eq!(text(fn_encode_url_component(&[s("a b&c=d")], U)), "a%20b%26c%3Dd");
+        assert_eq!(text(fn_decode_url_component(&[s("a%20b%26c")], U)), "a b&c");
+    }
+
+    /// $string uses ECMAScript Number.toString() (behavioral invariant #9).
+    #[test]
+    fn string_formats_numbers_like_ecmascript() {
+        assert_eq!(text(fn_string(&[n(100.0)], U)), "100");
+        assert_eq!(text(fn_string(&[n(1e21)], U)), "1e+21");
+        assert_eq!(text(fn_string(&[Value::Bool(true)], U)), "true");
+        assert_eq!(code(fn_string(&[n(f64::INFINITY)], U)), "D3001");
+    }
+
+    /// $length counts characters (spec.md §5.2.2).
+    #[test]
+    fn length_counts_chars() {
+        assert!(matches!(fn_length(&[s("héllo")], U), Ok(Value::Number(x)) if x == 5.0));
+    }
+}

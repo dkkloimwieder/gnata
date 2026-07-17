@@ -376,3 +376,61 @@ impl<'a> HlWalker<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    /// Parse the JSON emitted by highlight() back into (start, end, type).
+    fn spans(expr: &str) -> Vec<(usize, usize, String)> {
+        let json = highlight(expr).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                let a = s.as_array().unwrap();
+                (
+                    a[0].as_u64().unwrap() as usize,
+                    a[1].as_u64().unwrap() as usize,
+                    a[2].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spans_are_in_bounds_and_cover_the_token_kinds() {
+        let src = r#"$sum(items.price) + 42 - "x""#;
+        let sp = spans(src);
+        assert!(!sp.is_empty());
+        for (start, end, typ) in &sp {
+            assert!(
+                start < end && *end <= src.len(),
+                "span out of bounds: {start}..{end} ({typ})"
+            );
+        }
+        let types: Vec<&str> = sp.iter().map(|(_, _, t)| t.as_str()).collect();
+        for expected in ["function", "name", "number", "string", "operator"] {
+            assert!(types.contains(&expected), "missing {expected} in {types:?}");
+        }
+    }
+
+    #[test]
+    fn function_call_position_highlights_as_function() {
+        let sp = spans("$sum(a)");
+        let f = sp
+            .iter()
+            .find(|(_, _, t)| t == "function")
+            .expect("function span");
+        assert_eq!(&"$sum(a)"[f.0..f.1], "$sum");
+    }
+
+    #[test]
+    fn parse_errors_propagate() {
+        assert!(highlight("(").is_err());
+    }
+}

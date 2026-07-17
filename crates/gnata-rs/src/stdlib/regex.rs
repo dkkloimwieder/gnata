@@ -467,3 +467,60 @@ fn expand_replacement(repl: &str, full_match: &str, groups: &[&str]) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::evaluator::eval;
+    use crate::parser::{Parser, process_ast};
+
+    /// Helper: parse, process, and evaluate a full expression.
+    fn eval_expr(src: &str) -> Value {
+        let (mut arena, root) = Parser::parse(src).expect("parse failed");
+        let root = process_ast(&mut arena, root).expect("process failed");
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(env);
+        eval(&arena, root, &Value::Undefined, &env).expect("eval failed")
+    }
+
+    #[test]
+    fn compile_regex_applies_inline_flags() {
+        assert!(compile_regex("abc", "i").unwrap().is_match("xABCy"));
+        assert!(!compile_regex("abc", "").unwrap().is_match("xABCy"));
+        assert_eq!(compile_regex("(", "").unwrap_err().code, "D3137");
+    }
+
+    /// Match positions are character indices, not byte offsets, and
+    /// capture groups are reported in order.
+    #[test]
+    fn match_reports_char_indices_and_groups() {
+        let m = eval_expr(r#"$match("héllo world", /(l+)o/)"#);
+        let expected =
+            eval_expr(r#"{"match": "llo", "start": 2, "end": 5, "groups": ["ll"]}"#);
+        assert!(m.deep_equal(&expected), "got {m:?}");
+    }
+
+    /// $replace supports $N group references (JSONata documentation
+    /// example).
+    #[test]
+    fn replace_supports_group_references() {
+        let r = eval_expr(r#"$replace("John Smith", /(\w+)\s(\w+)/, "$2 $1")"#);
+        assert!(r.deep_equal(&Value::String("Smith John".into())), "got {r:?}");
+    }
+
+    #[test]
+    fn split_by_regex() {
+        let r = eval_expr(r#"$split("a1b22c", /\d+/)"#);
+        let expected = eval_expr(r#"["a", "b", "c"]"#);
+        assert!(r.deep_equal(&expected), "got {r:?}");
+    }
+
+    #[test]
+    fn contains_accepts_regex_patterns() {
+        assert!(eval_expr(r#"$contains("abracadabra", /a.*a/)"#).deep_equal(&Value::Bool(true)));
+        assert!(eval_expr(r#"$contains("abc", /\d/)"#).deep_equal(&Value::Bool(false)));
+    }
+}

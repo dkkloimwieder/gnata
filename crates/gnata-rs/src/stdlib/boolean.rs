@@ -36,3 +36,58 @@ pub fn fn_exists(args: &[Value], _focus: &Value) -> JsonataResult {
     }
     Ok(Value::Bool(!args[0].is_undefined()))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+    use std::rc::Rc;
+
+    const U: &Value = &Value::Undefined;
+
+    fn b(r: JsonataResult) -> bool {
+        match r {
+            Ok(Value::Bool(v)) => v,
+            other => panic!("expected bool, got {other:?}"),
+        }
+    }
+
+    /// JSONata boolean coercion truth table (behavioral invariant #10:
+    /// "0" is truthy, "" is falsy, "false" is truthy).
+    #[test]
+    fn boolean_coercion_truth_table() {
+        assert!(b(fn_boolean(&[Value::String("0".into())], U)));
+        assert!(b(fn_boolean(&[Value::String("false".into())], U)));
+        assert!(!b(fn_boolean(&[Value::String("".into())], U)));
+        assert!(!b(fn_boolean(&[Value::Number(0.0)], U)));
+        assert!(b(fn_boolean(&[Value::Number(-0.5)], U)));
+        assert!(!b(fn_boolean(&[Value::Null], U)));
+        // Arrays: empty → false, singleton → element's truth, else any(truthy).
+        assert!(!b(fn_boolean(&[Value::Array(Rc::from(Vec::<Value>::new()))], U)));
+        assert!(!b(fn_boolean(&[Value::Array(Rc::from(vec![Value::Number(0.0)]))], U)));
+        assert!(b(fn_boolean(
+            &[Value::Array(Rc::from(vec![Value::Number(0.0), Value::Number(1.0)]))],
+            U
+        )));
+        // Objects: empty → false, non-empty → true.
+        assert!(!b(fn_boolean(&[Value::Object(Rc::new(crate::value::ObjectMap::new()))], U)));
+        // Undefined propagates.
+        assert!(matches!(fn_boolean(&[Value::Undefined], U), Ok(Value::Undefined)));
+    }
+
+    #[test]
+    fn not_negates_and_propagates_undefined() {
+        assert!(!b(fn_not(&[Value::Bool(true)], U)));
+        assert!(b(fn_not(&[Value::String("".into())], U)));
+        assert!(matches!(fn_not(&[Value::Undefined], U), Ok(Value::Undefined)));
+        assert!(fn_not(&[], U).is_err());
+    }
+
+    /// $exists is the one place undefined and null must diverge.
+    #[test]
+    fn exists_distinguishes_undefined_from_null() {
+        assert!(!b(fn_exists(&[Value::Undefined], U)));
+        assert!(b(fn_exists(&[Value::Null], U)));
+    }
+}

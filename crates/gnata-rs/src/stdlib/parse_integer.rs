@@ -320,3 +320,31 @@ fn from_alphabetic(s: &str) -> Result<i64, JsonataError> {
     }
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    fn parse(s: &str, picture: &str) -> f64 {
+        match fn_parse_integer(
+            &[Value::String(s.into()), Value::String(picture.into())],
+            &Value::Undefined,
+        ) {
+            Ok(Value::Number(n)) => n,
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+
+    /// $parseInteger inverts $formatInteger for the same picture
+    /// ("12,345,678" example from the JSONata documentation).
+    #[test]
+    fn parse_integer_inverts_format_integer() {
+        assert_eq!(parse("twelve", "w"), 12.0);
+        assert_eq!(parse("MCMXCIX", "I"), 1999.0);
+        assert_eq!(parse("mcmxcix", "i"), 1999.0);
+        assert_eq!(parse("12,345,678", "#,##0"), 12_345_678.0);
+        assert_eq!(parse("0123", "0000"), 123.0);
+    }
+}

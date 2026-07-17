@@ -169,3 +169,95 @@ pub fn fn_zip(args: &[Value], _focus: &Value) -> JsonataResult {
     }
     Ok(Value::Array(Rc::from(result)))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    const U: &Value = &Value::Undefined;
+
+    fn n(x: f64) -> Value {
+        Value::Number(x)
+    }
+    fn arr(items: Vec<Value>) -> Value {
+        Value::Array(Rc::from(items))
+    }
+    fn ok(r: JsonataResult) -> Value {
+        match r {
+            Ok(v) => v,
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    /// $append treats undefined as the empty sequence and wraps scalars.
+    #[test]
+    fn append_handles_undefined_and_scalars() {
+        assert!(ok(fn_append(&[Value::Undefined, n(2.0)], U)).deep_equal(&n(2.0)));
+        assert!(ok(fn_append(&[n(1.0), Value::Undefined], U)).deep_equal(&n(1.0)));
+        assert!(ok(fn_append(&[n(1.0), n(2.0)], U)).deep_equal(&arr(vec![n(1.0), n(2.0)])));
+        assert!(
+            ok(fn_append(&[arr(vec![n(1.0)]), arr(vec![n(2.0), n(3.0)])], U))
+                .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
+        );
+    }
+
+    /// $count: undefined → 0, scalar → 1, array → length.
+    #[test]
+    fn count_of_undefined_is_zero() {
+        assert!(ok(fn_count(&[Value::Undefined], U)).deep_equal(&n(0.0)));
+        assert!(ok(fn_count(&[n(7.0)], U)).deep_equal(&n(1.0)));
+        assert!(ok(fn_count(&[arr(vec![n(1.0), n(2.0)])], U)).deep_equal(&n(2.0)));
+    }
+
+    #[test]
+    fn reverse_reverses() {
+        assert!(
+            ok(fn_reverse(&[arr(vec![n(1.0), n(2.0), n(3.0)])], U))
+                .deep_equal(&arr(vec![n(3.0), n(2.0), n(1.0)]))
+        );
+    }
+
+    /// $distinct keeps the first occurrence, compared by deep equality.
+    #[test]
+    fn distinct_dedups_by_deep_equality() {
+        assert!(
+            ok(fn_distinct(&[arr(vec![n(1.0), n(2.0), n(1.0), n(3.0), n(2.0)])], U))
+                .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
+        );
+        let obj = |k: f64| {
+            let mut m = crate::value::ObjectMap::new();
+            m.insert("a".into(), n(k));
+            Value::Object(Rc::new(m))
+        };
+        assert!(
+            ok(fn_distinct(&[arr(vec![obj(1.0), obj(1.0)])], U))
+                .deep_equal(&arr(vec![obj(1.0)]))
+        );
+    }
+
+    #[test]
+    fn flatten_honors_depth() {
+        let nested = arr(vec![arr(vec![n(1.0), arr(vec![n(2.0)])]), n(3.0)]);
+        assert!(
+            ok(fn_flatten(std::slice::from_ref(&nested), U))
+                .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
+        );
+        assert!(
+            ok(fn_flatten(&[nested, n(1.0)], U))
+                .deep_equal(&arr(vec![n(1.0), arr(vec![n(2.0)]), n(3.0)]))
+        );
+    }
+
+    /// $zip truncates to the shortest input; any undefined input → [].
+    #[test]
+    fn zip_truncates_to_shortest() {
+        assert!(
+            ok(fn_zip(&[arr(vec![n(1.0), n(2.0)]), arr(vec![n(3.0), n(4.0), n(5.0)])], U))
+                .deep_equal(&arr(vec![arr(vec![n(1.0), n(3.0)]), arr(vec![n(2.0), n(4.0)])]))
+        );
+        let z = ok(fn_zip(&[arr(vec![n(1.0)]), Value::Undefined], U));
+        assert!(matches!(&z, Value::Array(a) if a.is_empty()));
+    }
+}

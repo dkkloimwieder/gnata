@@ -52,3 +52,50 @@ pub fn fn_assert(args: &[Value], _focus: &Value) -> JsonataResult {
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+    use std::rc::Rc;
+
+    const U: &Value = &Value::Undefined;
+
+    fn type_name(v: Value) -> String {
+        match fn_type_of(&[v], U) {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_of_names_every_value_kind() {
+        assert_eq!(type_name(Value::Null), "null");
+        assert_eq!(type_name(Value::Bool(true)), "boolean");
+        assert_eq!(type_name(Value::Number(1.0)), "number");
+        assert_eq!(type_name(Value::String("x".into())), "string");
+        assert_eq!(type_name(Value::Array(Rc::from(Vec::<Value>::new()))), "array");
+        assert_eq!(
+            type_name(Value::Object(Rc::new(crate::value::ObjectMap::new()))),
+            "object"
+        );
+        assert!(matches!(fn_type_of(&[Value::Undefined], U), Ok(Value::Undefined)));
+    }
+
+    #[test]
+    fn assert_fails_with_custom_message() {
+        assert!(matches!(fn_assert(&[Value::Bool(true)], U), Ok(Value::Undefined)));
+        let err = match fn_assert(&[Value::Bool(false), Value::String("boom".into())], U) {
+            Err(e) => e,
+            other => panic!("expected error, got {other:?}"),
+        };
+        assert_eq!(err.code, "D3141");
+        assert_eq!(err.message, "boom");
+        let err = match fn_assert(&[Value::Number(1.0)], U) {
+            Err(e) => e,
+            other => panic!("expected error, got {other:?}"),
+        };
+        assert_eq!(err.code, "T0410");
+    }
+}

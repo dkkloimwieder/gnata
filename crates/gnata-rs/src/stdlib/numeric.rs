@@ -315,3 +315,100 @@ fn format_radix(mut n: u64, radix: u32) -> String {
     digits.reverse();
     digits.into_iter().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+    use std::rc::Rc;
+
+    const U: &Value = &Value::Undefined;
+
+    fn n(x: f64) -> Value {
+        Value::Number(x)
+    }
+    fn num(r: JsonataResult) -> f64 {
+        match r {
+            Ok(Value::Number(x)) => x,
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+    fn text(r: JsonataResult) -> String {
+        match r {
+            Ok(Value::String(s)) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        }
+    }
+    fn code(r: JsonataResult) -> &'static str {
+        match r {
+            Err(e) => e.code,
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
+    /// $round is half-to-even (banker's), not half-away-from-zero
+    /// (spec.md: JS Number semantics for $round).
+    #[test]
+    fn round_is_half_to_even() {
+        assert_eq!(bankers_round(0.5, 0), 0.0);
+        assert_eq!(bankers_round(1.5, 0), 2.0);
+        assert_eq!(bankers_round(2.5, 0), 2.0);
+        assert_eq!(bankers_round(-1.5, 0), -2.0);
+        // Positive scale shifts the rule to that decimal place.
+        assert_eq!(bankers_round(1.25, 1), 1.2);
+        assert_eq!(bankers_round(1.75, 1), 1.8);
+        // Negative scale rounds to tens.
+        assert_eq!(bankers_round(125.0, -1), 120.0);
+    }
+
+    #[test]
+    fn round_builtin_applies_scale_argument() {
+        assert_eq!(num(fn_round(&[n(1.25), n(1.0)], U)), 1.2);
+        assert_eq!(num(fn_round(&[n(2.5)], U)), 2.0);
+    }
+
+    #[test]
+    fn power_rejects_non_finite_results() {
+        assert_eq!(num(fn_power(&[n(2.0), n(10.0)], U)), 1024.0);
+        assert_eq!(code(fn_power(&[n(0.0), n(-1.0)], U)), "D3061");
+        assert_eq!(code(fn_power(&[n(-2.0), n(0.5)], U)), "D3061");
+    }
+
+    #[test]
+    fn sqrt_of_negative_is_an_error() {
+        assert_eq!(num(fn_sqrt(&[n(144.0)], U)), 12.0);
+        assert_eq!(code(fn_sqrt(&[n(-1.0)], U)), "D3060");
+    }
+
+    #[test]
+    fn format_base_covers_radix_range() {
+        assert_eq!(text(fn_format_base(&[n(100.0), n(2.0)], U)), "1100100");
+        assert_eq!(text(fn_format_base(&[n(255.0), n(16.0)], U)), "ff");
+        assert_eq!(text(fn_format_base(&[n(-100.0), n(2.0)], U)), "-1100100");
+        // Radix defaults to 10.
+        assert_eq!(text(fn_format_base(&[n(12.0)], U)), "12");
+        assert_eq!(code(fn_format_base(&[n(12.0), n(1.0)], U)), "D3100");
+        assert_eq!(code(fn_format_base(&[n(12.0), n(37.0)], U)), "D3100");
+    }
+
+    #[test]
+    fn aggregates_handle_boundaries() {
+        let nums = Value::Array(Rc::from(vec![n(1.0), n(2.0), n(3.0), n(4.0)]));
+        let nums = std::slice::from_ref(&nums);
+        assert_eq!(num(fn_sum(nums, U)), 10.0);
+        assert_eq!(num(fn_average(nums, U)), 2.5);
+        assert_eq!(num(fn_max(nums, U)), 4.0);
+        assert_eq!(num(fn_min(nums, U)), 1.0);
+        // Empty arrays: $sum → 0, $max/$min/$average → undefined.
+        let empty = Value::Array(Rc::from(Vec::<Value>::new()));
+        let empty = std::slice::from_ref(&empty);
+        assert_eq!(num(fn_sum(empty, U)), 0.0);
+        assert!(matches!(fn_max(empty, U), Ok(Value::Undefined)));
+        assert!(matches!(fn_min(empty, U), Ok(Value::Undefined)));
+        assert!(matches!(fn_average(empty, U), Ok(Value::Undefined)));
+        // Non-numeric element → T0412.
+        let mixed = Value::Array(Rc::from(vec![n(1.0), Value::String("x".into())]));
+        assert_eq!(code(fn_sum(&[mixed], U)), "T0412");
+    }
+}

@@ -182,3 +182,123 @@ pub fn fn_error(args: &[Value], _focus: &Value) -> JsonataResult {
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    const U: &Value = &Value::Undefined;
+
+    fn obj(pairs: &[(&str, f64)]) -> Value {
+        let mut m = crate::value::ObjectMap::new();
+        for (k, v) in pairs {
+            m.insert((*k).into(), Value::Number(*v));
+        }
+        Value::Object(Rc::new(m))
+    }
+    fn ok(r: JsonataResult) -> Value {
+        match r {
+            Ok(v) => v,
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+    }
+    fn strings(v: &Value) -> Vec<String> {
+        match v {
+            Value::Array(items) => items
+                .iter()
+                .map(|x| match x {
+                    Value::String(s) => s.to_string(),
+                    other => panic!("expected string element, got {other:?}"),
+                })
+                .collect(),
+            Value::String(s) => vec![s.to_string()],
+            other => panic!("expected array or string, got {other:?}"),
+        }
+    }
+
+    /// $keys preserves insertion order (behavioral invariant #8) and
+    /// unions keys across an array of objects.
+    #[test]
+    fn keys_preserve_insertion_order_and_union_arrays() {
+        let keys = ok(fn_keys(&[obj(&[("z", 1.0), ("a", 2.0), ("m", 3.0)])], U));
+        assert_eq!(strings(&keys), ["z", "a", "m"]);
+        // Singleton key collapses to a plain string.
+        assert_eq!(strings(&ok(fn_keys(&[obj(&[("only", 1.0)])], U))), ["only"]);
+        // Empty object → undefined.
+        assert!(matches!(fn_keys(&[obj(&[])], U), Ok(Value::Undefined)));
+        // Array of objects: first-seen order, no duplicates.
+        let arr = Value::Array(Rc::from(vec![
+            obj(&[("b", 1.0), ("a", 2.0)]),
+            obj(&[("a", 9.0), ("c", 3.0)]),
+        ]));
+        assert_eq!(strings(&ok(fn_keys(&[arr], U))), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn values_returns_object_values() {
+        let vals = ok(fn_values(&[obj(&[("a", 1.0), ("b", 2.0)])], U));
+        assert!(vals.deep_equal(&Value::Array(Rc::from(vec![
+            Value::Number(1.0),
+            Value::Number(2.0)
+        ]))));
+    }
+
+    /// $merge: later objects win; key order is first-seen.
+    #[test]
+    fn merge_is_last_writer_wins_in_first_seen_order() {
+        let merged = ok(fn_merge(
+            &[Value::Array(Rc::from(vec![
+                obj(&[("a", 1.0), ("b", 2.0)]),
+                obj(&[("b", 9.0), ("c", 3.0)]),
+            ]))],
+            U,
+        ));
+        assert!(merged.deep_equal(&obj(&[("a", 1.0), ("b", 9.0), ("c", 3.0)])));
+        assert_eq!(strings(&ok(fn_keys(&[merged], U))), ["a", "b", "c"]);
+    }
+
+    /// $lookup maps across an array of objects and skips misses.
+    #[test]
+    fn lookup_maps_across_arrays() {
+        let key = Value::String("a".into());
+        assert!(ok(fn_lookup(&[obj(&[("a", 1.0)]), key.clone()], U)).deep_equal(&Value::Number(1.0)));
+        assert!(matches!(
+            fn_lookup(&[obj(&[("b", 1.0)]), key.clone()], U),
+            Ok(Value::Undefined)
+        ));
+        let arr = Value::Array(Rc::from(vec![
+            obj(&[("a", 1.0)]),
+            obj(&[("x", 0.0)]),
+            obj(&[("a", 2.0)]),
+        ]));
+        assert!(ok(fn_lookup(&[arr, key], U)).deep_equal(&Value::Array(Rc::from(vec![
+            Value::Number(1.0),
+            Value::Number(2.0)
+        ]))));
+    }
+
+    /// $spread splits an object into single-pair objects.
+    #[test]
+    fn spread_splits_into_single_pair_objects() {
+        let spread = match fn_spread(&[obj(&[("a", 1.0), ("b", 2.0)])], U) {
+            Ok(Value::Sequence(seq)) => seq.into_value(),
+            other => panic!("expected sequence, got {other:?}"),
+        };
+        assert!(spread.deep_equal(&Value::Array(Rc::from(vec![
+            obj(&[("a", 1.0)]),
+            obj(&[("b", 2.0)])
+        ]))));
+    }
+
+    #[test]
+    fn error_raises_with_message() {
+        let err = match fn_error(&[Value::String("boom".into())], U) {
+            Err(e) => e,
+            other => panic!("expected error, got {other:?}"),
+        };
+        assert_eq!(err.code, "D3137");
+        assert_eq!(err.message, "boom");
+    }
+}
