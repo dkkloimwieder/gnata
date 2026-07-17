@@ -3,7 +3,10 @@
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
-#[expect(clippy::unnecessary_wraps, reason = "must match the BuiltinFn signature")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "must match the BuiltinFn signature"
+)]
 pub fn fn_boolean(args: &[Value], focus: &Value) -> JsonataResult {
     // Note: don't enforce arity — HOF callbacks like $filter($boolean)
     // pass 3 args (value, index, array). Only use the first arg.
@@ -62,23 +65,41 @@ mod tests {
         assert!(b(fn_boolean(&[Value::Number(-0.5)], U)));
         assert!(!b(fn_boolean(&[Value::Null], U)));
         // Arrays: empty → false, singleton → element's truth, else any(truthy).
-        assert!(!b(fn_boolean(&[Value::Array(Rc::from(Vec::<Value>::new()))], U)));
-        assert!(!b(fn_boolean(&[Value::Array(Rc::from(vec![Value::Number(0.0)]))], U)));
+        assert!(!b(fn_boolean(
+            &[Value::Array(Rc::from(Vec::<Value>::new()))],
+            U
+        )));
+        assert!(!b(fn_boolean(
+            &[Value::Array(Rc::from(vec![Value::Number(0.0)]))],
+            U
+        )));
         assert!(b(fn_boolean(
-            &[Value::Array(Rc::from(vec![Value::Number(0.0), Value::Number(1.0)]))],
+            &[Value::Array(Rc::from(vec![
+                Value::Number(0.0),
+                Value::Number(1.0)
+            ]))],
             U
         )));
         // Objects: empty → false, non-empty → true.
-        assert!(!b(fn_boolean(&[Value::Object(Rc::new(crate::value::ObjectMap::new()))], U)));
+        assert!(!b(fn_boolean(
+            &[Value::Object(Rc::new(crate::value::ObjectMap::new()))],
+            U
+        )));
         // Undefined propagates.
-        assert!(matches!(fn_boolean(&[Value::Undefined], U), Ok(Value::Undefined)));
+        assert!(matches!(
+            fn_boolean(&[Value::Undefined], U),
+            Ok(Value::Undefined)
+        ));
     }
 
     #[test]
     fn not_negates_and_propagates_undefined() {
         assert!(!b(fn_not(&[Value::Bool(true)], U)));
         assert!(b(fn_not(&[Value::String("".into())], U)));
-        assert!(matches!(fn_not(&[Value::Undefined], U), Ok(Value::Undefined)));
+        assert!(matches!(
+            fn_not(&[Value::Undefined], U),
+            Ok(Value::Undefined)
+        ));
         assert!(fn_not(&[], U).is_err());
     }
 

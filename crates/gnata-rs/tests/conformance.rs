@@ -11,10 +11,10 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gnata::eval;
 use gnata::Environment;
-use gnata::{Parser, process_ast};
 use gnata::Value;
+use gnata::eval;
+use gnata::{Parser, process_ast};
 
 fn testdata_dir() -> PathBuf {
     // crates/gnata-rs/tests/conformance.rs → testdata/ is at repo root

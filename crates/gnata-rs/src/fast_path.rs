@@ -793,9 +793,7 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
         },
 
         FuncFastKind::Flatten => match val {
-            Value::Array(arr) => {
-                Some(Value::Array(Rc::from(flatten_recursive(arr, usize::MAX))))
-            }
+            Value::Array(arr) => Some(Value::Array(Rc::from(flatten_recursive(arr, usize::MAX)))),
             _ => None,
         },
     }

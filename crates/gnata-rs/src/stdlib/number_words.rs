@@ -294,7 +294,10 @@ mod tests {
         assert_eq!(int_to_words(0), "zero");
         assert_eq!(int_to_words(-3), "minus three");
         assert_eq!(int_to_words(42), "forty-two");
-        assert_eq!(int_to_words(1984), "one thousand, nine hundred and eighty-four");
+        assert_eq!(
+            int_to_words(1984),
+            "one thousand, nine hundred and eighty-four"
+        );
         assert_eq!(int_to_words(2018), "two thousand and eighteen");
         assert_eq!(int_to_words_ordinal(42), "forty-second");
         assert_eq!(int_to_words_ordinal(20), "twentieth");

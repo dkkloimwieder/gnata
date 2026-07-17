@@ -196,8 +196,11 @@ mod tests {
         assert!(ok(fn_append(&[n(1.0), Value::Undefined], U)).deep_equal(&n(1.0)));
         assert!(ok(fn_append(&[n(1.0), n(2.0)], U)).deep_equal(&arr(vec![n(1.0), n(2.0)])));
         assert!(
-            ok(fn_append(&[arr(vec![n(1.0)]), arr(vec![n(2.0), n(3.0)])], U))
-                .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
+            ok(fn_append(
+                &[arr(vec![n(1.0)]), arr(vec![n(2.0), n(3.0)])],
+                U
+            ))
+            .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
         );
     }
 
@@ -212,8 +215,11 @@ mod tests {
     #[test]
     fn reverse_reverses() {
         assert!(
-            ok(fn_reverse(&[arr(vec![n(1.0), n(2.0), n(3.0)])], U))
-                .deep_equal(&arr(vec![n(3.0), n(2.0), n(1.0)]))
+            ok(fn_reverse(&[arr(vec![n(1.0), n(2.0), n(3.0)])], U)).deep_equal(&arr(vec![
+                n(3.0),
+                n(2.0),
+                n(1.0)
+            ]))
         );
     }
 
@@ -221,8 +227,11 @@ mod tests {
     #[test]
     fn distinct_dedups_by_deep_equality() {
         assert!(
-            ok(fn_distinct(&[arr(vec![n(1.0), n(2.0), n(1.0), n(3.0), n(2.0)])], U))
-                .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
+            ok(fn_distinct(
+                &[arr(vec![n(1.0), n(2.0), n(1.0), n(3.0), n(2.0)])],
+                U
+            ))
+            .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
         );
         let obj = |k: f64| {
             let mut m = crate::value::ObjectMap::new();
@@ -230,8 +239,7 @@ mod tests {
             Value::Object(Rc::new(m))
         };
         assert!(
-            ok(fn_distinct(&[arr(vec![obj(1.0), obj(1.0)])], U))
-                .deep_equal(&arr(vec![obj(1.0)]))
+            ok(fn_distinct(&[arr(vec![obj(1.0), obj(1.0)])], U)).deep_equal(&arr(vec![obj(1.0)]))
         );
     }
 
@@ -239,21 +247,31 @@ mod tests {
     fn flatten_honors_depth() {
         let nested = arr(vec![arr(vec![n(1.0), arr(vec![n(2.0)])]), n(3.0)]);
         assert!(
-            ok(fn_flatten(std::slice::from_ref(&nested), U))
-                .deep_equal(&arr(vec![n(1.0), n(2.0), n(3.0)]))
+            ok(fn_flatten(std::slice::from_ref(&nested), U)).deep_equal(&arr(vec![
+                n(1.0),
+                n(2.0),
+                n(3.0)
+            ]))
         );
-        assert!(
-            ok(fn_flatten(&[nested, n(1.0)], U))
-                .deep_equal(&arr(vec![n(1.0), arr(vec![n(2.0)]), n(3.0)]))
-        );
+        assert!(ok(fn_flatten(&[nested, n(1.0)], U)).deep_equal(&arr(vec![
+            n(1.0),
+            arr(vec![n(2.0)]),
+            n(3.0)
+        ])));
     }
 
     /// $zip truncates to the shortest input; any undefined input → [].
     #[test]
     fn zip_truncates_to_shortest() {
         assert!(
-            ok(fn_zip(&[arr(vec![n(1.0), n(2.0)]), arr(vec![n(3.0), n(4.0), n(5.0)])], U))
-                .deep_equal(&arr(vec![arr(vec![n(1.0), n(3.0)]), arr(vec![n(2.0), n(4.0)])]))
+            ok(fn_zip(
+                &[arr(vec![n(1.0), n(2.0)]), arr(vec![n(3.0), n(4.0), n(5.0)])],
+                U
+            ))
+            .deep_equal(&arr(vec![
+                arr(vec![n(1.0), n(3.0)]),
+                arr(vec![n(2.0), n(4.0)])
+            ]))
         );
         let z = ok(fn_zip(&[arr(vec![n(1.0)]), Value::Undefined], U));
         assert!(matches!(&z, Value::Array(a) if a.is_empty()));

@@ -35,7 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eval("Expensive items (>50)", "orders.items[price > 50].product")?;
 
     // Map: compute line totals
-    eval("Line totals", "orders.items.(product & \": $\" & price * qty)")?;
+    eval(
+        "Line totals",
+        "orders.items.(product & \": $\" & price * qty)",
+    )?;
 
     // Aggregate: total revenue
     eval("Total revenue", "$sum(orders.items.(price * qty))")?;
@@ -53,10 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Group by category
-    eval(
-        "Group by category",
-        "orders.items{category: product}",
-    )?;
+    eval("Group by category", "orders.items{category: product}")?;
 
     // Reduce: total revenue via $reduce
     eval(

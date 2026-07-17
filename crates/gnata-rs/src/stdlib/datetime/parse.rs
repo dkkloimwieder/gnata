@@ -76,7 +76,13 @@ pub(super) fn try_parse_iso_with_tz(s: &str) -> Option<i64> {
     let offset_secs = match tz_part {
         "Z" | "z" => 0i64,
         _ if tz_part.len() >= 5 => {
-            let sign: i64 = if tz_part.starts_with('+') { 1 } else if tz_part.starts_with('-') { -1 } else { return None };
+            let sign: i64 = if tz_part.starts_with('+') {
+                1
+            } else if tz_part.starts_with('-') {
+                -1
+            } else {
+                return None;
+            };
             let tz_digits = &tz_part[1..];
             let (th, tm) = if tz_digits.contains(':') && tz_digits.len() >= 5 {
                 let th: i64 = tz_digits[0..2].parse().ok()?;
@@ -748,4 +754,3 @@ pub(super) fn consume_name_or_number(runes: &[char], modifier: &str) -> usize {
     }
     i
 }
-

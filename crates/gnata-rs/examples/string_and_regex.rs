@@ -32,24 +32,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eval("$contains", r#"$contains(email, "example")"#)?;
 
     println!("\n=== Regex ===");
-    eval("$match", r#"$match("2024-03-15", /(\d{4})-(\d{2})-(\d{2})/)"#)?;
-    eval("$replace (literal)", r#"$replace("Hello World", "World", "JSONata")"#)?;
-    eval("$replace (regex)", r#"$replace("foo bar baz", /[aeiou]/, "*")"#)?;
+    eval(
+        "$match",
+        r#"$match("2024-03-15", /(\d{4})-(\d{2})-(\d{2})/)"#,
+    )?;
+    eval(
+        "$replace (literal)",
+        r#"$replace("Hello World", "World", "JSONata")"#,
+    )?;
+    eval(
+        "$replace (regex)",
+        r#"$replace("foo bar baz", /[aeiou]/, "*")"#,
+    )?;
 
     println!("\n=== Encoding ===");
     eval("$base64encode", r#"$base64encode("Hello, World!")"#)?;
     eval("$base64decode", r#"$base64decode("SGVsbG8sIFdvcmxkIQ==")"#)?;
-    eval("$encodeUrlComponent", r#"$encodeUrlComponent("hello world&foo=bar")"#)?;
+    eval(
+        "$encodeUrlComponent",
+        r#"$encodeUrlComponent("hello world&foo=bar")"#,
+    )?;
 
     println!("\n=== Chained Transforms ===");
     eval(
         "Pipeline",
         r#"email ~> $substringBefore("@") ~> $uppercase"#,
     )?;
-    eval(
-        "Split & count",
-        r#"$count($split(csv, ","))"#,
-    )?;
+    eval("Split & count", r#"$count($split(csv, ","))"#)?;
 
     Ok(())
 }

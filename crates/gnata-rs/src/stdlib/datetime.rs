@@ -69,7 +69,10 @@ pub fn fn_now(args: &[Value], _focus: &Value) -> JsonataResult {
 ///
 /// # Errors
 /// This function does not return errors under normal operation.
-#[expect(clippy::unnecessary_wraps, reason = "must match the BuiltinFn signature")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "must match the BuiltinFn signature"
+)]
 pub fn fn_millis(_args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::Number(current_millis() as f64))
 }
@@ -174,7 +177,6 @@ pub fn fn_to_millis(args: &[Value], _focus: &Value) -> JsonataResult {
     parse_iso_to_millis(&s)
 }
 
-
 // ── Shared name tables ──────────────────────────────────────────────────────
 
 pub(super) const WEEKDAY_NAMES: &[&str] = &[
@@ -203,7 +205,6 @@ pub(super) const MONTH_NAMES: &[&str] = &[
 pub(super) const VALID_COMPONENTS: &[char] = &[
     'Y', 'M', 'D', 'd', 'H', 'h', 'm', 's', 'f', 'F', 'Z', 'z', 'P', 'C', 'E', 'W', 'w', 'X', 'x',
 ];
-
 
 // ── Value extraction helper ──────────────────────────────────────────────────
 

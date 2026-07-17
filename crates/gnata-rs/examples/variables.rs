@@ -1,7 +1,7 @@
 //! Pass Rust values into JSONata expressions as variables.
 
-use gnata::Value;
 use gnata::Expression;
+use gnata::Value;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Simple variable binding

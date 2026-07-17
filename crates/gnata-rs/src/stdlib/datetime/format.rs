@@ -475,4 +475,3 @@ pub(super) fn format_integer_mod(v: i64, modifier: &str) -> String {
 
     v.to_string()
 }
-

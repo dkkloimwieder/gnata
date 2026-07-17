@@ -389,7 +389,10 @@ mod tests {
     /// documentation examples for $formatInteger.
     #[test]
     fn format_integer_pictures() {
-        assert_eq!(fmt(2789.0, "w"), "two thousand, seven hundred and eighty-nine");
+        assert_eq!(
+            fmt(2789.0, "w"),
+            "two thousand, seven hundred and eighty-nine"
+        );
         assert_eq!(fmt(1999.0, "I"), "MCMXCIX");
         assert_eq!(fmt(1999.0, "i"), "mcmxcix");
         assert_eq!(fmt(123.0, "0000"), "0123");

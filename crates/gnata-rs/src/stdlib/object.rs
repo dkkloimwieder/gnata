@@ -261,7 +261,9 @@ mod tests {
     #[test]
     fn lookup_maps_across_arrays() {
         let key = Value::String("a".into());
-        assert!(ok(fn_lookup(&[obj(&[("a", 1.0)]), key.clone()], U)).deep_equal(&Value::Number(1.0)));
+        assert!(
+            ok(fn_lookup(&[obj(&[("a", 1.0)]), key.clone()], U)).deep_equal(&Value::Number(1.0))
+        );
         assert!(matches!(
             fn_lookup(&[obj(&[("b", 1.0)]), key.clone()], U),
             Ok(Value::Undefined)
@@ -271,10 +273,12 @@ mod tests {
             obj(&[("x", 0.0)]),
             obj(&[("a", 2.0)]),
         ]));
-        assert!(ok(fn_lookup(&[arr, key], U)).deep_equal(&Value::Array(Rc::from(vec![
-            Value::Number(1.0),
-            Value::Number(2.0)
-        ]))));
+        assert!(
+            ok(fn_lookup(&[arr, key], U)).deep_equal(&Value::Array(Rc::from(vec![
+                Value::Number(1.0),
+                Value::Number(2.0)
+            ])))
+        );
     }
 
     /// $spread splits an object into single-pair objects.

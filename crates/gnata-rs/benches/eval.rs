@@ -5,8 +5,8 @@
 
 use std::rc::Rc;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use compact_str::CompactString;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use gnata::Environment;
 use gnata::Expression;
 use gnata::Value;

@@ -62,7 +62,10 @@ const CASES: &[(&str, &str)] = &[
     ("$filter(items, function($v){$v.x != 3})", CLEAN),
     ("$filter(items, function($v){$v.x != 3})", HOSTILE),
     ("$filter(items, function($v){$v.name = \"Alpha\"})", CLEAN),
-    ("$filter(items, function($v){$v.name != \"Alpha\"})", HOSTILE),
+    (
+        "$filter(items, function($v){$v.name != \"Alpha\"})",
+        HOSTILE,
+    ),
     ("$filter(items, function($v){$v.name > \"B\"})", HOSTILE),
     ("$sift(items[0], function($v){$v > 1})", CLEAN),
     // ── SimpleLambda::TwoFieldPredicate ──
@@ -73,9 +76,15 @@ const CASES: &[(&str, &str)] = &[
     ("$filter(items, function($v){$v.x > $v.y})", NUMS),
     // ── SimpleLambda::CompoundPredicate (and/or, short-circuit order) ──
     ("$filter(items, function($v){$v.x > 1 and $v.x < 3})", CLEAN),
-    ("$filter(items, function($v){$v.x > 1 and $v.x < 3})", HOSTILE),
+    (
+        "$filter(items, function($v){$v.x > 1 and $v.x < 3})",
+        HOSTILE,
+    ),
     ("$filter(items, function($v){$v.x > 2 or $v.y > 2})", CLEAN),
-    ("$filter(items, function($v){$v.x > 2 or $v.y > 2})", HOSTILE),
+    (
+        "$filter(items, function($v){$v.x > 2 or $v.y > 2})",
+        HOSTILE,
+    ),
     (
         "$filter(items, function($v){$v.x > 100 and $v.name > 5})",
         CLEAN,
@@ -90,7 +99,10 @@ const CASES: &[(&str, &str)] = &[
     ("$sort(items, function($a, $b){$a.name > $b.name})", HOSTILE),
     // ── SimpleLambda::ReduceAccum / ReduceCompoundAccum ──
     ("$reduce(items, function($acc, $v){$acc + $v.x}, 0)", CLEAN),
-    ("$reduce(items, function($acc, $v){$acc + $v.x}, 0)", HOSTILE),
+    (
+        "$reduce(items, function($acc, $v){$acc + $v.x}, 0)",
+        HOSTILE,
+    ),
     ("$reduce(items, function($acc, $v){$acc + $v.x}, 0)", NUMS),
     ("$reduce(items, function($acc, $v){$acc * $v.x}, 1)", CLEAN),
     ("$reduce(items, function($acc, $v){$acc - $v.x}, 100)", NUMS),
@@ -214,9 +226,7 @@ fn describe(r: &EvalResult) -> String {
 /// Compare fast vs general results: equal values or equal error codes.
 fn diverged(fast: &EvalResult, general: &EvalResult) -> bool {
     match (fast, general) {
-        (Ok(a), Ok(b)) => {
-            !(a.is_undefined() && b.is_undefined()) && !gnata::deep_equal(a, b)
-        }
+        (Ok(a), Ok(b)) => !(a.is_undefined() && b.is_undefined()) && !gnata::deep_equal(a, b),
         (Err(a), Err(b)) => a.code != b.code,
         _ => true,
     }

@@ -33,7 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", result.stringify(false)?);
 
     let expr = Expression::compile("$fahrenheit(100)")?;
-    let result = expr.evaluate_with_custom_funcs("", &[("fahrenheit".into(), fahrenheit.clone())])?;
+    let result =
+        expr.evaluate_with_custom_funcs("", &[("fahrenheit".into(), fahrenheit.clone())])?;
     println!("100C = {}F", result.stringify(false)?);
 
     // --- Reusable environment (shared across evaluations) ---
@@ -45,7 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]);
 
     // All three functions available in every evaluation
-    let expr1 = Expression::compile(r#"$greet("Bob") & " It's " & $fahrenheit(37) & "F outside.""#)?;
+    let expr1 =
+        Expression::compile(r#"$greet("Bob") & " It's " & $fahrenheit(37) & "F outside.""#)?;
     let result = expr1.evaluate_with_env(&Value::Undefined, &env)?;
     println!("{}", result.stringify(false)?);
 

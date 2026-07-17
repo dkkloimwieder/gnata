@@ -700,7 +700,10 @@ mod tests {
     /// $substring operates on characters, not bytes (spec.md §5.2.3).
     #[test]
     fn substring_is_unicode_aware_with_negative_start() {
-        assert_eq!(text(fn_substring(&[s("hello world"), n(0.0), n(5.0)], U)), "hello");
+        assert_eq!(
+            text(fn_substring(&[s("hello world"), n(0.0), n(5.0)], U)),
+            "hello"
+        );
         // Negative start counts from the end, clamped to 0.
         assert_eq!(text(fn_substring(&[s("hello"), n(-2.0)], U)), "lo");
         assert_eq!(text(fn_substring(&[s("hello"), n(-99.0), n(2.0)], U)), "he");
@@ -738,9 +741,15 @@ mod tests {
     #[test]
     fn split_supports_limits_and_char_mode() {
         assert_eq!(strings(fn_split(&[s("a,b,c"), s(",")], U)), ["a", "b", "c"]);
-        assert_eq!(strings(fn_split(&[s("a,b,c"), s(","), n(2.0)], U)), ["a", "b"]);
+        assert_eq!(
+            strings(fn_split(&[s("a,b,c"), s(","), n(2.0)], U)),
+            ["a", "b"]
+        );
         // Empty separator splits into characters.
-        assert_eq!(strings(fn_split(&[s("héllo"), s("")], U)), ["h", "é", "l", "l", "o"]);
+        assert_eq!(
+            strings(fn_split(&[s("héllo"), s("")], U)),
+            ["h", "é", "l", "l", "o"]
+        );
         // Negative limit is an error.
         assert_eq!(code(fn_split(&[s("a,b"), s(","), n(-1.0)], U)), "D3020");
     }
@@ -765,7 +774,10 @@ mod tests {
             text(fn_encode_url(&[s("http://x.com/a b?q=1")], U)),
             "http://x.com/a%20b?q=1"
         );
-        assert_eq!(text(fn_encode_url_component(&[s("a b&c=d")], U)), "a%20b%26c%3Dd");
+        assert_eq!(
+            text(fn_encode_url_component(&[s("a b&c=d")], U)),
+            "a%20b%26c%3Dd"
+        );
         assert_eq!(text(fn_decode_url_component(&[s("a%20b%26c")], U)), "a b&c");
     }
 

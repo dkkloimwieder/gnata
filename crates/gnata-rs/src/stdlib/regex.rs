@@ -496,8 +496,7 @@ mod tests {
     #[test]
     fn match_reports_char_indices_and_groups() {
         let m = eval_expr(r#"$match("héllo world", /(l+)o/)"#);
-        let expected =
-            eval_expr(r#"{"match": "llo", "start": 2, "end": 5, "groups": ["ll"]}"#);
+        let expected = eval_expr(r#"{"match": "llo", "start": 2, "end": 5, "groups": ["ll"]}"#);
         assert!(m.deep_equal(&expected), "got {m:?}");
     }
 
@@ -506,7 +505,10 @@ mod tests {
     #[test]
     fn replace_supports_group_references() {
         let r = eval_expr(r#"$replace("John Smith", /(\w+)\s(\w+)/, "$2 $1")"#);
-        assert!(r.deep_equal(&Value::String("Smith John".into())), "got {r:?}");
+        assert!(
+            r.deep_equal(&Value::String("Smith John".into())),
+            "got {r:?}"
+        );
     }
 
     #[test]

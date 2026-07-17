@@ -29,8 +29,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let input = Value::from_json_str(event_json)?;
         let results = se.eval_many(&input, &[user_idx, type_idx, is_purchase, amount_idx])?;
 
-        let user = results[0].as_ref().map_or("?", |v| v.as_str().unwrap_or("?"));
-        let typ = results[1].as_ref().map_or("?", |v| v.as_str().unwrap_or("?"));
+        let user = results[0]
+            .as_ref()
+            .map_or("?", |v| v.as_str().unwrap_or("?"));
+        let typ = results[1]
+            .as_ref()
+            .map_or("?", |v| v.as_str().unwrap_or("?"));
         let is_buy = results[2].as_ref().is_some_and(Value::to_boolean);
         let amount = results[3].as_ref().and_then(Value::as_f64);
 
@@ -49,7 +53,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let input = Value::from_json_str(events[1])?;
     let results = se.eval_many(&input, &[user_idx])?;
-    println!("  Swapped result: {}", results[0].as_ref().unwrap().stringify(false)?);
+    println!(
+        "  Swapped result: {}",
+        results[0].as_ref().unwrap().stringify(false)?
+    );
 
     // --- Remove and add ---
 
@@ -75,8 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(Value::String(label.into()))
     });
 
-    let mut se = StreamEvaluator::new(vec![])
-        .with_custom_functions(vec![("classify".into(), classify)]);
+    let mut se =
+        StreamEvaluator::new(vec![]).with_custom_functions(vec![("classify".into(), classify)]);
     let idx = se.compile(r#"type = "purchase" ? $classify(amount) & " value" : "n/a""#)?;
 
     for event_json in &events {

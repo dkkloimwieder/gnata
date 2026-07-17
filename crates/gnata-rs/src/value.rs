@@ -782,9 +782,12 @@ mod tests {
             Value::String("back\\slash".into()),
             Value::String("new\nline".into()),
             Value::String("tab\there".into()),
-            Value::String("\x00\x01\x1f".into()),  // control chars
-            Value::String("unicode: \u{00e9}\u{1f600}".into()),  // é and emoji
-            Value::Array(Rc::from(vec![Value::Number(1.0), Value::String("two".into())])),
+            Value::String("\x00\x01\x1f".into()), // control chars
+            Value::String("unicode: \u{00e9}\u{1f600}".into()), // é and emoji
+            Value::Array(Rc::from(vec![
+                Value::Number(1.0),
+                Value::String("two".into()),
+            ])),
             Value::Array(Rc::from(vec![])),
             Value::Object(Rc::new(ObjectMap::new())),
         ];
@@ -799,7 +802,10 @@ mod tests {
         let mut obj = ObjectMap::new();
         obj.insert("key".into(), Value::String("val".into()));
         obj.insert("num".into(), Value::Number(99.0));
-        obj.insert("arr".into(), Value::Array(Rc::from(vec![Value::Bool(true)])));
+        obj.insert(
+            "arr".into(),
+            Value::Array(Rc::from(vec![Value::Bool(true)])),
+        );
         let nested = Value::Object(Rc::new(obj));
         let expected = serde_json::to_string(&nested.to_json()).unwrap();
         assert_eq!(expected, nested.to_json_string());

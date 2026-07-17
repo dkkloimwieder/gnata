@@ -4,7 +4,9 @@
 //! pretty-printed text with consistent indentation and line-breaking rules.
 
 use crate::error::JsonataError;
-use crate::parser::ast::{AstArena, NodeId, Expr, UnaryOp, GroupExpr, BinaryOp, Signature, Stage, StageKind};
+use crate::parser::ast::{
+    AstArena, BinaryOp, Expr, GroupExpr, NodeId, Signature, Stage, StageKind, UnaryOp,
+};
 use crate::parser::{Parser, process_ast};
 
 const INDENT: &str = "  ";
@@ -138,7 +140,13 @@ impl<'a> Formatter<'a> {
         // Emit comments that appear before this node in the source
         self.emit_comments_before(expr.pos(), depth);
         match expr {
-            Expr::Name { ref value, ref stages, ref group, keep_array, .. } => {
+            Expr::Name {
+                ref value,
+                ref stages,
+                ref group,
+                keep_array,
+                ..
+            } => {
                 if keep_array {
                     self.out.push_str(&escape_name(value));
                     self.out.push_str("[]");
@@ -159,7 +167,12 @@ impl<'a> Formatter<'a> {
             Expr::ValueLit { ref value, .. } => {
                 self.out.push_str(value);
             }
-            Expr::Variable { ref name, ref group, keep_array, .. } => {
+            Expr::Variable {
+                ref name,
+                ref group,
+                keep_array,
+                ..
+            } => {
                 if name == "$" {
                     self.out.push_str("$$");
                 } else if name.is_empty() {
@@ -181,7 +194,11 @@ impl<'a> Formatter<'a> {
                     self.out.push_str(&slot.label);
                 }
             }
-            Expr::Regex { ref pattern, ref flags, .. } => {
+            Expr::Regex {
+                ref pattern,
+                ref flags,
+                ..
+            } => {
                 self.out.push('/');
                 self.out.push_str(pattern);
                 self.out.push('/');
@@ -189,34 +206,56 @@ impl<'a> Formatter<'a> {
             }
             Expr::Placeholder { .. } => self.out.push('?'),
 
-            Expr::Path { ref steps, ref group, .. } => {
+            Expr::Path {
+                ref steps,
+                ref group,
+                ..
+            } => {
                 self.emit_path(steps, group.as_ref(), depth);
             }
 
-            Expr::Binary { op, lhs, rhs, ref group, .. } => {
+            Expr::Binary {
+                op,
+                lhs,
+                rhs,
+                ref group,
+                ..
+            } => {
                 self.emit_binary(op, lhs, rhs, group.as_ref(), depth);
             }
 
-            Expr::Unary { op, operand, ref expressions, ref lhs, ref group, .. } => {
-                match op {
-                    UnaryOp::Negate => {
-                        self.out.push('-');
-                        self.emit(operand, depth);
-                    }
-                    UnaryOp::ArrayCons => {
-                        self.emit_array(expressions, depth);
-                    }
-                    UnaryOp::ObjCons => {
-                        self.emit_object(lhs, group.as_ref(), depth);
-                    }
+            Expr::Unary {
+                op,
+                operand,
+                ref expressions,
+                ref lhs,
+                ref group,
+                ..
+            } => match op {
+                UnaryOp::Negate => {
+                    self.out.push('-');
+                    self.emit(operand, depth);
                 }
-            }
+                UnaryOp::ArrayCons => {
+                    self.emit_array(expressions, depth);
+                }
+                UnaryOp::ObjCons => {
+                    self.emit_object(lhs, group.as_ref(), depth);
+                }
+            },
 
-            Expr::Block { ref expressions, .. } => {
+            Expr::Block {
+                ref expressions, ..
+            } => {
                 self.emit_block(expressions, depth);
             }
 
-            Expr::Condition { condition, then, else_, .. } => {
+            Expr::Condition {
+                condition,
+                then,
+                else_,
+                ..
+            } => {
                 self.emit_condition(condition, then, else_, depth);
             }
 
@@ -226,22 +265,41 @@ impl<'a> Formatter<'a> {
                 self.emit(rhs, depth);
             }
 
-            Expr::Function { procedure, ref arguments, ref group, .. } => {
+            Expr::Function {
+                procedure,
+                ref arguments,
+                ref group,
+                ..
+            } => {
                 self.emit(procedure, depth);
                 self.emit_args(arguments, depth);
                 self.emit_group(group.as_ref(), depth);
             }
 
-            Expr::Partial { procedure, ref arguments, .. } => {
+            Expr::Partial {
+                procedure,
+                ref arguments,
+                ..
+            } => {
                 self.emit(procedure, depth);
                 self.emit_args(arguments, depth);
             }
 
-            Expr::Lambda { ref params, body, ref signature, .. } => {
+            Expr::Lambda {
+                ref params,
+                body,
+                ref signature,
+                ..
+            } => {
                 self.emit_lambda(params, body, signature.as_ref(), depth);
             }
 
-            Expr::Transform { pattern, update, delete, .. } => {
+            Expr::Transform {
+                pattern,
+                update,
+                delete,
+                ..
+            } => {
                 self.out.push('|');
                 self.emit(pattern, depth);
                 self.out.push('|');
@@ -253,7 +311,9 @@ impl<'a> Formatter<'a> {
                 self.out.push('|');
             }
 
-            Expr::Sort { expr, ref terms, .. } => {
+            Expr::Sort {
+                expr, ref terms, ..
+            } => {
                 self.emit(expr, depth);
                 self.out.push_str("^(");
                 for (i, term) in terms.iter().enumerate() {
@@ -301,7 +361,14 @@ impl<'a> Formatter<'a> {
         self.emit_group(group, depth);
     }
 
-    fn emit_binary(&mut self, op: BinaryOp, lhs: NodeId, rhs: NodeId, group: Option<&GroupExpr>, depth: usize) {
+    fn emit_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: NodeId,
+        rhs: NodeId,
+        group: Option<&GroupExpr>,
+        depth: usize,
+    ) {
         match op {
             BinaryOp::Subscript => {
                 self.emit(lhs, depth);
@@ -435,16 +502,24 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn emit_condition(&mut self, condition: NodeId, then: NodeId, else_: Option<NodeId>, depth: usize) {
+    fn emit_condition(
+        &mut self,
+        condition: NodeId,
+        then: NodeId,
+        else_: Option<NodeId>,
+        depth: usize,
+    ) {
         // Try inline first
         let cond_str = self.render(condition, depth);
         let then_str = self.render(then, depth);
         let else_str = else_.map(|e| self.render(e, depth));
 
-        let inline_len = cond_str.len() + 3 + then_str.len()
-            + else_str.as_ref().map_or(0, |s| 3 + s.len());
+        let inline_len =
+            cond_str.len() + 3 + then_str.len() + else_str.as_ref().map_or(0, |s| 3 + s.len());
 
-        if inline_len <= LINE_WIDTH && !cond_str.contains('\n') && !then_str.contains('\n')
+        if inline_len <= LINE_WIDTH
+            && !cond_str.contains('\n')
+            && !then_str.contains('\n')
             && else_str.as_ref().is_none_or(|s| !s.contains('\n'))
         {
             self.emit(condition, depth);
@@ -469,7 +544,13 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn emit_lambda(&mut self, params: &[NodeId], body: NodeId, signature: Option<&Signature>, depth: usize) {
+    fn emit_lambda(
+        &mut self,
+        params: &[NodeId],
+        body: NodeId,
+        signature: Option<&Signature>,
+        depth: usize,
+    ) {
         self.out.push_str("function(");
         for (i, &p) in params.iter().enumerate() {
             if i > 0 {
@@ -647,7 +728,10 @@ mod tests {
         assert_eq!(lines[0], "a");
         for line in &lines[1..] {
             let trimmed = line.trim();
-            assert!(trimmed.starts_with('.'), "continuation should start with dot: {line}");
+            assert!(
+                trimmed.starts_with('.'),
+                "continuation should start with dot: {line}"
+            );
         }
     }
 
@@ -681,8 +765,16 @@ mod tests {
         assert!(result.contains('\n'), "expected multiline, got: {result}");
         // Each arg on its own line, indented
         let lines: Vec<&str> = result.lines().collect();
-        assert!(lines[0].ends_with('('), "first line should end with '(': {}", lines[0]);
-        assert_eq!(lines.last().unwrap().trim(), ")", "last line should be closing paren");
+        assert!(
+            lines[0].ends_with('('),
+            "first line should end with '(': {}",
+            lines[0]
+        );
+        assert_eq!(
+            lines.last().unwrap().trim(),
+            ")",
+            "last line should be closing paren"
+        );
     }
 
     #[test]
@@ -733,15 +825,27 @@ mod tests {
         // Build something that exceeds LINE_WIDTH (60)
         let expr = "this_is_a_long_variable_name ? this_is_another_long_value : yet_another_long_fallback_value";
         let result = fmt(expr);
-        assert!(result.contains('\n'), "expected multiline for long condition, got: {result}");
-        assert!(result.contains("? "), "should have ? on its own indented line: {result}");
-        assert!(result.contains(": "), "should have : on its own indented line: {result}");
+        assert!(
+            result.contains('\n'),
+            "expected multiline for long condition, got: {result}"
+        );
+        assert!(
+            result.contains("? "),
+            "should have ? on its own indented line: {result}"
+        );
+        assert!(
+            result.contains(": "),
+            "should have : on its own indented line: {result}"
+        );
     }
 
     #[test]
     fn nested_conditions() {
         let result = fmt("a ? b ? 1 : 2 : 3");
-        assert!(result.contains("?"), "should contain ternary operator: {result}");
+        assert!(
+            result.contains("?"),
+            "should contain ternary operator: {result}"
+        );
         // Should be idempotent
         let second = fmt(&result);
         assert_eq!(result, second, "nested conditions not idempotent");
@@ -766,16 +870,26 @@ mod tests {
     #[test]
     fn lambda_with_signature() {
         let result = fmt("function($x)<n:n> { $x + 1 }");
-        assert!(result.contains("<n:n>"), "should preserve type signature: {result}");
+        assert!(
+            result.contains("<n:n>"),
+            "should preserve type signature: {result}"
+        );
     }
 
     #[test]
     fn lambda_body_indented() {
         let result = fmt("function($x) { $x + 1 }");
         let lines: Vec<&str> = result.lines().collect();
-        assert!(lines.len() >= 3, "lambda should be at least 3 lines: {result}");
+        assert!(
+            lines.len() >= 3,
+            "lambda should be at least 3 lines: {result}"
+        );
         // Body line should be indented
-        assert!(lines[1].starts_with(INDENT), "body should be indented: {}", lines[1]);
+        assert!(
+            lines[1].starts_with(INDENT),
+            "body should be indented: {}",
+            lines[1]
+        );
     }
 
     // ── Object constructors ──────────────────────────────────
@@ -783,7 +897,10 @@ mod tests {
     #[test]
     fn short_object_inline() {
         let result = fmt("{\"a\": 1, \"b\": 2}");
-        assert!(!result.contains('\n'), "short object should be inline: {result}");
+        assert!(
+            !result.contains('\n'),
+            "short object should be inline: {result}"
+        );
         assert!(result.contains("{"));
         assert!(result.contains("}"));
     }
@@ -791,7 +908,10 @@ mod tests {
     #[test]
     fn long_object_expanded() {
         let result = fmt("{\"a\": 1, \"b\": 2, \"c\": 3, \"d\": 4}");
-        assert!(result.contains('\n'), "object with >3 pairs should expand: {result}");
+        assert!(
+            result.contains('\n'),
+            "object with >3 pairs should expand: {result}"
+        );
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines[0].trim(), "{");
         assert_eq!(lines.last().unwrap().trim(), "}");
@@ -800,7 +920,10 @@ mod tests {
     #[test]
     fn object_three_pairs_inline() {
         let result = fmt("{\"a\": 1, \"b\": 2, \"c\": 3}");
-        assert!(!result.contains('\n'), "3 pairs = threshold, should be inline: {result}");
+        assert!(
+            !result.contains('\n'),
+            "3 pairs = threshold, should be inline: {result}"
+        );
     }
 
     // ── Array constructors ───────────────────────────────────
@@ -813,7 +936,10 @@ mod tests {
     #[test]
     fn long_array_expanded() {
         let result = fmt("[1, 2, 3, 4]");
-        assert!(result.contains('\n'), "array with >3 elements should expand: {result}");
+        assert!(
+            result.contains('\n'),
+            "array with >3 elements should expand: {result}"
+        );
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines[0].trim(), "[");
         assert_eq!(lines.last().unwrap().trim(), "]");
@@ -911,7 +1037,10 @@ mod tests {
     #[test]
     fn transform_update() {
         let result = fmt("|a|b|");
-        assert!(result.contains("|"), "transform should use pipe syntax: {result}");
+        assert!(
+            result.contains("|"),
+            "transform should use pipe syntax: {result}"
+        );
         assert!(result.contains("a"));
         assert!(result.contains("b"));
     }
@@ -930,19 +1059,28 @@ mod tests {
     fn sort_ascending() {
         let result = fmt("data^(<price)");
         assert!(result.contains("^("), "should have sort syntax: {result}");
-        assert!(result.contains("<price"), "should have ascending marker: {result}");
+        assert!(
+            result.contains("<price"),
+            "should have ascending marker: {result}"
+        );
     }
 
     #[test]
     fn sort_descending() {
         let result = fmt("data^(>price)");
-        assert!(result.contains(">price"), "should have descending marker: {result}");
+        assert!(
+            result.contains(">price"),
+            "should have descending marker: {result}"
+        );
     }
 
     #[test]
     fn sort_multi_key() {
         let result = fmt("data^(<category, >price)");
-        assert!(result.contains("<category"), "first key ascending: {result}");
+        assert!(
+            result.contains("<category"),
+            "first key ascending: {result}"
+        );
         assert!(result.contains(">price"), "second key descending: {result}");
     }
 
@@ -989,7 +1127,10 @@ mod tests {
     #[test]
     fn chained_filters() {
         let result = fmt("items[type = \"book\"][price < 20]");
-        assert!(result.contains("[type = \"book\"]"), "first filter: {result}");
+        assert!(
+            result.contains("[type = \"book\"]"),
+            "first filter: {result}"
+        );
         assert!(result.contains("[price < 20]"), "second filter: {result}");
     }
 
@@ -1002,9 +1143,15 @@ mod tests {
         // The lambda body should be further indented than the block body
         let lines: Vec<&str> = result.lines().collect();
         let lambda_body = lines.iter().find(|l| l.contains("$x * 2"));
-        assert!(lambda_body.is_some(), "should contain lambda body: {result}");
+        assert!(
+            lambda_body.is_some(),
+            "should contain lambda body: {result}"
+        );
         let body_indent = lambda_body.unwrap().len() - lambda_body.unwrap().trim_start().len();
-        assert!(body_indent >= INDENT.len() * 2, "lambda body should be double-indented: {result}");
+        assert!(
+            body_indent >= INDENT.len() * 2,
+            "lambda body should be double-indented: {result}"
+        );
     }
 
     #[test]
@@ -1018,8 +1165,14 @@ mod tests {
     #[test]
     fn preserves_comments() {
         let result = fmt("/* header */ $x + /* inline */ $y");
-        assert!(result.contains("/* header */"), "missing header comment: {result}");
-        assert!(result.contains("/* inline */"), "missing inline comment: {result}");
+        assert!(
+            result.contains("/* header */"),
+            "missing header comment: {result}"
+        );
+        assert!(
+            result.contains("/* inline */"),
+            "missing inline comment: {result}"
+        );
         for line in result.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("/*") {
@@ -1031,13 +1184,19 @@ mod tests {
     #[test]
     fn trailing_comment() {
         let result = fmt("$x + $y /* end */");
-        assert!(result.contains("/* end */"), "missing trailing comment: {result}");
+        assert!(
+            result.contains("/* end */"),
+            "missing trailing comment: {result}"
+        );
     }
 
     #[test]
     fn multiline_comment() {
         let result = fmt("$x /* \n  ***\n  */ + $y");
-        assert!(result.contains("/* \n  ***\n  */"), "missing multiline comment: {result}");
+        assert!(
+            result.contains("/* \n  ***\n  */"),
+            "missing multiline comment: {result}"
+        );
     }
 
     #[test]
@@ -1052,7 +1211,10 @@ mod tests {
     #[test]
     fn partial_application() {
         let result = fmt("$sum(?, 1)");
-        assert!(result.contains("?"), "should preserve placeholder: {result}");
+        assert!(
+            result.contains("?"),
+            "should preserve placeholder: {result}"
+        );
         assert!(result.contains("1"), "should preserve arg: {result}");
     }
 
@@ -1091,7 +1253,10 @@ mod tests {
         for expr in exprs {
             let first = fmt(expr);
             let second = fmt(&first);
-            assert_eq!(first, second, "not idempotent for: {expr}\nfirst:  {first}\nsecond: {second}");
+            assert_eq!(
+                first, second,
+                "not idempotent for: {expr}\nfirst:  {first}\nsecond: {second}"
+            );
         }
     }
 

@@ -195,7 +195,10 @@ pub fn fn_sqrt(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-#[expect(clippy::unnecessary_wraps, reason = "must match the BuiltinFn signature")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "must match the BuiltinFn signature"
+)]
 pub fn fn_random(_args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::Number(fastrand::f64()))
 }

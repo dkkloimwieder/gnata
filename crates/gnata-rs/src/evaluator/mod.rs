@@ -441,9 +441,9 @@ fn eval_path(
 
 /// Check whether any path step requires tuple-aware evaluation (#$var index bindings, @$var focus, or % parent refs).
 fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
-    steps.iter().any(|&step| {
-        node_has_index_binding(arena, step) || node_has_parent_ref(arena, step)
-    })
+    steps
+        .iter()
+        .any(|&step| node_has_index_binding(arena, step) || node_has_parent_ref(arena, step))
 }
 
 /// Check if a node's path-local structure contains an index (#$var) or focus (@$var) binding.
@@ -527,7 +527,9 @@ fn push_children(expr: &Expr, out: &mut Vec<NodeId>) {
             out.extend_from_slice(steps);
             push_group_pairs(group.as_ref(), out);
         }
-        Expr::Binary { lhs, rhs, group, .. } => {
+        Expr::Binary {
+            lhs, rhs, group, ..
+        } => {
             out.push(*lhs);
             out.push(*rhs);
             push_group_pairs(group.as_ref(), out);
@@ -681,11 +683,8 @@ fn eval_tuple_sort_step(
             } = arena.get(expr)
             {
                 let inner_steps = inner_steps.clone();
-                let expanded = expand_path_tuple(
-                    arena,
-                    &inner_steps,
-                    &[(val.clone(), ctx_env.clone())],
-                )?;
+                let expanded =
+                    expand_path_tuple(arena, &inner_steps, &[(val.clone(), ctx_env.clone())])?;
                 inner_ctxs.extend(expanded);
             } else {
                 let result = eval_no_stack_check(arena, expr, val, ctx_env)?;
@@ -810,8 +809,7 @@ fn eval_tuple_compound_join(
     )?;
 
     if !next_ctxs.is_empty() {
-        let outer_result =
-            eval_no_stack_check(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
+        let outer_result = eval_no_stack_check(arena, outer_rhs, &next_ctxs[0].0, &next_ctxs[0].1)?;
         if let Some(idx) = outer_result.as_f64() {
             let mut i = idx as i64;
             if i < 0 {
@@ -1436,7 +1434,8 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
 
     // Collect variable names from tuple-specific envs (those with %%).
     let mut var_names: Vec<compact_str::CompactString> = Vec::new();
-    let mut seen: std::collections::HashSet<compact_str::CompactString> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<compact_str::CompactString> =
+        std::collections::HashSet::new();
     for env in envs {
         let mut current: Option<&Rc<Environment>> = Some(env);
         while let Some(e) = current {
@@ -2693,18 +2692,18 @@ fn eval_sort(
 
     // Fast path: if every sort term is a simple Name node, extract field names
     // and use direct field comparison (no evaluator dispatch per comparison).
-    let simple_fields: Option<Vec<(&str, bool)>> = if crate::fast_path::testing::fast_paths_disabled()
-    {
-        None
-    } else {
-        terms
-            .iter()
-            .map(|t| match arena.get(t.expression) {
-                Expr::Name { value, .. } => Some((value.as_str(), t.descending)),
-                _ => None,
-            })
-            .collect()
-    };
+    let simple_fields: Option<Vec<(&str, bool)>> =
+        if crate::fast_path::testing::fast_paths_disabled() {
+            None
+        } else {
+            terms
+                .iter()
+                .map(|t| match arena.get(t.expression) {
+                    Expr::Name { value, .. } => Some((value.as_str(), t.descending)),
+                    _ => None,
+                })
+                .collect()
+        };
 
     if let Some(fields) = simple_fields {
         let mut sort_err: Option<JsonataError> = None;
@@ -3159,9 +3158,11 @@ fn validate_transform_clauses(
 /// Over-detection merely creates an unneeded child env; missing a use would
 /// evaluate the pair without its bindings.
 fn uses_group_bindings(arena: &AstArena, node: NodeId) -> bool {
-    subtree_any(arena, node, |e| {
-        matches!(e, Expr::Variable { name, .. } if name == "index" || name == "key")
-    })
+    subtree_any(
+        arena,
+        node,
+        |e| matches!(e, Expr::Variable { name, .. } if name == "index" || name == "key"),
+    )
 }
 
 /// Fast-path key evaluation strategy, determined once per group pair.
@@ -3304,7 +3305,9 @@ fn analyze_group_pair(
             } if stages.is_empty() && !uses_group_bindings(arena, val_node) => {
                 ValStrategy::FieldAccess(value.clone())
             }
-            _ if uses_group_bindings(arena, val_node) => ValStrategy::FullEvalWithBindings(val_node),
+            _ if uses_group_bindings(arena, val_node) => {
+                ValStrategy::FullEvalWithBindings(val_node)
+            }
             _ => ValStrategy::FullEvalNoBindings(val_node),
         }
     };

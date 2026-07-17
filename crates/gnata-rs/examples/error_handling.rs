@@ -1,7 +1,7 @@
 //! Error handling, cancellation, and edge cases.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gnata::Value;
 use gnata::{Expression, JsonataError};
@@ -35,25 +35,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== Error Code Matching ===\n");
 
-    let handle_error = |e: &JsonataError| {
-        match &e.code[..2] {
-            "S0" => println!("  Syntax error: {}", e.message),
-            "T0" | "T1" | "T2" => println!("  Type error: {}", e.message),
-            "D1" | "D2" | "D3" => println!("  Runtime error: {}", e.message),
-            "U1" => println!("  Stack overflow: {}", e.message),
-            _ => println!("  Unknown error [{}]: {}", e.code, e.message),
-        }
+    let handle_error = |e: &JsonataError| match &e.code[..2] {
+        "S0" => println!("  Syntax error: {}", e.message),
+        "T0" | "T1" | "T2" => println!("  Type error: {}", e.message),
+        "D1" | "D2" | "D3" => println!("  Runtime error: {}", e.message),
+        "U1" => println!("  Stack overflow: {}", e.message),
+        _ => println!("  Unknown error [{}]: {}", e.code, e.message),
     };
 
     for bad_expr in &["1 + +", r#"$unknown()"#, r#""a" - "b""#] {
-        match Expression::compile(bad_expr)
-            .and_then(|e| e.evaluate(r#"{"x": 1}"#))
-        {
+        match Expression::compile(bad_expr).and_then(|e| e.evaluate(r#"{"x": 1}"#)) {
             Err(e) => {
                 print!("  {:20}", format!("{bad_expr:?}"));
                 handle_error(&e);
             }
-            Ok(v) => println!("  {:20} => {}", format!("{bad_expr:?}"), v.stringify(false)?),
+            Ok(v) => println!(
+                "  {:20} => {}",
+                format!("{bad_expr:?}"),
+                v.stringify(false)?
+            ),
         }
     }
 
@@ -130,10 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (a, b, expected) in pairs {
         let result = gnata::deep_equal(&a, &b);
         let status = if result == expected { "ok" } else { "MISMATCH" };
-        println!(
-            "  deep_equal({:?}, {:?}) = {result:5}  ({status})",
-            a, b,
-        );
+        println!("  deep_equal({:?}, {:?}) = {result:5}  ({status})", a, b,);
     }
 
     // --- Type predicates ---

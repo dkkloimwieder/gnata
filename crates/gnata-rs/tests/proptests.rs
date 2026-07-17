@@ -19,32 +19,30 @@ fn arb_value() -> impl Strategy<Value = Value> {
         any::<bool>().prop_map(Value::Bool),
         // Finite f64 only — NaN/Inf serialize to null, breaking roundtrip.
         any::<f64>()
-            .prop_filter("must be finite and not -0", |n| n.is_finite() && !(*n == 0.0 && n.is_sign_negative()))
+            .prop_filter("must be finite and not -0", |n| n.is_finite()
+                && !(*n == 0.0 && n.is_sign_negative()))
             .prop_map(Value::Number),
         "[a-zA-Z0-9_ ]{0,50}".prop_map(|s| Value::String(CompactString::from(s))),
     ];
 
     leaf.prop_recursive(
-        3,   // max depth
-        64,  // max nodes
-        4,   // items per collection
+        3,  // max depth
+        64, // max nodes
+        4,  // items per collection
         |inner| {
             prop_oneof![
                 // Arrays
-                prop::collection::vec(inner.clone(), 0..5)
-                    .prop_map(|v| Value::Array(Rc::from(v))),
+                prop::collection::vec(inner.clone(), 0..5).prop_map(|v| Value::Array(Rc::from(v))),
                 // Objects
-                prop::collection::vec(
-                    ("[a-zA-Z_][a-zA-Z0-9_]{0,10}", inner),
-                    0..5,
-                )
-                .prop_map(|pairs| {
-                    let mut map = ObjectMap::new();
-                    for (k, v) in pairs {
-                        map.insert(CompactString::from(k), v);
+                prop::collection::vec(("[a-zA-Z_][a-zA-Z0-9_]{0,10}", inner), 0..5,).prop_map(
+                    |pairs| {
+                        let mut map = ObjectMap::new();
+                        for (k, v) in pairs {
+                            map.insert(CompactString::from(k), v);
+                        }
+                        Value::Object(Rc::from(map))
                     }
-                    Value::Object(Rc::from(map))
-                }),
+                ),
             ]
         },
     )
