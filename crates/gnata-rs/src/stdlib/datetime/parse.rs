@@ -157,7 +157,7 @@ pub(super) struct PicturePart {
     literal: String,
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i64>, JsonataError> {
     let runes: Vec<char> = picture.chars().collect();
     let mut parts: Vec<PicturePart> = Vec::new();
@@ -462,7 +462,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
     }
 
     if day_of_year > 0 {
-        let ms = date_to_ms_with_doy(year, day_of_year, hour, minute, second, millisec)?;
+        let ms = date_to_ms_with_doy(year, day_of_year, hour, minute, second, millisec);
         let ms_utc = ms - i64::from(tz_offset) * 1000;
         return Ok(Some(ms_utc));
     }
@@ -474,7 +474,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
         day = 1;
     }
 
-    let ms = calendar_to_ms(year, month, day, hour, minute, second, millisec)?;
+    let ms = datetime_to_epoch_ms(year, month, day, hour, minute, second, millisec);
     let ms_utc = if has_tz {
         ms - i64::from(tz_offset) * 1000
     } else {
@@ -497,18 +497,6 @@ pub(super) fn normalize_frac_to_ms(v: i64, n: usize) -> i32 {
     val as i32
 }
 
-pub(super) fn calendar_to_ms(
-    year: i32,
-    month: u8,
-    day: u8,
-    hour: u8,
-    minute: u8,
-    second: u8,
-    ms: i32,
-) -> Result<i64, JsonataError> {
-    Ok(datetime_to_epoch_ms(year, month, day, hour, minute, second, ms))
-}
-
 pub(super) fn date_to_ms_with_doy(
     year: i32,
     doy: u32,
@@ -516,10 +504,10 @@ pub(super) fn date_to_ms_with_doy(
     minute: u8,
     second: u8,
     ms: i32,
-) -> Result<i64, JsonataError> {
+) -> i64 {
     // Start from Jan 1 of year, add (doy - 1) days.
     let jan1_ms = datetime_to_epoch_ms(year, 1, 1, hour, minute, second, ms);
-    Ok(jan1_ms + i64::from(doy - 1) * 86_400_000)
+    jan1_ms + i64::from(doy - 1) * 86_400_000
 }
 
 // ── Token value parsing ──────────────────────────────────────────────────────

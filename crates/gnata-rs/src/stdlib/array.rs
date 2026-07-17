@@ -172,8 +172,6 @@ pub fn fn_zip(args: &[Value], _focus: &Value) -> JsonataResult {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
 
     const U: &Value = &Value::Undefined;

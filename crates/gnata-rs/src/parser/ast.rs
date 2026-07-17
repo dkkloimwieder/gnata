@@ -1,6 +1,6 @@
 // Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
 // not part of the documented public API.
-#![allow(missing_docs)]
+#![expect(missing_docs)]
 
 /// Binary operator tag — replaces String for zero-cost match dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -199,6 +199,7 @@ impl AstArena {
     /// arena — both are caller bugs. Use [`AstArena::try_get`] to resolve
     /// ids of uncertain provenance.
     #[inline]
+    #[expect(clippy::panic, reason = "documented caller-bug panic (M-PANIC-ON-BUG)")]
     pub fn get(&self, id: NodeId) -> &Expr {
         self.try_get(id).unwrap_or_else(|| {
             panic!(
@@ -222,6 +223,7 @@ impl AstArena {
     /// Panics if `id` is [`NodeId::EMPTY`] or was allocated by a different
     /// arena — both are caller bugs.
     #[inline]
+    #[expect(clippy::panic, reason = "documented caller-bug panic (M-PANIC-ON-BUG)")]
     pub fn get_mut(&mut self, id: NodeId) -> &mut Expr {
         let len = self.nodes.len();
         self.nodes.get_mut(id.0 as usize).unwrap_or_else(|| {

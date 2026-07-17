@@ -508,9 +508,9 @@ mod tests {
 
     #[test]
     fn number_with_decimal() {
-        let toks = lex_all("3.14");
+        let toks = lex_all("3.25");
         assert_eq!(toks[0].typ, TokenType::Number);
-        assert_eq!(toks[0].num_val, 3.14);
+        assert_eq!(toks[0].num_val, 3.25);
     }
 
     #[test]

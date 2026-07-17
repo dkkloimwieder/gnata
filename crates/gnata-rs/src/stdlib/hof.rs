@@ -635,8 +635,6 @@ fn sift_object(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
     use crate::evaluator::eval;
     use crate::parser::{Parser, process_ast};

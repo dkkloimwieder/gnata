@@ -323,8 +323,6 @@ fn from_alphabetic(s: &str) -> Result<i64, JsonataError> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
 
     fn parse(s: &str, picture: &str) -> f64 {

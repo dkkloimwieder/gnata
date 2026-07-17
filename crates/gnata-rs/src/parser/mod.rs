@@ -141,7 +141,7 @@ impl Parser {
 
     // ── NUD (prefix) handlers ────────────────────────────────────────
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn nud(&mut self) -> Result<NodeId, JsonataError> {
         let tok = std::mem::take(&mut self.token);
         match tok.typ {
@@ -386,7 +386,7 @@ impl Parser {
 
     // ── LED (infix) handlers ─────────────────────────────────────────
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn led(&mut self, left: NodeId) -> Result<NodeId, JsonataError> {
         let tok = std::mem::take(&mut self.token);
         match tok.typ {

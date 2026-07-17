@@ -55,8 +55,6 @@ pub fn fn_assert(args: &[Value], _focus: &Value) -> JsonataResult {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
     use std::rc::Rc;
 

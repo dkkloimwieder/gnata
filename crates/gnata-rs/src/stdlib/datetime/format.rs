@@ -125,7 +125,7 @@ pub fn format_with_picture(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn format_token(
     token: &str,
     year: i32,
@@ -149,20 +149,20 @@ pub(super) fn format_token(
 
     match component {
         'Y' => format_year_component(year, &modifier),
-        'M' => format_month_token(i64::from(month), &modifier),
-        'D' => format_day_component(i64::from(day), &modifier),
-        'H' => format_integer_token(i64::from(hour), &modifier),
+        'M' => Ok(format_month_token(i64::from(month), &modifier)),
+        'D' => Ok(format_day_component(i64::from(day), &modifier)),
+        'H' => Ok(format_integer_mod(i64::from(hour), &modifier)),
         'h' => {
             let h12 = i64::from((hour + 11) % 12 + 1);
-            format_integer_token(h12, &modifier)
+            Ok(format_integer_mod(h12, &modifier))
         }
         'm' => {
             let m = if modifier.is_empty() { "01" } else { &modifier };
-            format_integer_token(i64::from(minute), m)
+            Ok(format_integer_mod(i64::from(minute), m))
         }
         's' => {
             let m = if modifier.is_empty() { "01" } else { &modifier };
-            format_integer_token(i64::from(second), m)
+            Ok(format_integer_mod(i64::from(second), m))
         }
         'f' => Ok(format_frac_second(ms_frac, &modifier)),
         'F' => Ok(format_weekday_token(weekday, &modifier)),
@@ -171,26 +171,26 @@ pub(super) fn format_token(
         'E' | 'C' => Ok("ISO".to_string()),
         'd' => {
             let doy = i64::from(day_of_year(year, month, day));
-            format_day_of_year_token(doy, &modifier)
+            Ok(format_day_of_year_token(doy, &modifier))
         }
         'W' => {
             let (_, w) = iso_week(year, month, day);
-            format_integer_token(i64::from(w), &modifier)
+            Ok(format_integer_mod(i64::from(w), &modifier))
         }
         'X' => {
             let (iso_y, _) = iso_week(year, month, day);
-            format_year_token(iso_y, &modifier)
+            Ok(format_year_token(iso_y, &modifier))
         }
         'w' => {
             // Week of month (ISO week Thursday method).
             let (thy, thm, thd) = iso_week_thursday(year, month, day);
             let wom = week_of_month(thy, thm, thd);
-            format_integer_token(i64::from(wom), &modifier)
+            Ok(format_integer_mod(i64::from(wom), &modifier))
         }
         'x' => {
             // Month of the ISO week (Thursday-based month).
             let (_thy, thm, _thd) = iso_week_thursday(year, month, day);
-            format_iso_week_month(thm, &modifier)
+            Ok(format_iso_week_month(thm, &modifier))
         }
         _ => Ok(format!("[{token}]")),
     }
@@ -208,14 +208,13 @@ pub(super) fn format_year_component(y: i32, modifier: &str) -> Result<String, Js
             "D3133",
             format!("the picture string is not valid: unsupported modifier in [Y{modifier}]"),
         )),
-        _ => format_year_token(y, modifier),
+        _ => Ok(format_year_token(y, modifier)),
     }
 }
 
-#[allow(clippy::unnecessary_wraps)]
-pub(super) fn format_year_token(y: i32, modifier: &str) -> Result<String, JsonataError> {
+pub(super) fn format_year_token(y: i32, modifier: &str) -> String {
     if let Some(rest) = modifier.strip_prefix(',') {
-        return Ok(truncate_year(y, rest));
+        return truncate_year(y, rest);
     }
     if let Some(comma_pos) = modifier.find(',') {
         let prefix = &modifier[..comma_pos];
@@ -229,20 +228,20 @@ pub(super) fn format_year_token(y: i32, modifier: &str) -> Result<String, Jsonat
                 && max_width > 0
             {
                 let s = format_integer_mod(i64::from(y), prefix);
-                return Ok(if s.len() > max_width {
+                return if s.len() > max_width {
                     s[s.len() - max_width..].to_string()
                 } else {
                     s
-                });
+                };
             }
         }
         // "9,999,*" style grouping.
         if prefix.contains('9') || suffix.contains('9') {
-            return Ok(format_integer_with_grouping(y));
+            return format_integer_with_grouping(y);
         }
-        return Ok(format_integer_mod(i64::from(y), prefix));
+        return format_integer_mod(i64::from(y), prefix);
     }
-    Ok(format_integer_mod(i64::from(y), modifier))
+    format_integer_mod(i64::from(y), modifier)
 }
 
 pub(super) fn truncate_year(y: i32, width_spec: &str) -> String {
@@ -279,8 +278,7 @@ pub(super) fn format_integer_with_grouping(v: i32) -> String {
     result
 }
 
-#[allow(clippy::unnecessary_wraps)]
-pub(super) fn format_month_token(m: i64, modifier: &str) -> Result<String, JsonataError> {
+pub(super) fn format_month_token(m: i64, modifier: &str) -> String {
     let month_names = MONTH_NAMES;
     let idx = (m - 1) as usize;
     match modifier {
@@ -289,17 +287,17 @@ pub(super) fn format_month_token(m: i64, modifier: &str) -> Result<String, Jsona
             if let Some(suffix) = mod_.strip_prefix("Nn").and_then(|s| s.strip_prefix(',')) {
                 let width = parse_width_from_suffix(suffix);
                 if width > 0 && name.len() > width {
-                    return Ok(name[..width].to_string());
+                    return name[..width].to_string();
                 }
             }
-            Ok(name.to_string())
+            name.to_string()
         }
-        "N" => Ok(month_names[idx].to_uppercase()),
-        "a" => Ok(to_alphabetic(m, 'a')),
-        "A" => Ok(to_alphabetic(m, 'A')),
-        "I" => Ok(to_roman(m, true)),
-        "i" => Ok(to_roman(m, false)),
-        _ => Ok(format_numeric_with_min_width(m as i32, modifier)),
+        "N" => month_names[idx].to_uppercase(),
+        "a" => to_alphabetic(m, 'a'),
+        "A" => to_alphabetic(m, 'A'),
+        "I" => to_roman(m, true),
+        "i" => to_roman(m, false),
+        _ => format_numeric_with_min_width(m as i32, modifier),
     }
 }
 
@@ -327,18 +325,17 @@ pub(super) fn format_numeric_with_min_width(v: i32, modifier: &str) -> String {
     }
 }
 
-#[allow(clippy::unnecessary_wraps)]
-pub(super) fn format_day_component(day: i64, modifier: &str) -> Result<String, JsonataError> {
+pub(super) fn format_day_component(day: i64, modifier: &str) -> String {
     match modifier {
-        "I" => Ok(to_roman(day, true)),
-        "i" => Ok(to_roman(day, false)),
-        "a" => Ok(to_alphabetic(day, 'a')),
-        "A" => Ok(to_alphabetic(day, 'A')),
-        "wo" => Ok(int_to_words_ordinal(day)),
-        "Wo" => Ok(int_to_words_ordinal(day).to_uppercase()),
-        "w" => Ok(int_to_words(day)),
-        "W" => Ok(int_to_words(day).to_uppercase()),
-        _ => Ok(format_day_token(day, modifier)),
+        "I" => to_roman(day, true),
+        "i" => to_roman(day, false),
+        "a" => to_alphabetic(day, 'a'),
+        "A" => to_alphabetic(day, 'A'),
+        "wo" => int_to_words_ordinal(day),
+        "Wo" => int_to_words_ordinal(day).to_uppercase(),
+        "w" => int_to_words(day),
+        "W" => int_to_words(day).to_uppercase(),
+        _ => format_day_token(day, modifier),
     }
 }
 
@@ -357,18 +354,17 @@ pub(super) fn format_day_token(d: i64, modifier: &str) -> String {
     if is_ordinal { s + ordinal_suffix(d) } else { s }
 }
 
-#[allow(clippy::unnecessary_wraps)]
-pub(super) fn format_day_of_year_token(doy: i64, modifier: &str) -> Result<String, JsonataError> {
+pub(super) fn format_day_of_year_token(doy: i64, modifier: &str) -> String {
     match modifier {
-        "wo" => Ok(int_to_words_ordinal(doy)),
-        "Wo" => Ok(int_to_words_ordinal(doy).to_uppercase()),
-        "w" => Ok(int_to_words(doy)),
-        "W" => Ok(int_to_words(doy).to_uppercase()),
+        "wo" => int_to_words_ordinal(doy),
+        "Wo" => int_to_words_ordinal(doy).to_uppercase(),
+        "w" => int_to_words(doy),
+        "W" => int_to_words(doy).to_uppercase(),
         _ => {
             if let Some(base) = modifier.strip_suffix('o') {
-                Ok(format_integer_mod(doy, base) + ordinal_suffix(doy))
+                format_integer_mod(doy, base) + ordinal_suffix(doy)
             } else {
-                Ok(format_integer_mod(doy, modifier))
+                format_integer_mod(doy, modifier)
             }
         }
     }
@@ -424,13 +420,12 @@ pub(super) fn format_frac_second(ns_millis: i32, modifier: &str) -> String {
     }
 }
 
-#[allow(clippy::unnecessary_wraps)]
-pub(super) fn format_iso_week_month(month: u8, modifier: &str) -> Result<String, JsonataError> {
+pub(super) fn format_iso_week_month(month: u8, modifier: &str) -> String {
     let m = month as usize;
     match modifier {
-        "Nn" | "n" => Ok(MONTH_NAMES[m - 1].to_string()),
-        "N" => Ok(MONTH_NAMES[m - 1].to_uppercase()),
-        _ => Ok(m.to_string()),
+        "Nn" | "n" => MONTH_NAMES[m - 1].to_string(),
+        "N" => MONTH_NAMES[m - 1].to_uppercase(),
+        _ => m.to_string(),
     }
 }
 
@@ -479,10 +474,5 @@ pub(super) fn format_integer_mod(v: i64, modifier: &str) -> String {
     }
 
     v.to_string()
-}
-
-#[allow(clippy::unnecessary_wraps)]
-pub(super) fn format_integer_token(v: i64, modifier: &str) -> Result<String, JsonataError> {
-    Ok(format_integer_mod(v, modifier))
 }
 

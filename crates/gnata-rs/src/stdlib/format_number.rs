@@ -646,8 +646,6 @@ fn format_number_picture(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
     use crate::value::Value;
 

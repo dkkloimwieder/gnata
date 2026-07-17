@@ -182,7 +182,7 @@ impl<'a> HlWalker<'a> {
         i
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn walk(&mut self, id: NodeId) {
         if id.is_empty() { return; }
         let expr = self.arena.get(id).clone();
@@ -379,8 +379,6 @@ impl<'a> HlWalker<'a> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::*;
 
     /// Parse the JSON emitted by highlight() back into (start, end, type).

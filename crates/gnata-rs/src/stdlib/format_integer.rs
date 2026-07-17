@@ -373,8 +373,6 @@ fn to_title_case(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
 
     fn fmt(n: f64, picture: &str) -> String {

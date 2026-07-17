@@ -83,7 +83,7 @@ pub(crate) fn eval_with_stack_check(
     }
 }
 
-#[allow(clippy::too_many_lines, clippy::needless_continue)]
+#[expect(clippy::too_many_lines, clippy::needless_continue)]
 fn eval_inner(
     arena: &AstArena,
     node: NodeId,
@@ -109,14 +109,14 @@ fn eval_inner(
 
         match arena.get(cur_node) {
             // ── Leaf nodes ──
-            Expr::ValueLit { value, .. } => return eval_value_lit(value),
+            Expr::ValueLit { value, .. } => return Ok(eval_value_lit(value)),
             Expr::StringLit { value, .. } => return Ok(Value::String(value.clone().into())),
             Expr::NumberLit { value: n, .. } => return Ok(Value::Number(*n)),
             Expr::Variable { name, group, .. } => {
                 if group.is_some() {
                     return eval_group_by(arena, cur_node, input, cur_env);
                 }
-                return eval_variable(name, input, cur_env);
+                return Ok(eval_variable(name, input, cur_env));
             }
             Expr::Name { value, group, .. } => {
                 if group.is_some() {
@@ -230,7 +230,7 @@ fn eval_inner(
             Expr::Lambda { .. } => return Ok(eval_lambda(arena, cur_node, input, cur_env)),
             Expr::Partial { .. } => return eval_partial(arena, cur_node, input, cur_env),
             Expr::Sort { .. } => return eval_sort(arena, cur_node, input, cur_env),
-            Expr::Transform { .. } => return eval_transform(arena, cur_node, input, cur_env),
+            Expr::Transform { .. } => return Ok(eval_transform(arena, cur_node, input, cur_env)),
         }
     }
 }
@@ -238,27 +238,21 @@ fn eval_inner(
 // ── Literal evaluators ──────────────────────────────────────────────
 
 // Consistent return type with eval dispatch table.
-#[allow(clippy::unnecessary_wraps)]
-fn eval_value_lit(value: &str) -> JsonataResult {
+fn eval_value_lit(value: &str) -> Value {
     match value {
-        "true" => Ok(Value::Bool(true)),
-        "false" => Ok(Value::Bool(false)),
-        "null" => Ok(Value::Null),
-        _ => Ok(Value::Undefined),
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        "null" => Value::Null,
+        _ => Value::Undefined,
     }
 }
 
-// Consistent return type with eval dispatch table.
-#[allow(clippy::unnecessary_wraps)]
-fn eval_variable(name: &str, input: &Value, env: &Rc<Environment>) -> JsonataResult {
+fn eval_variable(name: &str, input: &Value, env: &Rc<Environment>) -> Value {
     if name.is_empty() {
         // Bare $ — refers to the current input context.
-        return Ok(input.clone());
+        return input.clone();
     }
-    match env.lookup(name) {
-        Some(val) => Ok(val),
-        None => Ok(Value::Undefined),
-    }
+    env.lookup(name).unwrap_or(Value::Undefined)
 }
 
 // ── Name (field access) ─────────────────────────────────────────────
@@ -655,7 +649,7 @@ fn eval_path_step_no_group(
     // For Name nodes with groups, evaluate as a plain name lookup.
     match arena.get(step) {
         Expr::Name { value, .. } => eval_name(value, input),
-        Expr::Variable { name, .. } => eval_variable(name, input, env),
+        Expr::Variable { name, .. } => Ok(eval_variable(name, input, env)),
         _ => eval_path_step(
             arena,
             step,
@@ -1368,7 +1362,6 @@ fn eval_tuple_group(
         let val_node = pair[1];
 
         // Phase 1: group ctxs by key.
-        #[allow(clippy::type_complexity)]
         let mut groups: std::collections::HashMap<
             compact_str::CompactString,
             (Vec<Value>, Vec<Rc<Environment>>),
@@ -2939,36 +2932,8 @@ fn compare_sort_terms(
 // ── Transform expression (|pattern|update,delete|) ──────────────────
 
 // Consistent return type with eval dispatch table.
-#[allow(clippy::unnecessary_wraps)]
-fn eval_transform(
-    arena: &AstArena,
-    node: NodeId,
-    _input: &Value,
-    env: &Rc<Environment>,
-) -> JsonataResult {
+fn eval_transform(arena: &AstArena, node: NodeId, _input: &Value, env: &Rc<Environment>) -> Value {
     // Transform returns a function that, when applied to input, performs the transformation.
-    let node_id = node;
-    let env_clone = Rc::clone(env);
-    let func: Rc<BuiltinFn> = Rc::new(move |args: &[Value], focus: &Value| {
-        let doc = if !args.is_empty() && !args[0].is_undefined() {
-            &args[0]
-        } else {
-            focus
-        };
-        // We need the arena to evaluate sub-expressions, but BuiltinFn doesn't have it.
-        // Return a placeholder — actual transform needs EnvAwareBuiltin.
-        // For now, return the doc unchanged as a workaround.
-        let _ = (&env_clone, node_id);
-        Ok(doc.clone())
-    });
-
-    // Actually, transform needs arena access. Use EnvAwareBuiltin pattern instead.
-    // Let's implement it inline since we have arena access here.
-    // The Go impl returns a BuiltinFunction that captures the node — but we can
-    // directly evaluate if the transform is called immediately in a path context.
-    // For standalone transform evaluation, we need the function approach.
-
-    // For direct evaluation (transform expression applied to input):
     let (pattern, update, delete) = match arena.get(node) {
         Expr::Transform {
             pattern,
@@ -2978,8 +2943,6 @@ fn eval_transform(
         } => (*pattern, *update, *delete),
         _ => unreachable!(),
     };
-
-    let _ = func; // unused — we use EnvAwareBuiltin approach
 
     // Return a function value that performs the transform when called.
     // Go equivalent: if len(args) > 0 { doc = args[0] } else { doc = focus }
@@ -2999,9 +2962,7 @@ fn eval_transform(
         },
     );
 
-    Ok(Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(
-        transform_fn,
-    ))))
+    Value::Function(Box::new(FunctionValue::EnvAwareBuiltin(transform_fn)))
 }
 
 fn apply_transform(
@@ -3244,7 +3205,7 @@ fn eval_group_by(
     let base = match arena.get(node) {
         Expr::Name { value, .. } => eval_name(value, input)?,
         Expr::Path { .. } => eval_path(arena, node, input, env)?,
-        Expr::Variable { name, .. } => eval_variable(name, input, env)?,
+        Expr::Variable { name, .. } => eval_variable(name, input, env),
         Expr::Function { .. } => eval_function(arena, node, input, env)?,
         _ => eval_no_stack_check(arena, node, input, env)?,
     };

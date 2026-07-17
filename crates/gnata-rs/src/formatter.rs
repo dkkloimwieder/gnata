@@ -129,7 +129,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn emit(&mut self, id: NodeId, depth: usize) {
         if id.is_empty() {
             return;

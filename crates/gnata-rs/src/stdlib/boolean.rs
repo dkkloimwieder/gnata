@@ -3,7 +3,7 @@
 use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps, reason = "must match the BuiltinFn signature")]
 pub fn fn_boolean(args: &[Value], focus: &Value) -> JsonataResult {
     // Note: don't enforce arity — HOF callbacks like $filter($boolean)
     // pass 3 args (value, index, array). Only use the first arg.
@@ -39,8 +39,6 @@ pub fn fn_exists(args: &[Value], _focus: &Value) -> JsonataResult {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
     use std::rc::Rc;
 

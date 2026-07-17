@@ -62,7 +62,6 @@
 #![allow(clippy::used_underscore_items)]
 #![allow(clippy::match_same_arms)]
 #![allow(clippy::float_cmp)]
-#![allow(clippy::struct_excessive_bools)]
 #![allow(clippy::many_single_char_names)]
 // Restriction lints -- opt in
 #![warn(clippy::unwrap_used)]

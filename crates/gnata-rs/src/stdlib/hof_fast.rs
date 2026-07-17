@@ -634,7 +634,7 @@ fn push_piece(buf: &mut String, v: Value) {
 
 /// Pre-computed function-specific state for lifted dispatch.
 /// Each variant captures what a specific function needs to skip per-call setup.
-#[allow(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant)] // allow, not expect: fires on 64-bit targets only, so expect would be unfulfilled on wasm32
 pub(crate) enum PreparedState {
     /// $formatNumber: pre-parsed picture into SubPicture + FmtChars
     FormatNumber {
@@ -820,7 +820,6 @@ fn classify_call_arg(node: NodeId, arena: &AstArena, param: Option<&str>) -> Cal
 }
 
 /// Try to pre-compute function-specific state from the argument template.
-#[allow(clippy::too_many_lines)]
 fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
     match func_name {
         "formatNumber" => {
@@ -1015,8 +1014,6 @@ pub(crate) fn exec_mapped_call(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
     use super::{PredicateClause, SimpleLambda, TemplatePiece, analyze_lambda};
     use crate::evaluator::functions::FunctionValue;
     use crate::evaluator::{Environment, eval};

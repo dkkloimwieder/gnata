@@ -195,7 +195,7 @@ pub fn fn_sqrt(args: &[Value], _focus: &Value) -> JsonataResult {
     }
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps, reason = "must match the BuiltinFn signature")]
 pub fn fn_random(_args: &[Value], _focus: &Value) -> JsonataResult {
     Ok(Value::Number(fastrand::f64()))
 }
@@ -318,8 +318,6 @@ fn format_radix(mut n: u64, radix: u32) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
-
     use super::*;
     use std::rc::Rc;
 

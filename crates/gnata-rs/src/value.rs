@@ -772,7 +772,7 @@ mod tests {
             Value::Bool(false),
             Value::Number(0.0),
             Value::Number(42.0),
-            Value::Number(-3.14),
+            Value::Number(-3.25),
             Value::Number(1e20),
             Value::Number(f64::NAN),
             Value::Number(f64::INFINITY),

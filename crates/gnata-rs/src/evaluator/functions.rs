@@ -4,7 +4,7 @@
 
 // Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
 // not part of the documented public API.
-#![allow(missing_docs)]
+#![expect(missing_docs)]
 
 use std::fmt;
 use std::rc::Rc;

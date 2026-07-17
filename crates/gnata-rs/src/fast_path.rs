@@ -608,7 +608,7 @@ fn apply_func_undefined(kind: FuncFastKind) -> Value {
 }
 
 /// Apply a fast-path function to a resolved value.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
     match func.kind {
         FuncFastKind::Exists => Some(Value::Bool(!val.is_undefined())),
