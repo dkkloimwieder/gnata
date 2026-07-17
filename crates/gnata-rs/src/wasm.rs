@@ -7,17 +7,76 @@
 //!   gnataReleaseHandle(handle)
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use wasm_bindgen::prelude::*;
 
 use crate::expression::Expression;
 use crate::value::Value;
 
+/// Maximum number of compiled expressions kept in the source-string cache.
+///
+/// Each entry holds a full AST arena (typically a few KB), so this bounds
+/// the cache to low single-digit MB while still covering any realistic
+/// working set of distinct expressions in a long-running instance. At the
+/// cap, the oldest entry is evicted.
+const EXPR_CACHE_CAP: usize = 256;
+
 thread_local! {
     static COMPILED: RefCell<HashMap<u32, Expression>> = RefCell::new(HashMap::new());
-    static EXPR_CACHE: RefCell<HashMap<String, Expression>> = RefCell::new(HashMap::new());
+    static EXPR_CACHE: RefCell<ExprCache> = RefCell::new(ExprCache::new());
     static NEXT_HANDLE: RefCell<u32> = const { RefCell::new(0) };
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(msg: &str);
+}
+
+/// Module initializer, run automatically by wasm-bindgen at instantiation.
+///
+/// Installs a panic hook that reports the panic message and location to
+/// `console.error` — without it, a Rust panic surfaces in JS only as an
+/// opaque `RuntimeError: unreachable`. Hand-rolled rather than pulling in
+/// the `console_error_panic_hook` crate for a single function.
+#[wasm_bindgen(start)]
+pub fn init() {
+    std::panic::set_hook(Box::new(|info| {
+        console_error(&format!("gnata (wasm) panicked: {info}"));
+    }));
+}
+
+/// FIFO-bounded map from expression source to its compiled form, so
+/// long-running instances calling `gnataEval` with many distinct
+/// expressions cannot grow memory without bound.
+struct ExprCache {
+    map: HashMap<String, Expression>,
+    order: VecDeque<String>,
+}
+
+impl ExprCache {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&self, expr: &str) -> Option<&Expression> {
+        self.map.get(expr)
+    }
+
+    fn insert(&mut self, expr: String, compiled: Expression) {
+        if self.map.len() >= EXPR_CACHE_CAP
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.map.remove(&oldest);
+        }
+        if self.map.insert(expr.clone(), compiled).is_none() {
+            self.order.push_back(expr);
+        }
+    }
 }
 
 /// Compile and evaluate a JSONata expression against JSON data.
@@ -49,17 +108,24 @@ pub fn eval(expr: &str, json_data: &str) -> Result<String, JsError> {
 pub fn compile(expr: &str) -> Result<u32, JsError> {
     let compiled = Expression::compile(expr).map_err(|e| JsError::new(&e.to_string()))?;
 
-    let handle = NEXT_HANDLE.with(|h| {
-        let mut h = h.borrow_mut();
-        *h = h.wrapping_add(1);
-        *h
-    });
-
     COMPILED.with(|cache| {
-        cache.borrow_mut().insert(handle, compiled);
-    });
-
-    Ok(handle)
+        let mut cache = cache.borrow_mut();
+        // After u32 wrap-around a fresh counter value could collide with a
+        // still-live handle and silently replace its expression; skip past
+        // live handles (and 0, so handles stay non-zero). Terminates while
+        // fewer than u32::MAX handles are live.
+        let handle = NEXT_HANDLE.with(|h| {
+            let mut h = h.borrow_mut();
+            loop {
+                *h = h.wrapping_add(1);
+                if *h != 0 && !cache.contains_key(&*h) {
+                    break *h;
+                }
+            }
+        });
+        cache.insert(handle, compiled);
+        Ok(handle)
+    })
 }
 
 /// Evaluate a previously compiled expression (by handle) against JSON data.
