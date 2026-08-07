@@ -2204,7 +2204,12 @@ fn eval_subscript(
     let rhs_could_be_numeric = !matches!(arena.get(rhs),
         Expr::Binary { op, .. } if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::And | BinaryOp::Or | BinaryOp::In)
     );
-    if rhs_could_be_numeric && let Ok(index) = eval_no_stack_check(arena, rhs, left, env) {
+    // Probe with a representative element — the first item — like Go's
+    // evalSubscript (rightCtx := items[0]): probing against the whole array
+    // would auto-map a bare numeric field into an all-numeric array, turning
+    // a predicate like a[i] into multi-index selection (one element per item).
+    let probe_ctx = arr.first().unwrap_or(left);
+    if rhs_could_be_numeric && let Ok(index) = eval_no_stack_check(arena, rhs, probe_ctx, env) {
         // Array of all-numeric values → select those indices (e.g. [[1..4]]).
         if let Value::Array(ref indices) = index
             && !indices.is_empty()
@@ -3575,6 +3580,26 @@ mod tests {
         assert_eq!(
             eval_with_data("items[-1]", r#"{"items": ["a", "b", "c"]}"#),
             Value::String("c".into())
+        );
+    }
+
+    /// A numeric-field predicate probes against the FIRST item (Go:
+    /// rightCtx := items[0]) and selects that single index — probing the
+    /// whole array auto-maps the field into an all-numeric array and
+    /// wrongly selects one element per item.
+    #[test]
+    fn path_subscript_numeric_field_probes_first_item() {
+        assert_eq!(
+            eval_with_data("a[i]", r#"{"a": [{"i": 0}, {"i": 0}]}"#),
+            eval_with_data("$", r#"{"i": 0}"#)
+        );
+        assert_eq!(
+            eval_with_data("a[i]", r#"{"a": [{"i": 0}, {"i": 1}]}"#),
+            eval_with_data("$", r#"{"i": 0}"#)
+        );
+        assert_eq!(
+            eval_with_data("a[b]", r#"{"a": [{"b": 1}, {"b": 0}]}"#),
+            eval_with_data("$", r#"{"b": 0}"#)
         );
     }
 
