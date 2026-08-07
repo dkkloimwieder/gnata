@@ -848,7 +848,10 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
                 let mut seen = std::collections::HashSet::new();
                 let mut result = Vec::new();
                 for item in arr.iter() {
-                    let key = canonical_key(item);
+                    // Non-scalar items defer the whole call: the general
+                    // path dedupes with deep_equal, which keyed dedup can't
+                    // reproduce for objects (key order insensitivity).
+                    let key = scalar_key(item)?;
                     if seen.insert(key) {
                         result.push(item.clone());
                     }
@@ -1062,14 +1065,17 @@ fn tape_to_value(val: tape::Value<'_, '_>) -> Value {
     Value::Undefined
 }
 
-/// Create a canonical string key for deduplication in $distinct.
-fn canonical_key(val: &Value) -> String {
+/// Dedup key for $distinct, scalars only — must agree with deep_equal.
+/// Returns None for non-scalars (and NaN, which is never equal to itself).
+fn scalar_key(val: &Value) -> Option<String> {
     match val {
-        Value::String(s) => format!("s:{s}"),
-        Value::Number(n) => format!("n:{n}"),
-        Value::Bool(b) => format!("b:{b}"),
-        Value::Null => "null".into(),
-        _ => format!("{val:?}"),
+        Value::String(s) => Some(format!("s:{s}")),
+        Value::Number(n) if n.is_nan() => None,
+        // -0.0 == 0.0 under deep_equal — normalize so they share a key.
+        Value::Number(n) => Some(format!("n:{}", if *n == 0.0 { 0.0 } else { *n })),
+        Value::Bool(b) => Some(format!("b:{b}")),
+        Value::Null => Some("null".into()),
+        _ => None,
     }
 }
 

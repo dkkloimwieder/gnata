@@ -70,6 +70,14 @@ const NONFINITE_STRINGS: &str = r#"{
     "nan": "NaN",
     "num": "1e2"}"#;
 
+/// $distinct dedup shapes: key-reordered objects are deep_equal, -0 and 0
+/// compare equal, mixed scalar/object arrays defer (gnata-dx5.10).
+const DISTINCT_SHAPES: &str = r#"{
+    "objs": [{"x": 1, "y": 2}, {"y": 2, "x": 1}, {"x": 1, "y": 3}],
+    "zeros": [-0.0, 0, 0.0],
+    "scalars": [1, "1", 1, true, "a", "a", null, null, 2.5, 2.5],
+    "mixed": [1, {"x": 1}, 1, {"x": 1}]}"#;
+
 /// (expression, data) pairs. Every pair runs fast vs general.
 const CASES: &[(&str, &str)] = &[
     // ── Pure paths over nested arrays (gnata-dx5.4) ──
@@ -318,6 +326,11 @@ const CASES: &[(&str, &str)] = &[
     ),
     // Shadow visible from a .() path function step.
     ("( $round := function($x){ 99 }; arr.$round(v) )", NESTED),
+    // ── $distinct must dedupe like deep_equal (gnata-dx5.10) ──
+    ("$distinct(objs)", DISTINCT_SHAPES),
+    ("$distinct(zeros)", DISTINCT_SHAPES),
+    ("$distinct(scalars)", DISTINCT_SHAPES),
+    ("$distinct(mixed)", DISTINCT_SHAPES),
 ];
 
 type EvalResult = Result<Value, JsonataError>;
