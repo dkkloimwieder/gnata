@@ -117,6 +117,22 @@ impl NodeId {
     }
 }
 
+/// Static per-node property flags, precomputed by `process_ast` so the
+/// evaluator reads a byte instead of re-walking subtrees per evaluation.
+pub(crate) mod static_flags {
+    /// Set when the node's flags were computed (nodes evaluated without
+    /// `process_ast` fall back to on-the-fly subtree walks).
+    pub(crate) const COMPUTED: u8 = 1;
+    /// Subtree contains a `%` parent reference (full-subtree property).
+    pub(crate) const PARENT_REF: u8 = 1 << 1;
+    /// Path-local `@$var`/`#$var` binding — propagated only through
+    /// subscript operands, sort operands, and path steps, mirroring
+    /// `node_has_index_binding`.
+    pub(crate) const INDEX_BINDING: u8 = 1 << 2;
+    /// Subtree references the `$index`/`$key` group-by bindings.
+    pub(crate) const GROUP_BINDINGS: u8 = 1 << 3;
+}
+
 /// Arena-based AST storage. All nodes live in a contiguous Vec.
 ///
 /// O(1) drop (single Vec dealloc), cache-friendly, trivially serializable,
@@ -124,11 +140,35 @@ impl NodeId {
 #[derive(Debug, Default)]
 pub struct AstArena {
     nodes: Vec<Expr>,
+    /// Parallel to `nodes`: [`static_flags`] bytes filled by `process_ast`.
+    /// May be shorter than `nodes` for un-processed arenas — missing
+    /// entries read as "not computed".
+    flags: Vec<u8>,
 }
 
 impl AstArena {
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+            flags: Vec::new(),
+        }
+    }
+
+    /// The node's precomputed [`static_flags`] byte, or `None` when flags
+    /// were never computed for it (empty id, or arena not processed).
+    #[inline]
+    pub(crate) fn node_static_flags(&self, id: NodeId) -> Option<u8> {
+        let f = *self.flags.get(id.0 as usize)?;
+        (f & static_flags::COMPUTED != 0).then_some(f)
+    }
+
+    /// Store a node's [`static_flags`] byte, growing the table as needed.
+    pub(crate) fn set_node_static_flags(&mut self, id: NodeId, f: u8) {
+        let idx = id.0 as usize;
+        if idx >= self.flags.len() {
+            self.flags.resize(self.nodes.len().max(idx + 1), 0);
+        }
+        self.flags[idx] = f;
     }
 
     /// Maximum AST nodes before the parser bails. Prevents OOM from complex
@@ -423,6 +463,119 @@ pub struct Slot {
     pub label: String,
     pub level: i32,
     pub index: i32,
+}
+
+pub(crate) fn push_group_pairs(group: Option<&GroupExpr>, out: &mut Vec<NodeId>) {
+    if let Some(g) = group {
+        for pair in &g.pairs {
+            out.push(pair[0]);
+            out.push(pair[1]);
+        }
+    }
+}
+
+/// Push every child NodeId of `expr` onto `out` — the single place that
+/// knows the AST's child edges.
+pub(crate) fn push_children(expr: &Expr, out: &mut Vec<NodeId>) {
+    match expr {
+        Expr::Name { stages, group, .. } => {
+            for s in stages {
+                if let StageKind::Filter { expression } = &s.kind {
+                    out.push(*expression);
+                }
+            }
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Variable { group, .. } => push_group_pairs(group.as_ref(), out),
+        Expr::Grouped { expr, group, .. } => {
+            out.push(*expr);
+            push_group_pairs(Some(group), out);
+        }
+        Expr::Path { steps, group, .. } => {
+            out.extend_from_slice(steps);
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Binary {
+            lhs, rhs, group, ..
+        } => {
+            out.push(*lhs);
+            out.push(*rhs);
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Unary {
+            operand,
+            expressions,
+            lhs,
+            group,
+            ..
+        } => {
+            out.push(*operand);
+            out.extend_from_slice(expressions);
+            out.extend_from_slice(lhs);
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Block { expressions, .. } => out.extend_from_slice(expressions),
+        Expr::Condition {
+            condition,
+            then,
+            else_,
+            ..
+        } => {
+            out.push(*condition);
+            out.push(*then);
+            if let Some(e) = else_ {
+                out.push(*e);
+            }
+        }
+        Expr::Bind { lhs, rhs, .. } => {
+            out.push(*lhs);
+            out.push(*rhs);
+        }
+        Expr::Function {
+            procedure,
+            arguments,
+            group,
+            ..
+        } => {
+            out.push(*procedure);
+            out.extend_from_slice(arguments);
+            push_group_pairs(group.as_ref(), out);
+        }
+        Expr::Partial {
+            procedure,
+            arguments,
+            ..
+        } => {
+            out.push(*procedure);
+            out.extend_from_slice(arguments);
+        }
+        Expr::Lambda { body, .. } => out.push(*body),
+        Expr::Transform {
+            pattern,
+            update,
+            delete,
+            ..
+        } => {
+            out.push(*pattern);
+            out.push(*update);
+            if let Some(d) = delete {
+                out.push(*d);
+            }
+        }
+        Expr::Sort { expr, terms, .. } => {
+            out.push(*expr);
+            out.extend(terms.iter().map(|t| t.expression));
+        }
+        // Leaves.
+        Expr::StringLit { .. }
+        | Expr::NumberLit { .. }
+        | Expr::ValueLit { .. }
+        | Expr::Wildcard { .. }
+        | Expr::Descendant { .. }
+        | Expr::Parent { .. }
+        | Expr::Regex { .. }
+        | Expr::Placeholder { .. } => {}
+    }
 }
 
 /// Lambda type signature.

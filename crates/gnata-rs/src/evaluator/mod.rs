@@ -16,6 +16,7 @@ pub use signature::{ParamSpec, parse_signature, process_call_args};
 use std::rc::Rc;
 
 use crate::error::{JsonataError, JsonataResult};
+use crate::parser::ast::{push_children, static_flags};
 use crate::parser::{AstArena, BinaryOp, Expr, NodeId, SortTerm, UnaryOp};
 use crate::value::{CompareOp, Sequence, Value};
 
@@ -487,9 +488,15 @@ fn path_has_tuple_step(arena: &AstArena, steps: &[NodeId]) -> bool {
 /// operands, and path steps are descended. Bindings inside lambda bodies,
 /// function arguments, etc. belong to those inner paths, not to the path
 /// being classified here.
+///
+/// Answered from the precomputed side table when `process_ast` filled it;
+/// the walk below is the fallback for un-processed arenas.
 fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
     if node.is_empty() {
         return false;
+    }
+    if let Some(f) = arena.node_static_flags(node) {
+        return f & static_flags::INDEX_BINDING != 0;
     }
     match arena.get(node) {
         Expr::Name { index: Some(_), .. } | Expr::Name { focus: Some(_), .. } => true,
@@ -512,7 +519,13 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
 }
 
 /// Check if an AST subtree contains a % (Parent) reference anywhere.
+/// Table-first; the subtree walk is the un-processed-arena fallback.
 fn node_has_parent_ref(arena: &AstArena, node: NodeId) -> bool {
+    if !node.is_empty()
+        && let Some(f) = arena.node_static_flags(node)
+    {
+        return f & static_flags::PARENT_REF != 0;
+    }
     subtree_any(arena, node, |e| matches!(e, Expr::Parent { .. }))
 }
 
@@ -535,119 +548,6 @@ fn subtree_any(arena: &AstArena, root: NodeId, pred: impl Fn(&Expr) -> bool) -> 
         push_children(expr, &mut stack);
     }
     false
-}
-
-fn push_group_pairs(group: Option<&crate::parser::GroupExpr>, out: &mut Vec<NodeId>) {
-    if let Some(g) = group {
-        for pair in &g.pairs {
-            out.push(pair[0]);
-            out.push(pair[1]);
-        }
-    }
-}
-
-/// Push every child NodeId of `expr` onto `out` — the single place that
-/// knows the AST's child edges.
-fn push_children(expr: &Expr, out: &mut Vec<NodeId>) {
-    match expr {
-        Expr::Name { stages, group, .. } => {
-            for s in stages {
-                if let crate::parser::StageKind::Filter { expression } = &s.kind {
-                    out.push(*expression);
-                }
-            }
-            push_group_pairs(group.as_ref(), out);
-        }
-        Expr::Variable { group, .. } => push_group_pairs(group.as_ref(), out),
-        Expr::Grouped { expr, group, .. } => {
-            out.push(*expr);
-            push_group_pairs(Some(group), out);
-        }
-        Expr::Path { steps, group, .. } => {
-            out.extend_from_slice(steps);
-            push_group_pairs(group.as_ref(), out);
-        }
-        Expr::Binary {
-            lhs, rhs, group, ..
-        } => {
-            out.push(*lhs);
-            out.push(*rhs);
-            push_group_pairs(group.as_ref(), out);
-        }
-        Expr::Unary {
-            operand,
-            expressions,
-            lhs,
-            group,
-            ..
-        } => {
-            out.push(*operand);
-            out.extend_from_slice(expressions);
-            out.extend_from_slice(lhs);
-            push_group_pairs(group.as_ref(), out);
-        }
-        Expr::Block { expressions, .. } => out.extend_from_slice(expressions),
-        Expr::Condition {
-            condition,
-            then,
-            else_,
-            ..
-        } => {
-            out.push(*condition);
-            out.push(*then);
-            if let Some(e) = else_ {
-                out.push(*e);
-            }
-        }
-        Expr::Bind { lhs, rhs, .. } => {
-            out.push(*lhs);
-            out.push(*rhs);
-        }
-        Expr::Function {
-            procedure,
-            arguments,
-            group,
-            ..
-        } => {
-            out.push(*procedure);
-            out.extend_from_slice(arguments);
-            push_group_pairs(group.as_ref(), out);
-        }
-        Expr::Partial {
-            procedure,
-            arguments,
-            ..
-        } => {
-            out.push(*procedure);
-            out.extend_from_slice(arguments);
-        }
-        Expr::Lambda { body, .. } => out.push(*body),
-        Expr::Transform {
-            pattern,
-            update,
-            delete,
-            ..
-        } => {
-            out.push(*pattern);
-            out.push(*update);
-            if let Some(d) = delete {
-                out.push(*d);
-            }
-        }
-        Expr::Sort { expr, terms, .. } => {
-            out.push(*expr);
-            out.extend(terms.iter().map(|t| t.expression));
-        }
-        // Leaves.
-        Expr::StringLit { .. }
-        | Expr::NumberLit { .. }
-        | Expr::ValueLit { .. }
-        | Expr::Wildcard { .. }
-        | Expr::Descendant { .. }
-        | Expr::Parent { .. }
-        | Expr::Regex { .. }
-        | Expr::Placeholder { .. } => {}
-    }
 }
 
 /// Extract a step-level group from a node, if it has one.
@@ -3163,6 +3063,11 @@ fn validate_transform_clauses(
 /// Over-detection merely creates an unneeded child env; missing a use would
 /// evaluate the pair without its bindings.
 fn uses_group_bindings(arena: &AstArena, node: NodeId) -> bool {
+    if !node.is_empty()
+        && let Some(f) = arena.node_static_flags(node)
+    {
+        return f & static_flags::GROUP_BINDINGS != 0;
+    }
     subtree_any(
         arena,
         node,
@@ -3427,6 +3332,114 @@ mod tests {
     use super::*;
     use crate::parser::{Parser, process_ast};
     use std::rc::Rc;
+
+    /// Every node reachable from `root` via the canonical child edges.
+    fn all_reachable(arena: &AstArena, root: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            if id.is_empty() {
+                continue;
+            }
+            out.push(id);
+            push_children(arena.get(id), &mut stack);
+        }
+        out
+    }
+
+    /// Test-local reimplementation of the path-local index/focus-binding
+    /// reachability, used as ground truth against the precomputed table.
+    fn walk_index_binding(arena: &AstArena, node: NodeId) -> bool {
+        if node.is_empty() {
+            return false;
+        }
+        let own = matches!(
+            arena.get(node),
+            Expr::Name { index: Some(_), .. }
+                | Expr::Name { focus: Some(_), .. }
+                | Expr::Variable { index: Some(_), .. }
+                | Expr::Variable { focus: Some(_), .. }
+                | Expr::Binary { index: Some(_), .. }
+                | Expr::Binary { focus: Some(_), .. }
+                | Expr::Sort { index: Some(_), .. }
+                | Expr::Sort { focus: Some(_), .. }
+                | Expr::Block { index: Some(_), .. }
+                | Expr::Block { focus: Some(_), .. }
+        );
+        if own {
+            return true;
+        }
+        match arena.get(node) {
+            Expr::Binary {
+                op: BinaryOp::Subscript,
+                lhs,
+                rhs,
+                ..
+            } => walk_index_binding(arena, *lhs) || walk_index_binding(arena, *rhs),
+            Expr::Sort { expr, .. } => walk_index_binding(arena, *expr),
+            Expr::Path { steps, .. } => steps.iter().any(|&s| walk_index_binding(arena, s)),
+            _ => false,
+        }
+    }
+
+    /// The `process_ast` flag table must agree with independent subtree
+    /// walks on every reachable node, across the property-relevant shapes.
+    #[test]
+    fn static_flags_agree_with_subtree_walks() {
+        let exprs = [
+            "a.b.c",
+            "a@$v.$v",
+            "a#$i.$i",
+            "a@$v#$i.[$v, $i]",
+            "(a)@$v.$v",
+            "a.($ * 2)#$i.$i",
+            "a[0]#$i.$i",
+            "data^(<p)#$i.$i",
+            "a.b.%",
+            "items[%.total > 5]",
+            "a.b[%.c].d",
+            "a.{\"x\": %.y}",
+            "a{\"k\": $index}",
+            "a{$string(b): $key & \"x\"}",
+            "a{\"k\": v}",
+            "function($x) { $x.b[%.c] }",
+            "$map(a, function($v, $i) { $v[%.x] })",
+            "|a|{\"x\": %}|",
+            "a^(<b, >c).d",
+            "**.x[%.y]",
+            "a[b[c > 1][%.d]]",
+            "($x := a; $x[%.b])",
+        ];
+        for src in exprs {
+            let (mut arena, root) = Parser::parse(src).expect("parse failed");
+            let root = process_ast(&mut arena, root).expect("process failed");
+            for id in all_reachable(&arena, root) {
+                assert!(
+                    arena.node_static_flags(id).is_some(),
+                    "{src}: reachable node {id:?} has no computed flags"
+                );
+                assert_eq!(
+                    node_has_parent_ref(&arena, id),
+                    subtree_any(&arena, id, |e| matches!(e, Expr::Parent { .. })),
+                    "{src}: parent-ref flag mismatch at {id:?}"
+                );
+                assert_eq!(
+                    uses_group_bindings(&arena, id),
+                    subtree_any(
+                        &arena,
+                        id,
+                        |e| matches!(e, Expr::Variable { name, .. } if name == "index" || name == "key"),
+                    ),
+                    "{src}: group-bindings flag mismatch at {id:?}"
+                );
+                assert_eq!(
+                    node_has_index_binding(&arena, id),
+                    walk_index_binding(&arena, id),
+                    "{src}: index-binding flag mismatch at {id:?}"
+                );
+            }
+        }
+    }
 
     /// Helper: parse, process, and evaluate.
     fn eval_expr(src: &str, input: &Value) -> JsonataResult {

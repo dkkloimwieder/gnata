@@ -1,9 +1,7 @@
 pub mod ast;
 pub mod process;
 
-pub use ast::{
-    AstArena, BinaryOp, Expr, GroupExpr, NodeId, Signature, SortTerm, StageKind, UnaryOp,
-};
+pub use ast::{AstArena, BinaryOp, Expr, GroupExpr, NodeId, Signature, SortTerm, UnaryOp};
 pub use process::process_ast;
 
 use crate::error::JsonataError;

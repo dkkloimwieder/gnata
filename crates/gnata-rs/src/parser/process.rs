@@ -9,7 +9,7 @@
 //!
 //! Direct port of Go `internal/parser/process.go` and `internal/parser/tailcall.go`.
 
-use super::ast::{AstArena, BinaryOp, Expr, NodeId};
+use super::ast::{AstArena, BinaryOp, Expr, NodeId, push_children};
 use crate::error::JsonataError;
 
 /// Check if a path step (or any node in its LHS chain) has keep_array set.
@@ -49,7 +49,7 @@ fn step_has_keep_array(arena: &AstArena, step: NodeId) -> bool {
     false
 }
 
-/// Maximum recursion depth for `process_ast` on wasm32, which cannot grow
+/// Maximum recursion depth for `process_node` on wasm32, which cannot grow
 /// its stack. Deep left-associative chains (`1+1+1+...`) build tree depth
 /// the parser's expression-nesting cap never sees; ~1,000 frames stays
 /// comfortably inside a default 1 MB wasm stack.
@@ -64,10 +64,21 @@ thread_local! {
 /// Run the post-processing pass over a parsed AST.
 /// Call this after `Parser::parse()` and before evaluation.
 ///
+/// Also precomputes the [`static_flags`] side table for the processed tree,
+/// so the evaluator can read per-node properties (parent refs, focus/index
+/// bindings, group-binding uses) without re-walking subtrees.
+///
 /// # Errors
 /// Returns a `JsonataError` if the AST contains structural issues, or
 /// S0210 on wasm32 when the tree is nested too deeply to process.
 pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
+    let root = process_node(arena, node)?;
+    compute_static_flags(arena, root);
+    Ok(root)
+}
+
+/// The recursive body of [`process_ast`] — re-entered for every subnode.
+fn process_node(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
     // Every recursive call re-enters through this function, so guarding here
     // covers the whole pass. Mirrors Parser::expression: grow the stack on
     // native (left-associative spines are parsed in one frame, so
@@ -75,7 +86,7 @@ pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsonata
     #[cfg(not(target_arch = "wasm32"))]
     {
         stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
-            process_ast_inner(arena, node)
+            process_node_inner(arena, node)
         })
     }
     #[cfg(target_arch = "wasm32")]
@@ -91,7 +102,7 @@ pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsonata
                 "expression is too deeply nested",
             ))
         } else {
-            process_ast_inner(arena, node)
+            process_node_inner(arena, node)
         };
         PROCESS_DEPTH.with(|d| d.set(d.get() - 1));
         result
@@ -99,7 +110,7 @@ pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsonata
 }
 
 #[expect(clippy::too_many_lines)]
-fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
+fn process_node_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
     if node.is_empty() {
         return Ok(node);
     }
@@ -107,8 +118,8 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
     match arena.get(node).clone() {
         Expr::Binary { ref op, .. } if *op == BinaryOp::Dot => process_dot_binary(arena, node),
         Expr::Binary { lhs, rhs, .. } => {
-            let new_lhs = process_ast(arena, lhs)?;
-            let new_rhs = process_ast(arena, rhs)?;
+            let new_lhs = process_node(arena, lhs)?;
+            let new_rhs = process_node(arena, rhs)?;
             let expr = arena.get_mut(node);
             if let Expr::Binary { lhs: l, rhs: r, .. } = expr {
                 *l = new_lhs;
@@ -123,14 +134,14 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             lhs,
             ..
         } => {
-            let new_operand = process_ast(arena, operand)?;
+            let new_operand = process_node(arena, operand)?;
             let new_exprs: Vec<NodeId> = expressions
                 .iter()
-                .map(|&e| process_ast(arena, e))
+                .map(|&e| process_node(arena, e))
                 .collect::<Result<_, _>>()?;
             let new_lhs: Vec<NodeId> = lhs
                 .iter()
-                .map(|&e| process_ast(arena, e))
+                .map(|&e| process_node(arena, e))
                 .collect::<Result<_, _>>()?;
             let expr = arena.get_mut(node);
             if let Expr::Unary {
@@ -150,7 +161,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
         Expr::Block { expressions, .. } => {
             let new_exprs: Vec<NodeId> = expressions
                 .iter()
-                .map(|&e| process_ast(arena, e))
+                .map(|&e| process_node(arena, e))
                 .collect::<Result<_, _>>()?;
             let expr = arena.get_mut(node);
             if let Expr::Block {
@@ -162,7 +173,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             Ok(node)
         }
         Expr::Grouped { expr, .. } => {
-            let new_expr = process_ast(arena, expr)?;
+            let new_expr = process_node(arena, expr)?;
             if let Expr::Grouped { expr: e, .. } = arena.get_mut(node) {
                 *e = new_expr;
             }
@@ -179,10 +190,10 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             arguments,
             ..
         } => {
-            let new_proc = process_ast(arena, procedure)?;
+            let new_proc = process_node(arena, procedure)?;
             let new_args: Vec<NodeId> = arguments
                 .iter()
-                .map(|&a| process_ast(arena, a))
+                .map(|&a| process_node(arena, a))
                 .collect::<Result<_, _>>()?;
             let expr = arena.get_mut(node);
             match expr {
@@ -205,7 +216,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             Ok(node)
         }
         Expr::Lambda { body, .. } => {
-            let new_body = process_ast(arena, body)?;
+            let new_body = process_node(arena, body)?;
             let expr = arena.get_mut(node);
             if let Expr::Lambda { body: b, .. } = expr {
                 *b = new_body;
@@ -219,10 +230,10 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             else_,
             ..
         } => {
-            let new_cond = process_ast(arena, condition)?;
-            let new_then = process_ast(arena, then)?;
+            let new_cond = process_node(arena, condition)?;
+            let new_then = process_node(arena, then)?;
             let new_else = match else_ {
-                Some(e) => Some(process_ast(arena, e)?),
+                Some(e) => Some(process_node(arena, e)?),
                 None => None,
             };
             let expr = arena.get_mut(node);
@@ -240,8 +251,8 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             Ok(node)
         }
         Expr::Bind { lhs, rhs, .. } => {
-            let new_lhs = process_ast(arena, lhs)?;
-            let new_rhs = process_ast(arena, rhs)?;
+            let new_lhs = process_node(arena, lhs)?;
+            let new_rhs = process_node(arena, rhs)?;
             let expr = arena.get_mut(node);
             if let Expr::Bind { lhs: l, rhs: r, .. } = expr {
                 *l = new_lhs;
@@ -255,10 +266,10 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             delete,
             ..
         } => {
-            let new_pattern = process_ast(arena, pattern)?;
-            let new_update = process_ast(arena, update)?;
+            let new_pattern = process_node(arena, pattern)?;
+            let new_update = process_node(arena, update)?;
             let new_delete = match delete {
-                Some(d) => Some(process_ast(arena, d)?),
+                Some(d) => Some(process_node(arena, d)?),
                 None => None,
             };
             let expr = arena.get_mut(node);
@@ -280,11 +291,11 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             terms,
             ..
         } => {
-            let new_expr = process_ast(arena, sort_expr)?;
+            let new_expr = process_node(arena, sort_expr)?;
             let new_terms: Vec<_> = terms
                 .iter()
                 .map(|t| {
-                    let new_e = process_ast(arena, t.expression)?;
+                    let new_e = process_node(arena, t.expression)?;
                     Ok(super::ast::SortTerm {
                         descending: t.descending,
                         expression: new_e,
@@ -306,7 +317,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             let new_steps: Vec<NodeId> = steps
                 .iter()
                 .map(|&s| {
-                    let processed = process_ast(arena, s)?;
+                    let processed = process_node(arena, s)?;
                     if step_has_keep_array(arena, processed) {
                         keep_singleton = true;
                     }
@@ -350,8 +361,8 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
     };
     if let Some(mut g) = group {
         for pair in &mut g.pairs {
-            pair[0] = process_ast(arena, pair[0])?;
-            pair[1] = process_ast(arena, pair[1])?;
+            pair[0] = process_node(arena, pair[0])?;
+            pair[1] = process_node(arena, pair[1])?;
         }
         match arena.get_mut(node) {
             Expr::Name { group: gr, .. } => *gr = Some(g),
@@ -394,8 +405,8 @@ fn process_dot_binary(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Json
     // Process group-by key/value pairs so nested dot expressions within them are resolved.
     let processed_group = if let Some(mut g) = bin_group {
         for pair in &mut g.pairs {
-            pair[0] = process_ast(arena, pair[0])?;
-            pair[1] = process_ast(arena, pair[1])?;
+            pair[0] = process_node(arena, pair[0])?;
+            pair[1] = process_node(arena, pair[1])?;
         }
         Some(g)
     } else {
@@ -436,7 +447,7 @@ fn collect_path_steps(
     }
 
     // Leaf step — process it.
-    let processed = process_ast(arena, node)?;
+    let processed = process_node(arena, node)?;
 
     // If the processed node is itself a Path, splice its steps.
     if let Expr::Path { steps: ps, .. } = arena.get(processed) {
@@ -512,6 +523,102 @@ fn mark_tail_position(arena: &mut AstArena, node: NodeId) {
     }
 }
 
+// ── Static property flags ───────────────────────────────────────────
+
+/// Fill the arena's [`static_flags`] side table for every node reachable
+/// from `root`, bottom-up (children before parents), so the evaluator reads
+/// a byte per query instead of re-walking subtrees per evaluation.
+///
+/// Full-subtree properties (parent refs, group-binding uses) propagate over
+/// every child edge from [`push_children`]. The focus/index-binding bit
+/// mirrors the evaluator's deliberately path-local reachability: it
+/// propagates only through subscript operands, sort operands, and path
+/// steps.
+fn compute_static_flags(arena: &mut AstArena, root: NodeId) {
+    use super::ast::static_flags as f;
+
+    // Iterative post-order DFS; slot-reuse during processing means child
+    // ids are not always smaller than their parent's, so a plain forward
+    // scan cannot substitute.
+    let mut stack: Vec<(NodeId, bool)> = vec![(root, false)];
+    let mut kids: Vec<NodeId> = Vec::new();
+    while let Some((id, expanded)) = stack.pop() {
+        if id.is_empty() || (!expanded && arena.node_static_flags(id).is_some()) {
+            continue;
+        }
+        if !expanded {
+            stack.push((id, true));
+            kids.clear();
+            push_children(arena.get(id), &mut kids);
+            for &k in &kids {
+                if !k.is_empty() && arena.node_static_flags(k).is_none() {
+                    stack.push((k, false));
+                }
+            }
+            continue;
+        }
+
+        let expr = arena.get(id);
+        let mut flags = f::COMPUTED;
+        match expr {
+            Expr::Parent { .. } => flags |= f::PARENT_REF,
+            Expr::Variable { name, .. } if name == "index" || name == "key" => {
+                flags |= f::GROUP_BINDINGS;
+            }
+            _ => {}
+        }
+        // Own focus/index binding on the five step variants.
+        let own_binding = matches!(
+            expr,
+            Expr::Name { index: Some(_), .. }
+                | Expr::Name { focus: Some(_), .. }
+                | Expr::Variable { index: Some(_), .. }
+                | Expr::Variable { focus: Some(_), .. }
+                | Expr::Binary { index: Some(_), .. }
+                | Expr::Binary { focus: Some(_), .. }
+                | Expr::Sort { index: Some(_), .. }
+                | Expr::Sort { focus: Some(_), .. }
+                | Expr::Block { index: Some(_), .. }
+                | Expr::Block { focus: Some(_), .. }
+        );
+        if own_binding {
+            flags |= f::INDEX_BINDING;
+        }
+
+        let child_flag = |k: NodeId| arena.node_static_flags(k).unwrap_or(0);
+
+        // Full-subtree bits from every child edge.
+        kids.clear();
+        push_children(expr, &mut kids);
+        for &k in &kids {
+            flags |= child_flag(k) & (f::PARENT_REF | f::GROUP_BINDINGS);
+        }
+
+        // Path-local index-binding propagation.
+        match expr {
+            Expr::Binary {
+                op: BinaryOp::Subscript,
+                lhs,
+                rhs,
+                ..
+            } => {
+                flags |= (child_flag(*lhs) | child_flag(*rhs)) & f::INDEX_BINDING;
+            }
+            Expr::Sort { expr, .. } => {
+                flags |= child_flag(*expr) & f::INDEX_BINDING;
+            }
+            Expr::Path { steps, .. } => {
+                for &s in steps {
+                    flags |= child_flag(s) & f::INDEX_BINDING;
+                }
+            }
+            _ => {}
+        }
+
+        arena.set_node_static_flags(id, flags);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,12 +627,12 @@ mod tests {
     /// Helper: parse and process, return (arena, root).
     fn parse_and_process(src: &str) -> (AstArena, NodeId) {
         let (mut arena, root) = Parser::parse(src).expect("parse failed");
-        let root = process_ast(&mut arena, root).expect("process failed");
+        let root = process_node(&mut arena, root).expect("process failed");
         (arena, root)
     }
 
     /// Left-associative chains build tree depth in a single parser frame, so
-    /// MAX_PARSE_DEPTH never sees it — process_ast must grow the stack
+    /// MAX_PARSE_DEPTH never sees it — process_node must grow the stack
     /// (native) instead of overflowing. ~25k terms ≈ 50k nodes.
     #[test]
     fn deep_left_assoc_chain_processes_without_overflow() {
