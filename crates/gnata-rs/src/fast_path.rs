@@ -351,20 +351,31 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
 /// One path step with array auto-mapping (mirror of `evaluator::eval_name`):
 /// nested arrays auto-map recursively, each array level flattens one level
 /// of array-valued results and collapses (0 → undefined, 1 → unwrapped,
-/// n → array), so `a.b` on `{"a": [[{"b": 1}]]}` yields 1.
+/// n → array), so `a.b` on `{"a": [[{"b": 1}]]}` yields 1. A field that
+/// resolved on some item but contributed no values (empty-array field)
+/// collapses to `[]`, not undefined — this keeps `$exists(a.b)` true on
+/// `{"a": [{"b": []}]}` like the general path.
 fn path_step(segment: &str, input: &Value) -> Value {
     match input {
         Value::Object(obj) => obj.get(segment).cloned().unwrap_or(Value::Undefined),
         Value::Array(arr) => {
             let mut results = Vec::new();
+            let mut field_found = false;
             for item in arr.iter() {
                 match path_step(segment, item) {
                     Value::Undefined => {}
-                    Value::Array(inner) => results.extend(inner.iter().cloned()),
-                    other => results.push(other),
+                    Value::Array(inner) => {
+                        field_found = true;
+                        results.extend(inner.iter().cloned());
+                    }
+                    other => {
+                        field_found = true;
+                        results.push(other);
+                    }
                 }
             }
             match results.len() {
+                0 if field_found => Value::Array(Rc::from(results)),
                 0 => Value::Undefined,
                 1 => results.into_iter().next().unwrap_or(Value::Undefined),
                 _ => Value::Array(Rc::from(results)),
@@ -375,18 +386,21 @@ fn path_step(segment: &str, input: &Value) -> Value {
 }
 
 /// Count matches along a pure path without materializing values.
-/// Avoids cloning leaf values — just counts how many exist.
+/// Avoids cloning leaf values — just counts how many exist. The `bool`
+/// reports whether the path resolved to a defined value at all: a field
+/// holding an empty array counts 0 but IS found (`a.b` → `[]`), which is
+/// what `$exists` needs.
 ///
 /// Returns `None` when the data contains nested arrays: their per-level
 /// singleton collapse can merge or split results in ways a count-only
 /// traversal cannot reproduce, so the caller must fall back to full
 /// evaluation.
-fn count_pure_path(segments: &[String], input: &Value) -> Option<usize> {
+fn count_pure_path(segments: &[String], input: &Value) -> Option<(usize, bool)> {
     if segments.is_empty() {
         return Some(match input {
-            Value::Undefined => 0,
-            Value::Array(arr) => arr.len(),
-            _ => 1,
+            Value::Undefined => (0, false),
+            Value::Array(arr) => (arr.len(), true),
+            _ => (1, true),
         });
     }
 
@@ -396,10 +410,11 @@ fn count_pure_path(segments: &[String], input: &Value) -> Option<usize> {
     match input {
         Value::Object(obj) => match obj.get(segment.as_str()) {
             Some(v) if !v.is_undefined() => count_pure_path(rest, v),
-            _ => Some(0),
+            _ => Some((0, false)),
         },
         Value::Array(arr) => {
             let mut total = 0;
+            let mut found = false;
             for item in arr.iter() {
                 match item {
                     Value::Object(obj) => {
@@ -414,12 +429,18 @@ fn count_pure_path(segments: &[String], input: &Value) -> Option<usize> {
                                             return None;
                                         }
                                         total += inner.len();
+                                        found = true;
                                     }
                                     Value::Undefined => {}
-                                    _ => total += 1,
+                                    _ => {
+                                        total += 1;
+                                        found = true;
+                                    }
                                 }
                             } else {
-                                total += count_pure_path(rest, v)?;
+                                let (c, f) = count_pure_path(rest, v)?;
+                                total += c;
+                                found |= f;
                             }
                         }
                     }
@@ -427,9 +448,9 @@ fn count_pure_path(segments: &[String], input: &Value) -> Option<usize> {
                     _ => {}
                 }
             }
-            Some(total)
+            Some((total, found))
         }
-        _ => Some(0),
+        _ => Some((0, false)),
     }
 }
 
@@ -541,14 +562,20 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
     // Aggregations that don't need materialized values — traverse and accumulate.
     match func.kind {
         FuncFastKind::Count => {
-            let n = count_pure_path(&func.path, input)
-                .unwrap_or_else(|| collapsed_count(&func.path, input));
+            let n = match count_pure_path(&func.path, input) {
+                Some((n, _)) => n,
+                None => collapsed_count(&func.path, input),
+            };
             return Some(Value::Number(n as f64));
         }
         FuncFastKind::Exists => {
-            let n = count_pure_path(&func.path, input)
-                .unwrap_or_else(|| collapsed_count(&func.path, input));
-            return Some(Value::Bool(n > 0));
+            // $exists is about definedness, not emptiness: a field holding
+            // an empty array resolves to [] and exists, despite counting 0.
+            let found = match count_pure_path(&func.path, input) {
+                Some((_, found)) => found,
+                None => !eval_pure_path(&func.path, input).is_undefined(),
+            };
+            return Some(Value::Bool(found));
         }
         FuncFastKind::Sum => {
             let mut total = 0.0_f64;
@@ -960,23 +987,30 @@ fn tape_path_step<'t, 'i>(segment: &str, tv: tape::Value<'t, 'i>) -> TapeStep<'t
 
 /// Auto-map a segment over tape nodes (tape mirror of `path_step`'s array
 /// arm): recurse into nested arrays, flatten one level of array-valued
-/// results, collapse 0/1/n.
+/// results, collapse 0/1/n. A field found but contributing no values
+/// collapses to an empty `Many` (materializes as `[]`), like `path_step`.
 fn tape_step_over<'t, 'i>(segment: &str, nodes: Vec<tape::Value<'t, 'i>>) -> TapeStep<'t, 'i> {
     let mut results: Vec<tape::Value<'t, 'i>> = Vec::new();
+    let mut field_found = false;
     for node in nodes {
         match tape_path_step(segment, node) {
             TapeStep::Undefined => {}
             TapeStep::One(child) => {
+                field_found = true;
                 if let Some(inner) = child.as_array() {
                     results.extend(&inner);
                 } else {
                     results.push(child);
                 }
             }
-            TapeStep::Many(vs) => results.extend(vs),
+            TapeStep::Many(vs) => {
+                field_found = true;
+                results.extend(vs);
+            }
         }
     }
     match results.len() {
+        0 if field_found => TapeStep::Many(results),
         0 => TapeStep::Undefined,
         1 => match results.pop() {
             Some(v) => TapeStep::One(v),

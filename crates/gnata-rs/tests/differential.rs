@@ -54,6 +54,14 @@ const NESTED_ARRAYS: &str = r#"{
     "p": [{"q": [[1, 2]]}],
     "s": [[1, 2], [3]]}"#;
 
+/// Field present but holding an empty array — the path resolves to []
+/// (defined), not undefined, which flips $exists (gnata-dx5.5).
+const EMPTY_FIELDS: &str = r#"{
+    "a": [{"b": []}],
+    "half": [{"b": []}, {"b": 1}],
+    "none": [{}],
+    "deep": [[{"b": []}]]}"#;
+
 /// (expression, data) pairs. Every pair runs fast vs general.
 const CASES: &[(&str, &str)] = &[
     // ── Pure paths over nested arrays (gnata-dx5.4) ──
@@ -71,6 +79,23 @@ const CASES: &[(&str, &str)] = &[
     ("$max(f.g.h)", NESTED_ARRAYS),
     ("$min(m.v)", NESTED_ARRAYS),
     ("$average(m.v)", NESTED_ARRAYS),
+    // ── Field found but empty: [] vs undefined (gnata-dx5.5) ──
+    ("a.b", EMPTY_FIELDS),
+    ("half.b", EMPTY_FIELDS),
+    ("none.b", EMPTY_FIELDS),
+    ("deep.b", EMPTY_FIELDS),
+    ("$exists(a.b)", EMPTY_FIELDS),
+    ("$exists(half.b)", EMPTY_FIELDS),
+    ("$exists(none.b)", EMPTY_FIELDS),
+    ("$exists(deep.b)", EMPTY_FIELDS),
+    ("$count(a.b)", EMPTY_FIELDS),
+    ("$sum(a.b)", EMPTY_FIELDS),
+    ("$max(a.b)", EMPTY_FIELDS),
+    ("$string(a.b)", EMPTY_FIELDS),
+    ("$boolean(a.b)", EMPTY_FIELDS),
+    ("$type(a.b)", EMPTY_FIELDS),
+    ("a.b = 1", EMPTY_FIELDS),
+    ("a.b != 1", EMPTY_FIELDS),
     // ── SimpleLambda::FieldAccess ──
     ("$map(items, function($v){$v.x})", CLEAN),
     ("$map(items, function($v){$v.x})", HOSTILE),
