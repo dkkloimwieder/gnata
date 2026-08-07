@@ -332,12 +332,16 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Render to string without pushing to self.out, for length estimation.
-    /// Uses empty comments slice so comment state isn't affected.
-    fn render(&self, id: NodeId, depth: usize) -> String {
-        let empty: Vec<Comment> = Vec::new();
-        let mut f = Formatter::new(self.arena, &empty);
+    /// Render a subtree into a scratch string, advancing this formatter's
+    /// comment cursor. The result is used for BOTH width measurement and
+    /// emission — formatting each subtree exactly once. (Measuring with a
+    /// throwaway render and then emitting again was exponential in
+    /// nested-ternary depth: ~40 ternaries hung the public `format()`.)
+    fn render(&mut self, id: NodeId, depth: usize) -> String {
+        let mut f = Formatter::new(self.arena, self.comments);
+        f.comment_idx = self.comment_idx;
         f.emit(id, depth);
+        self.comment_idx = f.comment_idx;
         f.out
     }
 
@@ -509,10 +513,13 @@ impl<'a> Formatter<'a> {
         else_: Option<NodeId>,
         depth: usize,
     ) {
-        // Try inline first
+        // Render each subtree once; the strings serve measurement and
+        // emission. Branches are rendered at depth+1 (the multiline
+        // indent); a newline-free render is depth-invariant, so the same
+        // string is correct if the inline layout wins.
         let cond_str = self.render(condition, depth);
-        let then_str = self.render(then, depth);
-        let else_str = else_.map(|e| self.render(e, depth));
+        let then_str = self.render(then, depth + 1);
+        let else_str = else_.map(|e| self.render(e, depth + 1));
 
         let inline_len =
             cond_str.len() + 3 + then_str.len() + else_str.as_ref().map_or(0, |s| 3 + s.len());
@@ -522,24 +529,24 @@ impl<'a> Formatter<'a> {
             && !then_str.contains('\n')
             && else_str.as_ref().is_none_or(|s| !s.contains('\n'))
         {
-            self.emit(condition, depth);
+            self.out.push_str(&cond_str);
             self.out.push_str(" ? ");
-            self.emit(then, depth);
-            if let Some(e) = else_ {
+            self.out.push_str(&then_str);
+            if let Some(e) = &else_str {
                 self.out.push_str(" : ");
-                self.emit(e, depth);
+                self.out.push_str(e);
             }
         } else {
-            self.emit(condition, depth);
+            self.out.push_str(&cond_str);
             self.out.push('\n');
             self.indent(depth + 1);
             self.out.push_str("? ");
-            self.emit(then, depth + 1);
-            if let Some(e) = else_ {
+            self.out.push_str(&then_str);
+            if let Some(e) = &else_str {
                 self.out.push('\n');
                 self.indent(depth + 1);
                 self.out.push_str(": ");
-                self.emit(e, depth + 1);
+                self.out.push_str(e);
             }
         }
     }
@@ -1280,5 +1287,21 @@ mod tests {
     fn parse_error_returns_err() {
         assert!(format("$foo(").is_err(), "unclosed paren should error");
         assert!(format("[1, 2,").is_err(), "unclosed bracket should error");
+    }
+
+    /// Each ternary subtree is rendered exactly once — the old
+    /// measure-then-emit shape was 2^depth, hanging on ~40 nested
+    /// ternaries (gnata-emj.7). 150 levels must format instantly.
+    #[test]
+    fn deeply_nested_ternaries_format_in_linear_time() {
+        let mut expr = String::from("z");
+        for i in (0..150).rev() {
+            expr = format!("a{i} ? b{i} : ({expr})");
+        }
+        let out = format(&expr).expect("nested ternaries format");
+        assert!(out.contains("a0"));
+        assert!(out.contains('z'));
+        // Idempotence still holds for the broken-line layout.
+        assert_eq!(format(&out).expect("reformat"), out);
     }
 }
