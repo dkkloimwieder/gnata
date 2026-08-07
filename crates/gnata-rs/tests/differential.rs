@@ -89,6 +89,14 @@ const CASES: &[(&str, &str)] = &[
         "$filter(items, function($v){$v.x > 100 and $v.name > 5})",
         CLEAN,
     ),
+    // ── Ops eval_binary_simple does NOT implement: must not be lifted
+    //    (gnata-dx5.1 — they used to lift and evaluate to undefined) ──
+    ("$filter(items, function($v){$v.x and $v.y})", CLEAN),
+    ("$filter(items, function($v){$v.x and $v.y})", HOSTILE),
+    ("$filter(items, function($v){$v.x or $v.y})", HOSTILE),
+    ("$filter(items, function($v){$v.x in [1, 3]})", CLEAN),
+    ("$filter(items, function($v){$v.name & \"!\"})", CLEAN),
+    ("$map(items, function($v){$v.x ** 2})", NUMS),
     // ── SimpleLambda::SortComparator / SortComparatorOp ──
     ("$sort(items, function($a, $b){$a.x > $b.x})", CLEAN),
     ("$sort(items, function($a, $b){$a.x > $b.x})", HOSTILE),

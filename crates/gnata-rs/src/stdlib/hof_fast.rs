@@ -265,7 +265,9 @@ fn analyze_binary(
     }
 
     // Field predicate: function($v) { $v.field op literal }
-    if !params.is_empty() {
+    // Only ops eval_binary_simple implements may be lifted; anything else
+    // (in, &, **, ??, ...) must fall through to the general evaluator.
+    if !params.is_empty() && (is_relational(op) || is_arithmetic(op)) {
         let param = &params[0];
 
         // $v.field op literal
@@ -511,6 +513,10 @@ pub fn get_field(item: &Value, field: &str) -> Value {
 /// operands: T2009/T2010 for invalid comparisons, T2001/T2002 for
 /// non-numeric arithmetic operands, D3001 for modulo by zero, D1001
 /// for out-of-range results.
+///
+/// # Panics
+/// If called with an op outside the relational/arithmetic set — the
+/// analysis in this module must never lift such an op.
 #[inline]
 pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> JsonataResult {
     match op {
@@ -536,7 +542,11 @@ pub fn eval_binary_simple(lhs: &Value, op: BinaryOp, rhs: &Value) -> JsonataResu
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
             crate::evaluator::apply_arithmetic(op, lhs, rhs)
         }
-        _ => Ok(Value::Undefined),
+        // The analysis in this module only lifts relational/arithmetic ops;
+        // reaching here with anything else is a bug in the lift gating, not
+        // an evaluatable expression — returning a value would silently
+        // diverge from the general path.
+        _ => unreachable!("eval_binary_simple called with unlifted op {op:?}"),
     }
 }
 
