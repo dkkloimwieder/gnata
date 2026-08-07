@@ -48,8 +48,10 @@ pub fn fn_eval(
             focus
         };
 
+        // Only a child scope — the parent chain already provides the stdlib,
+        // and re-registering here would shadow user overrides (Go creates a
+        // bare child environment too).
         let child_env = Rc::new(Environment::new_child(Rc::clone(env)));
-        crate::stdlib::register_all_on_rc(&child_env);
         crate::evaluator::eval(&arena, root, ctx, &child_env).map_err(|e| {
             JsonataError::new(
                 "D3121",
@@ -60,4 +62,34 @@ pub fn fn_eval(
 
     env.decr_eval_depth();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::expression::{CustomFunc, Expression};
+    use crate::value::Value;
+
+    // Go ground truth (2026-08-07): $eval("$string()") on input 5 => "5",
+    // identical to top-level $string(). The old stdlib re-registration bound
+    // a stricter "x-" signature locally and broke context substitution.
+    #[test]
+    fn eval_sees_same_stdlib_as_top_level() {
+        let top = Expression::compile("$string()").unwrap();
+        let nested = Expression::compile(r#"$eval("$string()")"#).unwrap();
+        assert_eq!(top.evaluate("5").unwrap(), Value::String("5".into()));
+        assert_eq!(nested.evaluate("5").unwrap(), Value::String("5".into()));
+    }
+
+    #[test]
+    fn eval_sees_user_override_of_stdlib_name() {
+        let shout: CustomFunc =
+            Arc::new(|_args: &[Value], _focus: &Value| Ok(Value::String("overridden".into())));
+        let expr = Expression::compile(r#"$eval("$uppercase('a')")"#).unwrap();
+        let result = expr
+            .evaluate_with_custom_funcs("{}", &[("uppercase".into(), shout)])
+            .unwrap();
+        assert_eq!(result, Value::String("overridden".into()));
+    }
 }
