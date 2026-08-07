@@ -97,6 +97,18 @@ const CASES: &[(&str, &str)] = &[
     ("$filter(items, function($v){$v.x in [1, 3]})", CLEAN),
     ("$filter(items, function($v){$v.name & \"!\"})", CLEAN),
     ("$map(items, function($v){$v.x ** 2})", NUMS),
+    // ── Reversed literal-op-field shapes (gnata-dx5.2 — non-commutative
+    //    arithmetic used to lift with swapped operands) ──
+    ("$filter(items, function($v){2 > $v.x})", CLEAN),
+    ("$filter(items, function($v){2 > $v.x})", HOSTILE),
+    ("$filter(items, function($v){3 = $v.x})", HOSTILE),
+    ("$filter(items, function($v){10 - $v.x})", NUMS),
+    ("$filter(items, function($v){10 % $v.x})", NUMS),
+    ("$filter(items, function($v){1 < $v.x and 10 - $v.y})", NUMS),
+    (
+        "$filter(items, function($v){2 > $v.x or $v.y = 2})",
+        HOSTILE,
+    ),
     // ── SimpleLambda::SortComparator / SortComparatorOp ──
     ("$sort(items, function($a, $b){$a.x > $b.x})", CLEAN),
     ("$sort(items, function($a, $b){$a.x > $b.x})", HOSTILE),

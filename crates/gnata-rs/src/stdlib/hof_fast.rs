@@ -289,8 +289,11 @@ fn analyze_binary(
             }
         }
 
-        // literal op $v.field (reversed)
-        if let Some(lit) = extract_literal(lhs, arena)
+        // literal op $v.field (reversed) — relational only: the lift stores
+        // the field on the left, and flip_relational has no exact mirror for
+        // non-commutative arithmetic (lit - field ≠ field - lit).
+        if is_relational(op)
+            && let Some(lit) = extract_literal(lhs, arena)
             && let Some(field) = extract_param_dot_field(rhs, arena, param)
         {
             return Some(SimpleLambda::FieldPredicate {
@@ -449,16 +452,19 @@ fn collect_predicate_clauses(
                     return true;
                 }
             }
-            // Reversed: literal op $param.field
-            if let Some(lit) = extract_literal(*lhs, arena) {
-                if let Some(field) = extract_param_dot_field(*rhs, arena, param) {
-                    out.push(PredicateClause {
-                        field,
-                        op: flip_relational(*op),
-                        literal: lit,
-                    });
-                    return true;
-                }
+            // Reversed: literal op $param.field — relational only, since the
+            // clause stores the field on the left and flip_relational cannot
+            // mirror non-commutative arithmetic.
+            if is_relational(*op)
+                && let Some(lit) = extract_literal(*lhs, arena)
+                && let Some(field) = extract_param_dot_field(*rhs, arena, param)
+            {
+                out.push(PredicateClause {
+                    field,
+                    op: flip_relational(*op),
+                    literal: lit,
+                });
+                return true;
             }
             false
         }
