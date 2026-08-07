@@ -62,6 +62,8 @@ fn bind_canonical(env: &mut Environment, name: &str) {
 
 /// Register all built-in functions into an environment.
 pub fn register_all(env: &mut Environment) {
+    // ~70 builtins land below; one up-front reserve avoids rehash churn.
+    env.reserve_bindings(70);
     // ── String ──────────────────────────────────────────────────────
     bind_signed_builtin(env, "string", string_funcs::fn_string, "x?b?");
     bind_builtin(env, "length", string_funcs::fn_length);

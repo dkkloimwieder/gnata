@@ -13,6 +13,11 @@ use compact_str::CompactString;
 use crate::error::JsonataError;
 use crate::value::Value;
 
+/// Variable bindings keyed by name. foldhash, like `ObjectMap`: binding
+/// names are short and lookup sits on the evaluator's hot path
+/// (M-FAST-HASHER).
+type BindingsMap = HashMap<CompactString, Value, foldhash::fast::RandomState>;
+
 /// Maximum recursive call depth before U1001.
 /// Matches the JSONata reference implementation's default.
 pub const DEFAULT_MAX_CALL_DEPTH: u32 = 100;
@@ -60,7 +65,7 @@ impl CallCounter {
 #[derive(Debug)]
 pub struct Environment {
     parent: Option<Rc<Environment>>,
-    bindings: RefCell<HashMap<CompactString, Value>>,
+    bindings: RefCell<BindingsMap>,
     /// Lazy cache of non-local lookups. Populated on first parent-chain hit.
     /// Vec-based for cache-line friendliness at typical sizes (0-5 entries).
     cache: RefCell<Vec<(CompactString, Value)>>,
@@ -79,13 +84,20 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             parent: None,
-            bindings: RefCell::new(HashMap::new()),
+            bindings: RefCell::new(BindingsMap::default()),
             cache: RefCell::new(Vec::new()),
             generation: Rc::new(Cell::new(0)),
             cache_gen: Cell::new(0),
             calls: Rc::new(CallCounter::new()),
             cancel: None,
         }
+    }
+
+    /// Pre-size the bindings map for a known number of upcoming binds
+    /// (M-INITIAL-CAPACITY). Used by `stdlib::register_all`, which inserts
+    /// the full builtin registry in one burst.
+    pub(crate) fn reserve_bindings(&self, additional: usize) {
+        self.bindings.borrow_mut().reserve(additional);
     }
 
     /// Create a child scope inheriting from parent.
@@ -96,7 +108,7 @@ impl Environment {
         let cache_gen = Cell::new(generation.get());
         Self {
             parent: Some(parent),
-            bindings: RefCell::new(HashMap::new()),
+            bindings: RefCell::new(BindingsMap::default()),
             cache: RefCell::new(Vec::new()),
             generation,
             cache_gen,

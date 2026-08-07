@@ -1344,6 +1344,13 @@ fn value_ptr_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// Group buckets for `eval_tuple_group`: key → (members, member envs).
+type TupleGroups = std::collections::HashMap<
+    compact_str::CompactString,
+    (Vec<Value>, Vec<Rc<Environment>>),
+    foldhash::fast::RandomState,
+>;
+
 /// Apply a group-by expression to tuple contexts, using per-element environments.
 ///
 /// JSONata group-by semantics: records are grouped by key, then the value
@@ -1363,10 +1370,7 @@ fn eval_tuple_group(
         let val_node = pair[1];
 
         // Phase 1: group ctxs by key.
-        let mut groups: std::collections::HashMap<
-            compact_str::CompactString,
-            (Vec<Value>, Vec<Rc<Environment>>),
-        > = std::collections::HashMap::new();
+        let mut groups = TupleGroups::default();
         let mut key_order: Vec<compact_str::CompactString> = Vec::new();
 
         for (item, item_env) in ctxs {
@@ -1437,8 +1441,10 @@ fn merge_group_envs(envs: &[Rc<Environment>]) -> Environment {
 
     // Collect variable names from tuple-specific envs (those with %%).
     let mut var_names: Vec<compact_str::CompactString> = Vec::new();
-    let mut seen: std::collections::HashSet<compact_str::CompactString> =
-        std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<
+        compact_str::CompactString,
+        foldhash::fast::RandomState,
+    > = std::collections::HashSet::default();
     for env in envs {
         let mut current: Option<&Rc<Environment>> = Some(env);
         while let Some(e) = current {
@@ -3207,8 +3213,10 @@ fn eval_group_by(
     };
 
     let mut out_obj = crate::value::ObjectMap::default();
-    let mut key_set: std::collections::HashSet<compact_str::CompactString> =
-        std::collections::HashSet::new();
+    let mut key_set: std::collections::HashSet<
+        compact_str::CompactString,
+        foldhash::fast::RandomState,
+    > = std::collections::HashSet::default();
 
     for pair in &group.pairs {
         let key_node = pair[0];
@@ -3315,9 +3323,18 @@ fn collect_group_items(
     items: &[Value],
     key_strategy: &KeyStrategy,
     env: &Rc<Environment>,
-) -> JsonataResult<indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, usize)>> {
-    let mut groups: indexmap::IndexMap<compact_str::CompactString, (Vec<Value>, usize)> =
-        indexmap::IndexMap::new();
+) -> JsonataResult<
+    indexmap::IndexMap<
+        compact_str::CompactString,
+        (Vec<Value>, usize),
+        foldhash::fast::RandomState,
+    >,
+> {
+    let mut groups: indexmap::IndexMap<
+        compact_str::CompactString,
+        (Vec<Value>, usize),
+        foldhash::fast::RandomState,
+    > = indexmap::IndexMap::default();
     for (i, item) in items.iter().enumerate() {
         // Fast-path: direct field lookup for simple Name key expressions.
         let key_val = match key_strategy {
