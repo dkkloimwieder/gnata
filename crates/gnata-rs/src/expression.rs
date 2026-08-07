@@ -100,7 +100,7 @@ impl Expression {
     /// # Errors
     /// Returns JSON parse errors or JSONata evaluation errors.
     pub fn evaluate(&self, json: &str) -> JsonataResult {
-        if json.is_empty() || json == "null" {
+        if Self::input_is_absent(json.as_bytes()) {
             return self.evaluate_value(&Value::Undefined);
         }
 
@@ -142,16 +142,19 @@ impl Expression {
     /// # Errors
     /// Returns JSON parse errors or JSONata evaluation errors.
     pub fn evaluate_bytes(&self, json_bytes: &[u8]) -> JsonataResult {
+        if Self::input_is_absent(json_bytes) {
+            return self.evaluate_value(&Value::Undefined);
+        }
+
         if let Some(result) = fast_path::eval_tape_path(&self.fast_path, json_bytes) {
             return result.map_err(|e| {
                 crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}"))
             });
         }
 
-        let input = Value::from_json_str(std::str::from_utf8(json_bytes).map_err(|e| {
-            crate::error::JsonataError::new("D0000", format!("invalid UTF-8: {e}"))
-        })?)
-        .map_err(|e| crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}")))?;
+        let json = std::str::from_utf8(json_bytes)
+            .map_err(|e| crate::error::JsonataError::new("D0000", format!("invalid UTF-8: {e}")))?;
+        let input = Self::parse_input(json)?;
         self.evaluate_value(&input)
     }
 
@@ -239,9 +242,15 @@ impl Expression {
         crate::eval(&self.arena, self.root, input, env)
     }
 
+    /// Empty input and the literal `null` document mean *no input*:
+    /// evaluation runs against Undefined, not Null (`$exists($)` is false).
+    fn input_is_absent(json_bytes: &[u8]) -> bool {
+        json_bytes.is_empty() || json_bytes == b"null"
+    }
+
     /// Parse JSON string to Value, treating empty/null as Undefined.
     fn parse_input(json: &str) -> JsonataResult<Value> {
-        if json.is_empty() || json == "null" {
+        if Self::input_is_absent(json.as_bytes()) {
             return Ok(Value::Undefined);
         }
         Value::from_json_str(json)
@@ -306,6 +315,25 @@ mod tests {
         let result = cloned.evaluate(r#"{"a": {"b": 41}}"#)?;
         assert_eq!(result.as_f64(), Some(42.0));
         Ok(())
+    }
+
+    #[test]
+    fn evaluate_bytes_normalizes_absent_input_like_evaluate() {
+        for expr_src in ["$exists($)", "$type($)", "\"ok\""] {
+            let expr = Expression::compile(expr_src).unwrap();
+            for input in ["", "null"] {
+                let via_str = expr.evaluate(input).unwrap();
+                let via_bytes = expr.evaluate_bytes(input.as_bytes()).unwrap();
+                assert!(
+                    crate::deep_equal(&via_str, &via_bytes)
+                        || (via_str.is_undefined() && via_bytes.is_undefined()),
+                    "{expr_src} on {input:?}: evaluate={via_str:?} evaluate_bytes={via_bytes:?}"
+                );
+            }
+        }
+        // The literal null document means no input, not Null.
+        let exists = Expression::compile("$exists($)").unwrap();
+        assert_eq!(exists.evaluate_bytes(b"null").unwrap(), Value::Bool(false));
     }
 
     #[test]
