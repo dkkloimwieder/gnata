@@ -25,6 +25,11 @@ fn try_fast_lambda(func: &FunctionValue, arena: &AstArena) -> Option<SimpleLambd
         return None;
     }
     if let FunctionValue::Lambda(lambda) = func {
+        // A typed lambda (function($x)<n:n>{...}) needs the general call
+        // path for signature validation/coercion (T0410, array coercion).
+        if !lambda.signature.is_empty() {
+            return None;
+        }
         analyze_lambda(&lambda.params, lambda.body, arena)
     } else {
         None

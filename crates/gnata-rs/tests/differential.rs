@@ -295,6 +295,11 @@ const CASES: &[(&str, &str)] = &[
     ("$number(neginf)", NONFINITE_STRINGS),
     ("$number(nan)", NONFINITE_STRINGS),
     ("$number(num)", NONFINITE_STRINGS),
+    // ── Typed lambdas must defer to the general call path (gnata-dx5.6) ──
+    ("$map(arr, function($v)<s>{$v.v})", NESTED),
+    ("$map(arr, function($v)<o>{$v.v})", NESTED),
+    ("$filter(arr, function($v)<n:b>{$v.v > 1})", NESTED),
+    ("$filter(arr, function($v)<o:b>{$v.v > 1})", NESTED),
 ];
 
 type EvalResult = Result<Value, JsonataError>;
