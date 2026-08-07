@@ -407,12 +407,36 @@ fn collect_descendants(input: &Value, seq: &mut Sequence) {
 // ── Regex ───────────────────────────────────────────────────────────
 
 fn eval_regex(pattern: &str, flags: &str) -> Value {
-    // For now, return a map with pattern and flags for the regex.
-    // Full regex evaluation will be implemented with the stdlib.
-    let mut obj = crate::value::ObjectMap::default();
-    obj.insert("pattern".into(), Value::String(pattern.into()));
-    obj.insert("flags".into(), Value::String(flags.into()));
-    Value::Object(Rc::new(obj))
+    // A regex literal evaluates to a {pattern, flags} object. The object is
+    // immutable (any mutation path copies via Rc::make_mut), so a literal
+    // inside a predicate over 100k items can share one allocation instead of
+    // rebuilding the map per element. Bounded like the stdlib regex cache:
+    // cleared wholesale when full.
+    thread_local! {
+        static LITERAL_CACHE: std::cell::RefCell<
+            std::collections::HashMap<compact_str::CompactString, Value, foldhash::fast::RandomState>,
+        > = std::cell::RefCell::new(std::collections::HashMap::default());
+    }
+    const LITERAL_CACHE_CAP: usize = 256;
+    let mut key = compact_str::CompactString::with_capacity(flags.len() + 1 + pattern.len());
+    key.push_str(flags);
+    key.push('\0');
+    key.push_str(pattern);
+    LITERAL_CACHE.with(|cache| {
+        if let Some(v) = cache.borrow().get(key.as_str()) {
+            return v.clone();
+        }
+        let mut obj = crate::value::ObjectMap::default();
+        obj.insert("pattern".into(), Value::String(pattern.into()));
+        obj.insert("flags".into(), Value::String(flags.into()));
+        let v = Value::Object(Rc::new(obj));
+        let mut map = cache.borrow_mut();
+        if map.len() >= LITERAL_CACHE_CAP {
+            map.clear();
+        }
+        map.insert(key, v.clone());
+        v
+    })
 }
 
 // ── Path evaluation (simplified for Phase 5) ────────────────────────

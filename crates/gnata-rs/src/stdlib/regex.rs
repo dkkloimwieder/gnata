@@ -21,11 +21,63 @@ use crate::evaluator::{Environment, FunctionValue, call_function};
 use crate::parser::AstArena;
 use crate::value::Value;
 
-/// Compile a regex from a pattern string and flags.
+/// Compiled regexes cached per thread, keyed by `"<flags>\0<pattern>"`
+/// (flags first — they're short and `'\0'` can never appear in them).
+/// Go caches compiled regexes in a `sync.Map`; `Value` is `!Send`, so a
+/// thread_local suffices here. Bounded: cleared wholesale when full so
+/// dynamically generated patterns can't grow it without bound.
+const REGEX_CACHE_CAP: usize = 256;
+
+/// Flags component marking an escaped string-literal pattern
+/// (`$match(s, "a.b")` matches the literal text). Never a real flag
+/// character, so these entries can't collide with `<pattern>` + flags.
+const LITERAL_MARKER: char = '\u{1}';
+
+thread_local! {
+    static REGEX_CACHE: std::cell::RefCell<
+        std::collections::HashMap<compact_str::CompactString, Rc<Regex>, foldhash::fast::RandomState>,
+    > = std::cell::RefCell::new(std::collections::HashMap::default());
+}
+
+fn cache_key(flags_component: &str, pattern: &str) -> compact_str::CompactString {
+    let mut key =
+        compact_str::CompactString::with_capacity(flags_component.len() + 1 + pattern.len());
+    key.push_str(flags_component);
+    key.push('\0');
+    key.push_str(pattern);
+    key
+}
+
+/// Return the cached regex for `key`, compiling (and caching) on miss.
+fn cached_or_compile(
+    key: compact_str::CompactString,
+    compile: impl FnOnce() -> Result<Regex, JsonataError>,
+) -> Result<Rc<Regex>, JsonataError> {
+    REGEX_CACHE.with(|cache| {
+        if let Some(re) = cache.borrow().get(key.as_str()) {
+            return Ok(Rc::clone(re));
+        }
+        let re = Rc::new(compile()?);
+        let mut map = cache.borrow_mut();
+        if map.len() >= REGEX_CACHE_CAP {
+            map.clear();
+        }
+        map.insert(key, Rc::clone(&re));
+        Ok(re)
+    })
+}
+
+/// Compile a regex from a pattern string and flags, with per-thread caching.
 ///
 /// # Errors
 /// Returns `D3137` if the pattern is not a valid regular expression.
-pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, JsonataError> {
+pub fn compile_regex(pattern: &str, flags: &str) -> Result<Rc<Regex>, JsonataError> {
+    cached_or_compile(cache_key(flags, pattern), || {
+        compile_regex_uncached(pattern, flags)
+    })
+}
+
+fn compile_regex_uncached(pattern: &str, flags: &str) -> Result<Regex, JsonataError> {
     let mut inline = String::new();
     if flags.contains('i') {
         inline.push('i');
@@ -45,12 +97,18 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, JsonataError> 
 }
 
 /// Compile a regex from a Value (string or regex object {pattern, flags}).
-fn compile_regex_arg(v: &Value) -> Result<Regex, JsonataError> {
+fn compile_regex_arg(v: &Value) -> Result<Rc<Regex>, JsonataError> {
     match v {
         Value::String(s) => {
-            let escaped = regex_escape(s);
-            Regex::new(&escaped)
-                .map_err(|e| JsonataError::new("D3137", format!("regex error: {e}")))
+            let mut key = compact_str::CompactString::with_capacity(s.len() + 2);
+            key.push(LITERAL_MARKER);
+            key.push('\0');
+            key.push_str(s);
+            cached_or_compile(key, || {
+                let escaped = regex_escape(s);
+                Regex::new(&escaped)
+                    .map_err(|e| JsonataError::new("D3137", format!("regex error: {e}")))
+            })
         }
         Value::Object(obj) => {
             let pattern: &str = match obj.get("pattern") {
@@ -509,6 +567,35 @@ mod tests {
         assert!(compile_regex("abc", "i").unwrap().is_match("xABCy"));
         assert!(!compile_regex("abc", "").unwrap().is_match("xABCy"));
         assert_eq!(compile_regex("(", "").unwrap_err().code, "D3137");
+    }
+
+    #[test]
+    fn cache_returns_shared_instance() {
+        let a = compile_regex("cache_probe_[0-9]+", "i").unwrap();
+        let b = compile_regex("cache_probe_[0-9]+", "i").unwrap();
+        assert!(Rc::ptr_eq(&a, &b), "second compile should hit the cache");
+        // Different flags are a different entry.
+        let c = compile_regex("cache_probe_[0-9]+", "").unwrap();
+        assert!(!Rc::ptr_eq(&a, &c));
+    }
+
+    /// A string argument matches literally; a regex with the same source
+    /// text keeps its metacharacters. The two must not share a cache slot.
+    #[test]
+    fn escaped_literal_does_not_collide_with_pattern() {
+        let pattern = compile_regex("a.b", "").unwrap();
+        let literal = compile_regex_arg(&Value::String("a.b".into())).unwrap();
+        assert!(pattern.is_match("axb"));
+        assert!(!literal.is_match("axb"));
+        assert!(literal.is_match("a.b"));
+    }
+
+    #[test]
+    fn cache_clears_when_full_without_dropping_correctness() {
+        for i in 0..(2 * REGEX_CACHE_CAP + 10) {
+            let re = compile_regex(&format!("full_probe_{i}_[a-z]"), "").unwrap();
+            assert!(re.is_match(&format!("full_probe_{i}_x")));
+        }
     }
 
     /// Match positions are character indices, not byte offsets, and
