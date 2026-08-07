@@ -411,8 +411,7 @@ pub(super) fn format_frac_second(ns_millis: i32, modifier: &str) -> String {
     } else {
         modifier.len()
     };
-    let _s = format!("{:09}", i64::from(ns_millis) * 1_000_000); // ns_millis is really ms
-    // Actually ms_frac is milliseconds (0-999); pad to 9 digits as nanoseconds.
+    // ms_frac is milliseconds (0-999); pad to 9 digits as nanoseconds.
     let ms_as_ns = i64::from(ns_millis) * 1_000_000;
     let full = format!("{ms_as_ns:09}");
     if width <= 9 {

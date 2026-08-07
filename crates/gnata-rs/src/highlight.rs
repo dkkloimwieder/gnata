@@ -239,20 +239,22 @@ impl<'a> HlWalker<'a> {
         if id.is_empty() {
             return;
         }
-        let expr = self.arena.get(id).clone();
-        match expr {
-            Expr::Name {
-                pos, ref stages, ..
-            } => {
+        // `arena` is a shared `&'a` borrow independent of `&mut self`, so
+        // nodes are matched in place — no per-node deep clone.
+        match self.arena.get(id) {
+            Expr::Name { pos, stages, .. } => {
+                let pos = *pos;
                 let end = self.name_end(pos);
                 self.push(pos, end, HlType::Name);
                 self.walk_stages(stages);
             }
             Expr::StringLit { pos, .. } => {
+                let pos = *pos;
                 let end = self.string_end(pos);
                 self.push(pos, end, HlType::String);
             }
-            Expr::NumberLit { pos, ref raw, .. } => {
+            Expr::NumberLit { pos, raw, .. } => {
+                let pos = *pos;
                 // Folded negative literals keep the digit token's pos while
                 // raw carries the '-'; the sign may sit earlier in the
                 // source, separated by whitespace. Cover it when found.
@@ -273,33 +275,39 @@ impl<'a> HlWalker<'a> {
                 };
                 self.push(start, end, HlType::Number);
             }
-            Expr::ValueLit { ref value, pos, .. } => {
+            Expr::ValueLit { value, pos, .. } => {
+                let pos = *pos;
                 let typ = match value.as_str() {
                     "null" => HlType::Null,
                     _ => HlType::Bool,
                 };
                 self.push(pos, pos + value.len(), typ);
             }
-            Expr::Variable { pos, ref group, .. } => {
+            Expr::Variable { pos, group, .. } => {
+                let pos = *pos;
                 let end = self.variable_end(pos);
                 self.push(pos, end, HlType::Variable);
                 self.walk_group(group.as_ref());
             }
             Expr::Wildcard { pos } => {
+                let pos = *pos;
                 self.push(pos, pos + 1, HlType::Operator);
             }
             Expr::Descendant { pos } => {
+                let pos = *pos;
                 self.push(pos, pos + 2, HlType::Operator);
             }
             Expr::Parent { pos, .. } => {
+                let pos = *pos;
                 self.push(pos, pos + 1, HlType::Operator);
             }
             Expr::Regex {
                 pos,
-                ref pattern,
-                ref flags,
+                pattern,
+                flags,
                 ..
             } => {
+                let pos = *pos;
                 // /pattern/flags — the lexer appends a synthetic 'g' flag
                 // that is never in the source; exclude it from the span.
                 let src_flags = flags.len().saturating_sub(1);
@@ -307,13 +315,10 @@ impl<'a> HlWalker<'a> {
                 self.push(pos, end, HlType::Regex);
             }
             Expr::Placeholder { pos } => {
+                let pos = *pos;
                 self.push(pos, pos + 1, HlType::Operator);
             }
-            Expr::Path {
-                ref steps,
-                ref group,
-                ..
-            } => {
+            Expr::Path { steps, group, .. } => {
                 for &step in steps {
                     self.walk(step);
                 }
@@ -323,10 +328,11 @@ impl<'a> HlWalker<'a> {
                 op,
                 lhs,
                 rhs,
-                ref group,
+                group,
                 pos,
                 ..
             } => {
+                let (op, lhs, rhs, pos) = (*op, *lhs, *rhs, *pos);
                 self.walk(lhs);
                 // Emit operator span
                 let op_str = op.as_str();
@@ -337,12 +343,13 @@ impl<'a> HlWalker<'a> {
             Expr::Unary {
                 op,
                 operand,
-                ref expressions,
-                ref lhs,
-                ref group,
+                expressions,
+                lhs,
+                group,
                 pos,
                 ..
             } => {
+                let (op, operand, pos) = (*op, *operand, *pos);
                 match op {
                     UnaryOp::Negate => {
                         self.push(pos, pos + 1, HlType::Operator);
@@ -369,10 +376,9 @@ impl<'a> HlWalker<'a> {
                 }
             }
             Expr::Block {
-                ref expressions,
-                pos,
-                ..
+                expressions, pos, ..
             } => {
+                let pos = *pos;
                 self.push(pos, pos + 1, HlType::Bracket); // (
                 for &e in expressions {
                     self.walk(e);
@@ -384,6 +390,7 @@ impl<'a> HlWalker<'a> {
                 else_,
                 ..
             } => {
+                let (condition, then, else_) = (*condition, *then, *else_);
                 self.walk(condition);
                 self.walk(then);
                 if let Some(e) = else_ {
@@ -391,17 +398,18 @@ impl<'a> HlWalker<'a> {
                 }
             }
             Expr::Bind { lhs, rhs, .. } => {
+                let (lhs, rhs) = (*lhs, *rhs);
                 self.walk(lhs);
                 self.walk(rhs);
             }
             Expr::Function {
                 procedure,
-                ref arguments,
-                ref group,
+                arguments,
+                group,
                 ..
             } => {
                 // The procedure name gets "function" highlighting
-                self.walk_as_function(procedure);
+                self.walk_as_function(*procedure);
                 for &arg in arguments {
                     self.walk(arg);
                 }
@@ -409,20 +417,18 @@ impl<'a> HlWalker<'a> {
             }
             Expr::Partial {
                 procedure,
-                ref arguments,
+                arguments,
                 ..
             } => {
-                self.walk_as_function(procedure);
+                self.walk_as_function(*procedure);
                 for &arg in arguments {
                     self.walk(arg);
                 }
             }
             Expr::Lambda {
-                ref params,
-                body,
-                pos,
-                ..
+                params, body, pos, ..
             } => {
+                let (body, pos) = (*body, *pos);
                 // "function" keyword or its 2-byte λ shorthand.
                 let kw_len = if self.src[pos..].starts_with('λ') {
                     'λ'.len_utf8()
@@ -441,24 +447,21 @@ impl<'a> HlWalker<'a> {
                 delete,
                 ..
             } => {
+                let (pattern, update, delete) = (*pattern, *update, *delete);
                 self.walk(pattern);
                 self.walk(update);
                 if let Some(d) = delete {
                     self.walk(d);
                 }
             }
-            Expr::Sort {
-                expr, ref terms, ..
-            } => {
-                self.walk(expr);
+            Expr::Sort { expr, terms, .. } => {
+                self.walk(*expr);
                 for term in terms {
                     self.walk(term.expression);
                 }
             }
-            Expr::Grouped {
-                expr, ref group, ..
-            } => {
-                self.walk(expr);
+            Expr::Grouped { expr, group, .. } => {
+                self.walk(*expr);
                 self.walk_group(Some(group));
             }
         }
@@ -469,13 +472,14 @@ impl<'a> HlWalker<'a> {
         if id.is_empty() {
             return;
         }
-        let expr = self.arena.get(id).clone();
-        match expr {
+        match self.arena.get(id) {
             Expr::StringLit { pos, .. } => {
+                let pos = *pos;
                 let end = self.string_end(pos);
                 self.push(pos, end, HlType::ObjectKey);
             }
             Expr::Name { pos, .. } => {
+                let pos = *pos;
                 let end = self.name_end(pos);
                 self.push(pos, end, HlType::ObjectKey);
             }
@@ -489,13 +493,14 @@ impl<'a> HlWalker<'a> {
         if id.is_empty() {
             return;
         }
-        let expr = self.arena.get(id).clone();
-        match expr {
+        match self.arena.get(id) {
             Expr::Variable { pos, .. } => {
+                let pos = *pos;
                 let end = self.variable_end(pos);
                 self.push(pos, end, HlType::Function);
             }
             Expr::Name { pos, .. } => {
+                let pos = *pos;
                 let end = self.name_end(pos);
                 self.push(pos, end, HlType::Function);
             }

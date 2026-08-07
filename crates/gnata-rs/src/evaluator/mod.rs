@@ -2550,6 +2550,8 @@ fn eval_unary(
     input: &Value,
     env: &Rc<Environment>,
 ) -> JsonataResult {
+    // The arena is only ever borrowed shared during evaluation, so the
+    // constructor child lists are iterated in place — no per-eval Vec clone.
     let (op, operand, expressions, lhs_nodes) = match arena.get(node) {
         Expr::Unary {
             op,
@@ -2557,7 +2559,7 @@ fn eval_unary(
             expressions,
             lhs,
             ..
-        } => (*op, *operand, expressions.clone(), lhs.clone()),
+        } => (*op, *operand, expressions, lhs),
         _ => unreachable!("eval_unary is dispatched only for Expr::Unary nodes"),
     };
 
@@ -2575,7 +2577,7 @@ fn eval_unary(
         UnaryOp::ArrayCons => {
             // Array constructor.
             let mut result = Vec::new();
-            for &expr in &expressions {
+            for &expr in expressions {
                 let val = eval_no_stack_check(arena, expr, input, env)?;
                 if val.is_undefined() {
                     continue;

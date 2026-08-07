@@ -128,11 +128,33 @@ fn compile_regex_arg(v: &Value) -> Result<Rc<Regex>, JsonataError> {
     }
 }
 
+/// Running (byte offset, char count) cursor over a subject string. Matches
+/// arrive in ascending order, so each char-index computation advances from
+/// the previous position instead of recounting from the start of the string
+/// — which made many-match `$match`/`$replace` quadratic.
+struct CharCursor {
+    byte: usize,
+    chars: usize,
+}
+
+impl CharCursor {
+    fn new() -> Self {
+        Self { byte: 0, chars: 0 }
+    }
+
+    /// Char index of `byte_pos`, which must not precede the previous call's.
+    fn char_index(&mut self, s: &str, byte_pos: usize) -> usize {
+        self.chars += s[self.byte..byte_pos].chars().count();
+        self.byte = byte_pos;
+        self.chars
+    }
+}
+
 /// Build a match result object from a regex match.
-fn build_match_object(s: &str, caps: &Captures, m: &Match) -> Value {
+fn build_match_object(s: &str, caps: &Captures, m: &Match, cursor: &mut CharCursor) -> Value {
     let match_str: compact_str::CompactString = m.as_str().into();
-    let start = s[..m.start()].chars().count() as f64;
-    let end = s[..m.end()].chars().count() as f64;
+    let start = cursor.char_index(s, m.start()) as f64;
+    let end = cursor.char_index(s, m.end()) as f64;
 
     let mut groups = Vec::new();
     for i in 1..caps.len() {
@@ -206,6 +228,7 @@ pub fn fn_match(
     let re = compile_regex_arg(&args[1])?;
 
     let mut result = Vec::new();
+    let mut cursor = CharCursor::new();
     for caps in re.captures_iter(s) {
         if let Some(lim) = limit
             && result.len() >= lim
@@ -213,7 +236,7 @@ pub fn fn_match(
             break;
         }
         if let Some(m) = caps.get(0) {
-            result.push(build_match_object(s, &caps, &m));
+            result.push(build_match_object(s, &caps, &m, &mut cursor));
         }
     }
 
@@ -439,6 +462,7 @@ fn replace_with_fn(
 ) -> Result<String, JsonataError> {
     let mut result = String::new();
     let mut prev = 0;
+    let mut cursor = CharCursor::new();
 
     for (count, caps) in re.captures_iter(s).enumerate() {
         if let Some(lim) = limit
@@ -457,7 +481,7 @@ fn replace_with_fn(
         }
         result.push_str(&s[prev..m.start()]);
 
-        let match_obj = build_match_object(s, &caps, &m);
+        let match_obj = build_match_object(s, &caps, &m, &mut cursor);
         let val = call_function(func, &[match_obj], &Value::Undefined, env, arena)?;
         match val {
             Value::String(sv) => result.push_str(&sv),
@@ -567,6 +591,18 @@ mod tests {
         assert!(compile_regex("abc", "i").unwrap().is_match("xABCy"));
         assert!(!compile_regex("abc", "").unwrap().is_match("xABCy"));
         assert_eq!(compile_regex("(", "").unwrap_err().code, "D3137");
+    }
+
+    /// Char positions across multiple matches: the running cursor must
+    /// agree with a from-scratch count even over multibyte chars.
+    #[test]
+    fn match_positions_stay_correct_across_many_matches() {
+        let m = eval_expr(r#"$match("aéxaéxaéx", /x/).start"#);
+        let expected = eval_expr("[2, 5, 8]");
+        assert!(m.deep_equal(&expected), "got {m:?}");
+        let m = eval_expr(r#"$match("aéxaéxaéx", /x/).end"#);
+        let expected = eval_expr("[3, 6, 9]");
+        assert!(m.deep_equal(&expected), "got {m:?}");
     }
 
     #[test]

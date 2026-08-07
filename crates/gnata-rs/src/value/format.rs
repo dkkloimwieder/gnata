@@ -17,6 +17,22 @@ pub fn format_float(n: f64) -> String {
         return "null".into();
     }
 
+    if n == 0.0 {
+        return if n.is_sign_negative() {
+            "-0".into()
+        } else {
+            "0".into()
+        };
+    }
+
+    // Fast path: integral values below 1e15 print as their plain digits —
+    // identical to the 'g'15 pipeline output (≤15 significant digits, exact
+    // in f64), without its intermediate strings. Integers dominate the
+    // string-concat and $string hot paths.
+    if n.fract() == 0.0 && n.abs() < 1e15 {
+        return format!("{}", n as i64);
+    }
+
     let abs = n.abs();
 
     // Step 1: 15 significant digits (Go's 'g', 15).
@@ -170,6 +186,20 @@ mod tests {
         assert_eq!(format_float(1.0), "1");
         assert_eq!(format_float(42.0), "42");
         assert_eq!(format_float(-1.0), "-1");
+    }
+
+    /// The integer fast path must be indistinguishable from the 'g'15
+    /// pipeline, including at its boundaries.
+    #[test]
+    fn format_integer_fast_path_matches_g15_pipeline() {
+        assert_eq!(format_float(-0.0), "-0");
+        assert_eq!(format_float(123_456.0), "123456");
+        assert_eq!(format_float(999_999_999_999_999.0), "999999999999999");
+        assert_eq!(format_float(-999_999_999_999_999.0), "-999999999999999");
+        // 1e15 is just past the fast path; the 'g'15 pipeline goes
+        // scientific and step 3 converts back to full decimal — same text
+        // the fast path would have produced, via the slow route.
+        assert_eq!(format_float(1e15), "1000000000000000");
     }
 
     #[test]

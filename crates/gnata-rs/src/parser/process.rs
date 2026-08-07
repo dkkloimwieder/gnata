@@ -419,46 +419,53 @@ fn collect_path_steps(
     node: NodeId,
     steps: &mut Vec<NodeId>,
 ) -> Result<(), JsonataError> {
-    let expr = arena.get(node).clone();
-    match expr {
-        Expr::Binary {
-            ref op, lhs, rhs, ..
-        } if *op == BinaryOp::Dot => {
-            // In our Rust AST, Focus/Index live on Name nodes directly
-            // (set by the parser's @ and # LED handlers), not on Binary "."
-            // nodes. No propagation needed here.
-            collect_path_steps(arena, lhs, steps)?;
-            collect_path_steps(arena, rhs, steps)?;
-        }
-        _ => {
-            // Leaf step — process it.
-            let processed = process_ast(arena, node)?;
-
-            // If the processed node is itself a Path, splice its steps.
-            if let Expr::Path { steps: ref ps, .. } = arena.get(processed).clone() {
-                let ps = ps.clone();
-                steps.extend(ps);
-                return Ok(());
-            }
-
-            // In a path context, a string literal is a field name lookup.
-            if let Expr::StringLit { ref value, pos, .. } = arena.get(processed).clone() {
-                let name_node = arena.alloc(Expr::Name {
-                    value: value.clone(),
-                    pos,
-                    keep_array: false,
-                    stages: Vec::new(),
-                    group: None,
-                    focus: None,
-                    index: None,
-                })?;
-                steps.push(name_node);
-                return Ok(());
-            }
-
-            steps.push(processed);
-        }
+    if let Expr::Binary {
+        op: BinaryOp::Dot,
+        lhs,
+        rhs,
+        ..
+    } = arena.get(node)
+    {
+        // In our Rust AST, Focus/Index live on Name nodes directly
+        // (set by the parser's @ and # LED handlers), not on Binary "."
+        // nodes. No propagation needed here.
+        let (lhs, rhs) = (*lhs, *rhs);
+        collect_path_steps(arena, lhs, steps)?;
+        collect_path_steps(arena, rhs, steps)?;
+        return Ok(());
     }
+
+    // Leaf step — process it.
+    let processed = process_ast(arena, node)?;
+
+    // If the processed node is itself a Path, splice its steps.
+    if let Expr::Path { steps: ps, .. } = arena.get(processed) {
+        let ps = ps.clone();
+        steps.extend(ps);
+        return Ok(());
+    }
+
+    // In a path context, a string literal is a field name lookup.
+    let string_lit = if let Expr::StringLit { value, pos } = arena.get(processed) {
+        Some((value.clone(), *pos))
+    } else {
+        None
+    };
+    if let Some((value, pos)) = string_lit {
+        let name_node = arena.alloc(Expr::Name {
+            value,
+            pos,
+            keep_array: false,
+            stages: Vec::new(),
+            group: None,
+            focus: None,
+            index: None,
+        })?;
+        steps.push(name_node);
+        return Ok(());
+    }
+
+    steps.push(processed);
     Ok(())
 }
 
