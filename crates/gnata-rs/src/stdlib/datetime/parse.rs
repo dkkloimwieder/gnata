@@ -41,6 +41,11 @@ pub(super) fn parse_iso_to_millis(s: &str) -> JsonataResult {
 
 /// Parse ISO 8601 / RFC 3339 with timezone suffix (Z, +HH:MM, -HHMM, etc.)
 pub(super) fn try_parse_iso_with_tz(s: &str) -> Option<i64> {
+    // ISO 8601 is ASCII-only; rejecting non-ASCII up front keeps the fixed
+    // byte-offset slices below on char boundaries.
+    if !s.is_ascii() {
+        return None;
+    }
     // Must have at least "YYYY-MM-DDTHH:MM:SSZ" = 20 chars
     if s.len() < 20 || s.as_bytes()[4] != b'-' || s.as_bytes()[10] != b'T' {
         return None;
@@ -105,6 +110,10 @@ pub(super) fn try_parse_iso_with_tz(s: &str) -> Option<i64> {
 }
 
 pub(super) fn try_parse_date_only(s: &str) -> Option<i64> {
+    // ASCII-only, like all ISO 8601 forms — keeps byte slicing safe.
+    if !s.is_ascii() {
+        return None;
+    }
     // "YYYY-MM-DD"
     if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
         let y: i32 = s[0..4].parse().ok()?;
@@ -124,6 +133,10 @@ pub(super) fn try_parse_year_only(s: &str) -> Option<i64> {
 }
 
 pub(super) fn try_parse_datetime_no_tz(s: &str) -> Option<i64> {
+    // ASCII-only, like all ISO 8601 forms — keeps byte slicing safe.
+    if !s.is_ascii() {
+        return None;
+    }
     // "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DDTHH:MM:SS.sss"
     if s.len() >= 19 && s.as_bytes()[4] == b'-' && s.as_bytes()[10] == b'T' {
         let date_part = &s[0..10];

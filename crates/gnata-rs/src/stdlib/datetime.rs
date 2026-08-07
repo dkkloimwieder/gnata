@@ -274,6 +274,26 @@ mod tests {
         assert_eq!(from_millis_1arg(1), "1970-01-01T00:00:00.001Z");
     }
 
+    /// Non-ASCII input must produce errors, not char-boundary panics from
+    /// the fixed byte-offset slicing in the ISO and timezone parsers.
+    #[test]
+    fn non_ascii_input_errors_instead_of_panicking() {
+        let r = fn_to_millis(&[str_val("2018-\u{20AC}xxT00:00:00Z")], &Value::Undefined);
+        assert_eq!(r.expect_err("should not parse").code, "D3110");
+
+        let r = fn_from_millis(
+            &[millis_val(0), str_val("[Y]"), str_val("+a\u{20AC}")],
+            &Value::Undefined,
+        );
+        assert!(r.is_err(), "expected bad-timezone error, got {r:?}");
+
+        // Date-only and no-tz forms hit the same slicing.
+        for s in ["2018-01-\u{20AC}\u{20AC}", "2018-\u{20AC}xxT00:00:00"] {
+            let r = fn_to_millis(&[str_val(s)], &Value::Undefined);
+            assert!(r.is_err(), "expected D3110 for {s:?}, got {r:?}");
+        }
+    }
+
     #[test]
     fn test_from_millis_known_timestamp() {
         assert_eq!(from_millis_1arg(1509380732935), "2017-10-30T16:25:32.935Z");

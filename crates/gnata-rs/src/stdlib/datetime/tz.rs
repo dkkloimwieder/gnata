@@ -133,7 +133,9 @@ pub(super) fn parse_numeric_tz(s: &str) -> Result<i32, String> {
         }
     };
     let rest = rest.replace(':', "");
-    if rest.len() != 4 {
+    // The length check counts bytes, so "a€" (1+3 bytes) would pass and the
+    // fixed slices below would split the multi-byte char — require ASCII.
+    if rest.len() != 4 || !rest.is_ascii() {
         return Err(format!("bad tz len: {rest}"));
     }
     let h: i32 = rest[..2].parse().map_err(|_| "bad h".to_string())?;
