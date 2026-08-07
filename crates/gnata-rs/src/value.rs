@@ -575,18 +575,22 @@ impl Value {
     /// Visitor — no intermediate value tree.
     ///
     /// # Errors
-    /// Returns an error if the input is not valid JSON.
-    pub fn from_json_str(s: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Returns `D0000` if the input is not valid JSON; the backend
+    /// parser's diagnostic is embedded in the message.
+    pub fn from_json_str(s: &str) -> JsonataResult<Self> {
         let mut buf = s.as_bytes().to_vec();
-        simd_json::serde::from_slice(&mut buf).map_err(Into::into)
+        simd_json::serde::from_slice(&mut buf)
+            .map_err(|e| JsonataError::new("D0000", format!("JSON parse error: {e}")))
     }
 
     /// Decode a JSON byte slice into a Value (direct deserialization).
     ///
     /// # Errors
-    /// Returns a `serde_json::Error` if the input is not valid JSON.
-    pub fn from_json_bytes(b: &[u8]) -> Result<Self, serde_json::Error> {
+    /// Returns `D0000` if the input is not valid JSON; the backend
+    /// parser's diagnostic is embedded in the message.
+    pub fn from_json_bytes(b: &[u8]) -> JsonataResult<Self> {
         serde_json::from_slice(b)
+            .map_err(|e| JsonataError::new("D0000", format!("JSON parse error: {e}")))
     }
 
     /// Decode a mutable byte slice using SIMD-accelerated parsing.
@@ -595,9 +599,11 @@ impl Value {
     /// in-place by simd-json for SIMD alignment.
     ///
     /// # Errors
-    /// Returns an error if the input is not valid JSON.
-    pub fn from_json_bytes_mut(b: &mut [u8]) -> Result<Self, simd_json::Error> {
+    /// Returns `D0000` if the input is not valid JSON; the backend
+    /// parser's diagnostic is embedded in the message.
+    pub fn from_json_bytes_mut(b: &mut [u8]) -> JsonataResult<Self> {
         simd_json::serde::from_slice(b)
+            .map_err(|e| JsonataError::new("D0000", format!("JSON parse error: {e}")))
     }
 }
 
@@ -780,6 +786,19 @@ mod tests {
     // ── write_json correctness ─────────────────────────────────────────
 
     /// Verify write_json matches serde_json output for all Value types and edge cases.
+    #[test]
+    fn json_constructors_return_jsonata_errors() {
+        // M-DONT-LEAK-TYPES: all three return D0000 with the backend
+        // diagnostic embedded, not simd-json/serde_json error types.
+        assert_eq!(Value::from_json_str("{nope").unwrap_err().code, "D0000");
+        assert_eq!(Value::from_json_bytes(b"{nope").unwrap_err().code, "D0000");
+        let mut buf = b"{nope".to_vec();
+        assert_eq!(
+            Value::from_json_bytes_mut(&mut buf).unwrap_err().code,
+            "D0000"
+        );
+    }
+
     #[test]
     fn display_is_compact_json_except_undefined() {
         let v = Value::from_json_str(r#"{"a": [1, "x", null, true]}"#).unwrap();

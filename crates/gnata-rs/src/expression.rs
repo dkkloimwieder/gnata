@@ -263,7 +263,6 @@ impl Expression {
             return Ok(Value::Undefined);
         }
         Value::from_json_str(json)
-            .map_err(|e| crate::error::JsonataError::new("D0000", format!("JSON parse error: {e}")))
     }
 
     /// Returns the fast-path classification for this expression.
