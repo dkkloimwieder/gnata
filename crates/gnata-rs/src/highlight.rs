@@ -59,20 +59,23 @@ pub struct HlSpan {
 /// # Errors
 /// Returns `JsonataError` if the expression fails to parse.
 pub fn highlight(expr: &str) -> Result<String, JsonataError> {
-    let mut spans = Vec::new();
-
-    // Extract comments first (they're stripped by the lexer)
-    extract_comment_spans(expr, &mut spans);
-
-    // Parse and walk AST for semantic tokens
+    // Parse and walk AST for semantic tokens first.
     let (mut arena, root) = Parser::parse(expr)?;
     let root = process_ast(&mut arena, root)?;
 
+    let mut spans = Vec::new();
     if !root.is_empty() {
         let mut walker = HlWalker::new(&arena, expr);
         walker.walk(root);
-        spans.extend(walker.spans);
+        spans = walker.spans;
     }
+
+    // Comments are stripped by the lexer — recover them lexically, treating
+    // the walker's token spans as opaque: a "/*" inside a regex literal or
+    // backtick-quoted name is not a comment.
+    let mut comments = Vec::new();
+    extract_comment_spans(expr, &spans, &mut comments);
+    spans.extend(comments);
 
     // Sort by start position
     spans.sort_by_key(|s| s.start);
@@ -95,10 +98,21 @@ pub fn highlight(expr: &str) -> Result<String, JsonataError> {
     Ok(out)
 }
 
-fn extract_comment_spans(src: &str, spans: &mut Vec<HlSpan>) {
+fn extract_comment_spans(src: &str, token_spans: &[HlSpan], spans: &mut Vec<HlSpan>) {
     let bytes = src.as_bytes();
+    let mut regions: Vec<(usize, usize)> = token_spans.iter().map(|t| (t.start, t.end)).collect();
+    regions.sort_unstable();
+    let mut r = 0;
     let mut i = 0;
     while i + 1 < bytes.len() {
+        // Jump over any real token containing this position.
+        while r < regions.len() && regions[r].1 <= i {
+            r += 1;
+        }
+        if r < regions.len() && regions[r].0 <= i {
+            i = regions[r].1;
+            continue;
+        }
         if bytes[i] == b'/' && bytes[i + 1] == b'*' {
             let start = i;
             i += 2;
@@ -239,7 +253,25 @@ impl<'a> HlWalker<'a> {
                 self.push(pos, end, HlType::String);
             }
             Expr::NumberLit { pos, ref raw, .. } => {
-                self.push(pos, pos + raw.len(), HlType::Number);
+                // Folded negative literals keep the digit token's pos while
+                // raw carries the '-'; the sign may sit earlier in the
+                // source, separated by whitespace. Cover it when found.
+                let (start, end) = if raw.starts_with('-') && !self.src[pos..].starts_with('-') {
+                    let bytes = self.src.as_bytes();
+                    let mut j = pos;
+                    while j > 0 && bytes[j - 1].is_ascii_whitespace() {
+                        j -= 1;
+                    }
+                    let start = if j > 0 && bytes[j - 1] == b'-' {
+                        j - 1
+                    } else {
+                        pos
+                    };
+                    (start, pos + raw.len() - 1)
+                } else {
+                    (pos, pos + raw.len())
+                };
+                self.push(start, end, HlType::Number);
             }
             Expr::ValueLit { ref value, pos, .. } => {
                 let typ = match value.as_str() {
@@ -268,8 +300,10 @@ impl<'a> HlWalker<'a> {
                 ref flags,
                 ..
             } => {
-                // /pattern/flags
-                let end = pos + 1 + pattern.len() + 1 + flags.len();
+                // /pattern/flags — the lexer appends a synthetic 'g' flag
+                // that is never in the source; exclude it from the span.
+                let src_flags = flags.len().saturating_sub(1);
+                let end = pos + 1 + pattern.len() + 1 + src_flags;
                 self.push(pos, end, HlType::Regex);
             }
             Expr::Placeholder { pos } => {
@@ -389,8 +423,13 @@ impl<'a> HlWalker<'a> {
                 pos,
                 ..
             } => {
-                // "function" keyword
-                self.push(pos, pos + 8, HlType::Keyword);
+                // "function" keyword or its 2-byte λ shorthand.
+                let kw_len = if self.src[pos..].starts_with('λ') {
+                    'λ'.len_utf8()
+                } else {
+                    "function".len()
+                };
+                self.push(pos, pos + kw_len, HlType::Keyword);
                 for &p in params {
                     self.walk(p);
                 }
@@ -504,6 +543,47 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// Regex spans stop at the source flags — the lexer's synthetic
+    /// trailing 'g' is not in the source (gnata-0mb.2).
+    #[test]
+    fn regex_span_excludes_synthetic_flag() {
+        assert!(spans("$match(a, /ab+c/)").contains(&(10, 16, "regex".into())));
+        assert!(spans("$match(a, /ab+c/i)").contains(&(10, 17, "regex".into())));
+    }
+
+    /// Folded negative number literals cover the sign; previously the
+    /// span overran the source and was dropped entirely (gnata-0mb.2).
+    #[test]
+    fn negative_number_spans_cover_the_sign() {
+        assert_eq!(spans("-42"), vec![(0, 3, "number".into())]);
+        assert!(spans("x + -42").contains(&(4, 7, "number".into())));
+        assert_eq!(spans("- 42"), vec![(0, 4, "number".into())]);
+    }
+
+    /// The λ lambda shorthand is 2 bytes, not 8 (gnata-0mb.2).
+    #[test]
+    fn lambda_shorthand_keyword_span() {
+        assert!(spans("λ($x){$x}").contains(&(0, 2, "keyword".into())));
+        assert!(spans("function($x){$x}").contains(&(0, 8, "keyword".into())));
+    }
+
+    /// "/*" inside backtick names or regex literals (character classes
+    /// admit an unescaped '/') is not a comment; real comments still
+    /// highlight (gnata-0mb.2).
+    #[test]
+    fn comment_scan_skips_token_interiors() {
+        let s = spans("`weird/*name` + 1");
+        assert!(s.contains(&(0, 13, "name".into())));
+        assert!(!s.iter().any(|(_, _, t)| t == "comment"));
+
+        let s = spans("$match(a, /[/*]/)");
+        assert!(s.contains(&(10, 16, "regex".into())));
+        assert!(!s.iter().any(|(_, _, t)| t == "comment"));
+
+        assert!(spans("/* leading */ a + 1").contains(&(0, 13, "comment".into())));
+        assert!(spans("a /* mid */ + 1").contains(&(2, 11, "comment".into())));
     }
 
     #[test]
