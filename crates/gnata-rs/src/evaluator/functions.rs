@@ -149,7 +149,7 @@ pub fn eval_function(
     }
 
     // Signature validation for SignedBuiltins at direct call site.
-    // HOF callbacks bypass this (they go through apply_function instead).
+    // HOF callbacks bypass this (they go through call_function instead).
     if let FunctionValue::SignedBuiltin { signature, .. } = &*func {
         let specs = super::parse_signature(signature)?;
         let (coerced, return_undefined) = super::process_call_args(&specs, &args)?;

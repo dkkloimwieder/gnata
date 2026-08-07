@@ -53,7 +53,8 @@ pub struct HlSpan {
 }
 
 /// Tokenize an expression for syntax highlighting.
-/// Returns a JSON string: `[[start, end, "type"], ...]`
+/// Returns a JSON string: `[[start, end, "type"], ...]`, where `start`
+/// and `end` are UTF-8 byte offsets into `expr` (not char indices).
 ///
 /// # Errors
 /// Returns `JsonataError` if the expression fails to parse.

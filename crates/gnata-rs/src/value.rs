@@ -381,11 +381,11 @@ impl Value {
         }
     }
 
-    /// Convert a value to its string representation.
-    /// If `prettify` is true, objects and arrays are pretty-printed with 2-space indent.
-    ///
     /// Append the stringified form of this value to `buf`.
-    /// Zero-allocation for primitive types (String, Number, Bool).
+    ///
+    /// Strings append verbatim (unquoted), booleans as `true`/`false`,
+    /// numbers via `format_float`; undefined and functions append nothing;
+    /// objects and arrays append their compact JSON.
     ///
     /// # Errors
     /// Returns `D1001` if the value contains non-finite numbers.
@@ -601,10 +601,6 @@ impl Value {
     }
 }
 
-// ── serde::Serialize for Value ──────────────────────────────────────
-//
-// Enables serialization via simd-json or any serde-compatible serializer.
-// Numbers use format_float for Go-compatible formatting, emitted via
 // ── Direct serde::Deserialize for Value ─────────────────────────────
 //
 // Produces gnata::Value in a single pass, avoiding the intermediate
