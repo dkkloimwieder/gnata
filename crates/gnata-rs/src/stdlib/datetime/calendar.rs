@@ -77,13 +77,11 @@ pub(super) fn day_of_year(y: i32, mo: u8, d: u8) -> u32 {
 
 /// Day of week: 0=Sunday, 1=Monday, ..., 6=Saturday.
 ///
-/// Tomohiko Sakamoto's algorithm: `t[m-1]` is each month's cumulative
-/// day-shift relative to January in a non-leap year, mod 7; decrementing the
-/// year for Jan/Feb makes `y/4 - y/100 + y/400` count the leap day correctly.
+/// Derived from epoch days: 1970-01-01 was a Thursday, hence the `+ 4`.
+/// (The previous Sakamoto form used Rust's truncating `/`, which diverges
+/// from floor division for years <= 0 and gave wrong pre-1CE weekdays.)
 pub(super) fn day_of_week(y: i32, m: u8, d: u8) -> u8 {
-    let t: &[i32] = &[0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
-    let y = if m < 3 { y - 1 } else { y };
-    ((y + y / 4 - y / 100 + y / 400 + t[m as usize - 1] + i32::from(d)).rem_euclid(7)) as u8
+    ((ymd_to_epoch_days(y, m, d) + 4).rem_euclid(7)) as u8
 }
 
 /// ISO week number: returns (iso_year, iso_week).
@@ -156,4 +154,29 @@ pub(super) fn ymd_to_epoch_days(y: i32, m: u8, d: u8) -> i64 {
 
 pub(super) fn week_of_month(_thy: i32, _thm: u8, thd: u8) -> u32 {
     u32::from(thd).div_ceil(7)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::day_of_week;
+
+    #[test]
+    fn day_of_week_known_dates() {
+        // 0=Sunday .. 6=Saturday, proleptic Gregorian.
+        assert_eq!(day_of_week(1970, 1, 1), 4); // Thursday (Unix epoch)
+        assert_eq!(day_of_week(2000, 1, 1), 6); // Saturday
+        assert_eq!(day_of_week(2024, 2, 29), 4); // Thursday (leap day)
+        assert_eq!(day_of_week(1600, 1, 1), 6); // Saturday
+        assert_eq!(day_of_week(1, 1, 1), 1); // Monday (1 CE)
+    }
+
+    #[test]
+    fn day_of_week_pre_1ce() {
+        // Year 0 is a leap year (366 days); 0000-01-01 is 366 days before
+        // 0001-01-01 (Monday), so it falls on a Saturday. The truncating-
+        // division Sakamoto form said Sunday here.
+        assert_eq!(day_of_week(0, 1, 1), 6);
+        assert_eq!(day_of_week(0, 12, 31), 0); // Sunday, day before 1 CE
+        assert_eq!(day_of_week(-1, 12, 31), 5); // Friday, day before year 0
+    }
 }
