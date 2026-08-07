@@ -26,7 +26,8 @@
 //! - [`Value`] — the JSON-plus-`undefined` value type results come in.
 //!   Deliberately `!Send` (reference-counted, copy-on-write); build inputs
 //!   per thread.
-//! - [`JsonataError`] — structured errors carrying JSONata spec codes.
+//! - [`JsonataError`] / [`JsonataResult`] — structured errors carrying
+//!   JSONata spec codes, and the `Result` alias every API returns.
 //! - [`new_custom_env`] / [`CustomFunc`] — register Rust functions callable
 //!   from expressions.
 //! - [`StreamEvaluator`] — run many expressions over a stream of inputs.
@@ -86,7 +87,7 @@ pub(crate) mod value;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm;
 
-pub use error::JsonataError;
+pub use error::{JsonataError, JsonataResult};
 pub use evaluator::Environment;
 pub use expression::{CustomFunc, Expression, new_custom_env};
 pub use fast_path::FastPath;

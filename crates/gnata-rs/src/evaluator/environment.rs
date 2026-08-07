@@ -124,7 +124,7 @@ impl Environment {
     /// Look up a variable and return both the value and the environment that holds it.
     /// Used by the parent operator (%) to walk the env chain for chained %.% navigation.
     /// The `self_rc` parameter must be the `Rc` wrapping this environment.
-    pub fn lookup_with_env(
+    pub(crate) fn lookup_with_env(
         self_rc: &Rc<Environment>,
         name: &str,
     ) -> Option<(Value, Rc<Environment>)> {
@@ -141,31 +141,25 @@ impl Environment {
     }
 
     /// Check only the direct bindings (no parent chain walk).
-    pub fn lookup_direct(&self, name: &str) -> Option<Value> {
+    pub(crate) fn lookup_direct(&self, name: &str) -> Option<Value> {
         self.bindings.borrow().get(name).cloned()
     }
 
     /// Get the parent environment.
-    pub fn parent(&self) -> Option<&Rc<Environment>> {
+    pub(crate) fn parent(&self) -> Option<&Rc<Environment>> {
         self.parent.as_ref()
     }
 
     /// Get a reference to the shared call counter.
-    pub fn call_counter(&self) -> &Rc<CallCounter> {
+    pub(crate) fn call_counter(&self) -> &Rc<CallCounter> {
         &self.calls
-    }
-
-    /// Install a fresh call counter, decoupling from parent.
-    /// Used for per-$eval isolation.
-    pub fn reset_call_counter(&mut self) {
-        self.calls = Rc::new(CallCounter::new());
     }
 
     /// Increment the $eval nesting counter.
     ///
     /// # Errors
     /// Returns `D3121` if nesting depth exceeds `max_depth`.
-    pub fn incr_eval_depth(&self, max_depth: u32) -> Result<(), JsonataError> {
+    pub(crate) fn incr_eval_depth(&self, max_depth: u32) -> Result<(), JsonataError> {
         let d = self.calls.eval_depth.get() + 1;
         if d > max_depth {
             return Err(JsonataError::new(
@@ -178,7 +172,7 @@ impl Environment {
     }
 
     /// Decrement the $eval nesting counter.
-    pub fn decr_eval_depth(&self) {
+    pub(crate) fn decr_eval_depth(&self) {
         let d = self.calls.eval_depth.get();
         if d > 0 {
             self.calls.eval_depth.set(d - 1);
@@ -186,12 +180,12 @@ impl Environment {
     }
 
     /// Set the cancellation token.
-    pub fn set_cancel(&mut self, cancel: Arc<AtomicBool>) {
+    pub(crate) fn set_cancel(&mut self, cancel: Arc<AtomicBool>) {
         self.cancel = Some(cancel);
     }
 
     /// Check if evaluation has been cancelled.
-    pub fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.cancel
             .as_ref()
             .is_some_and(|c| c.load(Ordering::Relaxed))
@@ -206,7 +200,7 @@ impl Environment {
     /// # Errors
     /// Returns `D3001` when evaluation has been cancelled.
     #[inline]
-    pub fn poll_cancelled(&self, i: usize) -> Result<(), JsonataError> {
+    pub(crate) fn poll_cancelled(&self, i: usize) -> Result<(), JsonataError> {
         if i.is_multiple_of(1024) && self.is_cancelled() {
             return Err(JsonataError::new("D3001", "evaluation cancelled"));
         }
@@ -215,20 +209,15 @@ impl Environment {
 
     /// Iterate over direct bindings (no parent chain walk).
     /// Calls the provided closure with each (name, value) pair.
-    pub fn for_each_direct<F: FnMut(&str, &Value)>(&self, mut f: F) {
+    pub(crate) fn for_each_direct<F: FnMut(&str, &Value)>(&self, mut f: F) {
         for (k, v) in self.bindings.borrow().iter() {
             f(k, v);
         }
     }
 
-    /// Check if this environment has a direct binding for the given name.
-    pub fn has_direct(&self, name: &str) -> bool {
-        self.bindings.borrow().contains_key(name)
-    }
-
     /// Clone this environment (shallow copy of bindings, shared parent/calls).
     #[must_use]
-    pub fn shallow_clone(&self) -> Self {
+    pub(crate) fn shallow_clone(&self) -> Self {
         Self {
             parent: self.parent.clone(),
             bindings: RefCell::new(self.bindings.borrow().clone()),

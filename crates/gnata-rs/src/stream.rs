@@ -42,6 +42,19 @@ pub struct StreamEvaluator {
     custom_funcs: Vec<(String, CustomFunc)>,
 }
 
+impl std::fmt::Debug for StreamEvaluator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamEvaluator")
+            .field("expressions", &self.exprs.len())
+            .field(
+                "custom_funcs",
+                &self.custom_funcs.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+            )
+            .field("metrics", &self.metrics.is_some())
+            .finish()
+    }
+}
+
 impl StreamEvaluator {
     /// Create a new evaluator with the given compiled expressions.
     pub fn new(expressions: Vec<Expression>) -> Self {
@@ -343,6 +356,15 @@ mod tests {
             ":= leaked across batch expressions (custom env)"
         );
         assert_eq!(results[2], Some(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn debug_summarizes_without_dumping_expressions() {
+        let mut se = StreamEvaluator::new(Vec::new());
+        se.compile("1+1").unwrap();
+        let dbg = format!("{se:?}");
+        assert!(dbg.contains("StreamEvaluator"));
+        assert!(dbg.contains("expressions: 1"));
     }
 
     #[test]

@@ -207,7 +207,7 @@ fn eval_inner(
                         let piped = eval_no_stack_check(arena, lhs, input, cur_env)?;
                         return eval_chain(arena, rhs, &piped, input, cur_env);
                     }
-                    _ => unreachable!(),
+                    _ => unreachable!("dispatch sends only Dot/Chain binaries here"),
                 }
             }
 
@@ -430,7 +430,7 @@ fn eval_path(
             group,
             ..
         } => (steps.clone(), *keep_singleton_array, group.clone()),
-        _ => unreachable!(),
+        _ => unreachable!("eval_path is dispatched only for Expr::Path nodes"),
     };
 
     if steps.is_empty() {
@@ -1762,7 +1762,7 @@ fn eval_binary(
 ) -> JsonataResult {
     let (op, lhs, rhs) = match arena.get(node) {
         Expr::Binary { op, lhs, rhs, .. } => (*op, *lhs, *rhs),
-        _ => unreachable!(),
+        _ => unreachable!("eval_binary is dispatched only for Expr::Binary nodes"),
     };
 
     // Handle subscript `[` separately — it needs AST-level lhs access
@@ -2043,7 +2043,7 @@ fn apply_arithmetic_nums(op: BinaryOp, ln: f64, rn: f64) -> JsonataResult {
         BinaryOp::Div => ln / rn,
         BinaryOp::Mod => ln % rn,
         BinaryOp::Pow => ln.powf(rn),
-        _ => unreachable!(),
+        _ => unreachable!("caller matches arithmetic operators only"),
     };
     // Division by zero → let Inf propagate (error comes from downstream use).
     // Other non-finite results → D1001 "number out of range".
@@ -2528,7 +2528,7 @@ fn eval_unary(
             lhs,
             ..
         } => (*op, *operand, expressions.clone(), lhs.clone()),
-        _ => unreachable!(),
+        _ => unreachable!("eval_unary is dispatched only for Expr::Unary nodes"),
     };
 
     match op {
@@ -2634,7 +2634,7 @@ fn eval_bind(
 ) -> JsonataResult {
     let (lhs, rhs) = match arena.get(node) {
         Expr::Bind { lhs, rhs, .. } => (*lhs, *rhs),
-        _ => unreachable!(),
+        _ => unreachable!("eval_bind is dispatched only for Expr::Bind nodes"),
     };
 
     let val = eval_no_stack_check(arena, rhs, input, env)?;
@@ -2662,7 +2662,7 @@ fn eval_sort(
 ) -> JsonataResult {
     let (sort_expr, terms) = match arena.get(node) {
         Expr::Sort { expr, terms, .. } => (*expr, terms.clone()),
-        _ => unreachable!(),
+        _ => unreachable!("eval_sort is dispatched only for Expr::Sort nodes"),
     };
 
     // If any sort term references % (parent), use parent-tracking sort.
@@ -2913,7 +2913,7 @@ fn eval_transform(arena: &AstArena, node: NodeId, _input: &Value, env: &Rc<Envir
             delete,
             ..
         } => (*pattern, *update, *delete),
-        _ => unreachable!(),
+        _ => unreachable!("eval_transform is dispatched only for Expr::Transform nodes"),
     };
 
     // Return a function value that performs the transform when called.

@@ -726,6 +726,18 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
     }
 }
 
+/// Compact JSON text (same output as [`Value::to_json_string`]), except
+/// `Undefined`, which displays as the empty string — JSONata's absent
+/// result is not the same value as `null`.
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if matches!(self, Value::Undefined) {
+            return Ok(());
+        }
+        f.write_str(&self.to_json_string())
+    }
+}
+
 /// Write a JSON-escaped string to a byte buffer.
 /// Handles the JSON spec escapes: `\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`,
 /// and `\uXXXX` for control characters below 0x20.
@@ -768,6 +780,14 @@ mod tests {
     // ── write_json correctness ─────────────────────────────────────────
 
     /// Verify write_json matches serde_json output for all Value types and edge cases.
+    #[test]
+    fn display_is_compact_json_except_undefined() {
+        let v = Value::from_json_str(r#"{"a": [1, "x", null, true]}"#).unwrap();
+        assert_eq!(v.to_string(), r#"{"a":[1,"x",null,true]}"#);
+        assert_eq!(Value::Undefined.to_string(), "");
+        assert_eq!(Value::Null.to_string(), "null");
+    }
+
     #[test]
     fn write_json_matches_serde_json() {
         let cases: Vec<Value> = vec![
