@@ -411,8 +411,14 @@ fn expand_replacement(repl: &str, full_match: &str, groups: &[&str]) -> String {
 
     while i < bytes.len() {
         if bytes[i] != b'$' {
-            result.push(bytes[i] as char);
-            i += 1;
+            // Copy the literal run whole: pushing `bytes[i] as char` would
+            // Latin-1-widen each byte of a multi-byte UTF-8 character. A `$`
+            // byte is always a char boundary, so the slice is valid.
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'$' {
+                i += 1;
+            }
+            result.push_str(&repl[start..i]);
             continue;
         }
         i += 1; // skip $
@@ -426,9 +432,9 @@ fn expand_replacement(repl: &str, full_match: &str, groups: &[&str]) -> String {
             continue;
         }
         if !bytes[i].is_ascii_digit() {
+            // `$` not followed by a digit stays literal; the next iteration's
+            // literal-run copy picks up the following character intact.
             result.push('$');
-            result.push(bytes[i] as char);
-            i += 1;
             continue;
         }
         // Collect digit run.
@@ -507,6 +513,23 @@ mod tests {
         let r = eval_expr(r#"$replace("John Smith", /(\w+)\s(\w+)/, "$2 $1")"#);
         assert!(
             r.deep_equal(&Value::String("Smith John".into())),
+            "got {r:?}"
+        );
+    }
+
+    /// Non-ASCII replacement text must survive template expansion intact
+    /// (the byte-wise expansion used to Latin-1-widen multi-byte UTF-8).
+    #[test]
+    fn replace_preserves_non_ascii_replacement() {
+        let r = eval_expr(r#"$replace("hello", /l/, "ü")"#);
+        assert!(r.deep_equal(&Value::String("heüüo".into())), "got {r:?}");
+        // `$` followed by a non-ASCII char: `$` stays literal, char intact.
+        let r = eval_expr(r#"$replace("ab", /b/, "$€")"#);
+        assert!(r.deep_equal(&Value::String("a$€".into())), "got {r:?}");
+        // Group references mixed with non-ASCII literals.
+        let r = eval_expr(r#"$replace("John Smith", /(\w+)\s(\w+)/, "«$2» — «$1»")"#);
+        assert!(
+            r.deep_equal(&Value::String("«Smith» — «John»".into())),
             "got {r:?}"
         );
     }
