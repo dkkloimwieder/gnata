@@ -49,13 +49,57 @@ fn step_has_keep_array(arena: &AstArena, step: NodeId) -> bool {
     false
 }
 
+/// Maximum recursion depth for `process_ast` on wasm32, which cannot grow
+/// its stack. Deep left-associative chains (`1+1+1+...`) build tree depth
+/// the parser's expression-nesting cap never sees; ~1,000 frames stays
+/// comfortably inside a default 1 MB wasm stack.
+#[cfg(target_arch = "wasm32")]
+const MAX_PROCESS_DEPTH: u32 = 1_000;
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static PROCESS_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Run the post-processing pass over a parsed AST.
 /// Call this after `Parser::parse()` and before evaluation.
 ///
 /// # Errors
-/// Returns a `JsonataError` if the AST contains structural issues.
-#[expect(clippy::too_many_lines)]
+/// Returns a `JsonataError` if the AST contains structural issues, or
+/// S0210 on wasm32 when the tree is nested too deeply to process.
 pub fn process_ast(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
+    // Every recursive call re-enters through this function, so guarding here
+    // covers the whole pass. Mirrors Parser::expression: grow the stack on
+    // native (left-associative spines are parsed in one frame, so
+    // MAX_PARSE_DEPTH does not bound tree depth); bound the depth on wasm.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        stacker::maybe_grow(crate::STACK_RED_ZONE, crate::STACK_GROW_SIZE, || {
+            process_ast_inner(arena, node)
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let depth = PROCESS_DEPTH.with(|d| {
+            let v = d.get() + 1;
+            d.set(v);
+            v
+        });
+        let result = if depth > MAX_PROCESS_DEPTH {
+            Err(JsonataError::new(
+                "S0210",
+                "expression is too deeply nested",
+            ))
+        } else {
+            process_ast_inner(arena, node)
+        };
+        PROCESS_DEPTH.with(|d| d.set(d.get() - 1));
+        result
+    }
+}
+
+#[expect(clippy::too_many_lines)]
+fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, JsonataError> {
     if node.is_empty() {
         return Ok(node);
     }
@@ -454,6 +498,20 @@ mod tests {
         let (mut arena, root) = Parser::parse(src).expect("parse failed");
         let root = process_ast(&mut arena, root).expect("process failed");
         (arena, root)
+    }
+
+    /// Left-associative chains build tree depth in a single parser frame, so
+    /// MAX_PARSE_DEPTH never sees it — process_ast must grow the stack
+    /// (native) instead of overflowing. ~25k terms ≈ 50k nodes.
+    #[test]
+    fn deep_left_assoc_chain_processes_without_overflow() {
+        let mut src = String::with_capacity(2 + 2 * 25_000);
+        src.push('1');
+        for _ in 0..25_000 {
+            src.push_str("+1");
+        }
+        let (_arena, root) = parse_and_process(&src);
+        assert!(!root.is_empty());
     }
 
     #[test]
