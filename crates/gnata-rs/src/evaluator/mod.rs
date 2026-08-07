@@ -3377,7 +3377,9 @@ fn collect_group_items(
             },
             KeyStrategy::FullEval(node) => eval_no_stack_check(arena, *node, item, env)?,
         };
-        if key_val.is_undefined() || key_val.is_null() {
+        // Undefined keys skip the item; null (and any other non-string)
+        // is T1003, matching Go (nil continues, jsonNullType errors).
+        if key_val.is_undefined() {
             continue;
         }
         let key: compact_str::CompactString = match &key_val {
@@ -3385,7 +3387,7 @@ fn collect_group_items(
             _ => {
                 return Err(JsonataError::new(
                     "T1003",
-                    "key expression must evaluate to a string",
+                    format!("key expression must evaluate to a string, got {key_val:?}"),
                 ));
             }
         };
@@ -3692,6 +3694,26 @@ mod tests {
         // node standing as the first step of a path.
         assert_eq!(eval_simple(r#"((1+2){"k": $}).k"#), Value::Number(3.0));
         assert_eq!(eval_simple(r#"(1+2){"k": $}.k"#), Value::Number(3.0));
+    }
+
+    /// Undefined group keys skip the item; null (like any non-string)
+    /// raises T1003. Go-verified 2026-08-07: nil continues,
+    /// jsonNullType errors (gnata-eci.5).
+    #[test]
+    fn group_by_key_null_vs_undefined() {
+        // Absent key: item skipped, others grouped.
+        assert_eq!(
+            eval_simple(r#"[{"a":"x"},{"b":9},{"a":"y"}]{a: a}"#),
+            eval_simple(r#"{"x": "x", "y": "y"}"#)
+        );
+        // Null (or any non-string) key: T1003, not a skip.
+        for expr in [
+            r#"[{"a":"x"},{"a":null},{"a":"y"}]{a: a}"#,
+            r#"[{"a":"x"},{"a":true}]{a: a}"#,
+        ] {
+            let err = eval_expr(expr, &Value::Undefined).unwrap_err();
+            assert_eq!(err.code, "T1003", "expected T1003 for {expr}");
+        }
     }
 
     /// S0210 (one group per step) and S0209 (no predicate after group)
