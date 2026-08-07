@@ -197,6 +197,22 @@ impl Environment {
             .is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
+    /// Poll the cancellation flag from a hot loop, checking every 1024th
+    /// iteration (`i` is the loop index) to keep the per-item cost to a
+    /// branch. Function-free loops (fast HOF paths, auto-map, predicate
+    /// filters) call this so they stay cancellable without going through
+    /// a call boundary.
+    ///
+    /// # Errors
+    /// Returns `D3001` when evaluation has been cancelled.
+    #[inline]
+    pub fn poll_cancelled(&self, i: usize) -> Result<(), JsonataError> {
+        if i.is_multiple_of(1024) && self.is_cancelled() {
+            return Err(JsonataError::new("D3001", "evaluation cancelled"));
+        }
+        Ok(())
+    }
+
     /// Iterate over direct bindings (no parent chain walk).
     /// Calls the provided closure with each (name, value) pair.
     pub fn for_each_direct<F: FnMut(&str, &Value)>(&self, mut f: F) {

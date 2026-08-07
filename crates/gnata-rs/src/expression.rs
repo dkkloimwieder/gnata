@@ -211,8 +211,10 @@ impl Expression {
     /// Evaluate with a cancellation token.
     ///
     /// Setting the `AtomicBool` to `true` from another thread will cause the
-    /// evaluator to return error code `D3001` at the next function call boundary.
-    /// Fast-path expressions complete without checking cancellation.
+    /// evaluator to return error code `D3001` at the next function call
+    /// boundary or hot-loop poll (function-free HOF/auto-map/predicate loops
+    /// check every 1024 items). Expressions served entirely by the compiled
+    /// fast path complete without checking cancellation.
     ///
     /// # Errors
     /// Returns `D3001` if cancelled, or other JSONata evaluation errors.
@@ -469,6 +471,29 @@ mod tests {
         let expr = Expression::compile("$reduce([1,2,3], function($a,$b){$a+$b}, 0)").unwrap();
         let err = expr.evaluate_with_cancel("", cancel).unwrap_err();
         assert_eq!(err.code, "D3001");
+    }
+
+    /// Function-free fast loops (lifted $map/$reduce, predicate filters,
+    /// auto-map steps) poll the cancellation flag at loop boundaries —
+    /// they used to run to completion uncancellable (gnata-dx5.11).
+    #[test]
+    fn cancel_stops_function_free_loops() {
+        use std::sync::atomic::AtomicBool;
+        let data = r#"{"items": [{"a": 1}, {"a": 2}, {"a": 3}]}"#;
+        for src in [
+            "$map(items, function($v){$v.a})",
+            "$filter(items, function($v){$v.a > 1})",
+            "$reduce(items, function($p,$c){$p + $c.a}, 0)",
+            "items[a > 0]",
+            "items.(a + 1)",
+        ] {
+            let cancel = Arc::new(AtomicBool::new(true));
+            let expr = Expression::compile(src).unwrap();
+            let err = expr
+                .evaluate_with_cancel(data, cancel)
+                .expect_err(&format!("{src} should observe cancellation"));
+            assert_eq!(err.code, "D3001", "for {src}");
+        }
     }
 
     #[test]

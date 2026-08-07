@@ -70,7 +70,8 @@ pub fn fn_map(
     match try_fast_lambda(&func, arena) {
         Some(SimpleLambda::FieldAccess { field, .. }) => {
             let mut seq = Sequence::new();
-            for item in arr.iter() {
+            for (i, item) in arr.iter().enumerate() {
+                env.poll_cancelled(i)?;
                 let val = hof_fast::get_field(item, &field);
                 if !val.is_undefined() {
                     seq.values.push(val);
@@ -80,7 +81,8 @@ pub fn fn_map(
         }
         Some(SimpleLambda::ConcatTemplate { ref pieces }) => {
             let mut seq = Sequence::new();
-            for item in arr.iter() {
+            for (i, item) in arr.iter().enumerate() {
+                env.poll_cancelled(i)?;
                 let val = hof_fast::eval_concat_template(item, pieces)?;
                 if !val.is_undefined() {
                     seq.values.push(val);
@@ -101,7 +103,8 @@ pub fn fn_map(
             hof_fast::analyze_mapped_call(lambda.body, arena, Some(param), &lambda.closure)
     {
         let mut seq = Sequence::new();
-        for item in arr.iter() {
+        for (i, item) in arr.iter().enumerate() {
+            env.poll_cancelled(i)?;
             let val = hof_fast::exec_mapped_call(&mc, item, &lambda.closure, arena)?;
             if !val.is_undefined() {
                 seq.values.push(val);
@@ -145,7 +148,8 @@ pub fn fn_filter(
                 field, op, literal, ..
             } => {
                 let mut result = Vec::new();
-                for item in arr.iter() {
+                for (i, item) in arr.iter().enumerate() {
+                    env.poll_cancelled(i)?;
                     let fv = hof_fast::get_field(item, field);
                     let val = hof_fast::eval_binary_simple(&fv, *op, literal)?;
                     if val.to_boolean() {
@@ -158,7 +162,8 @@ pub fn fn_filter(
                 field1, op, field2, ..
             } => {
                 let mut result = Vec::new();
-                for item in arr.iter() {
+                for (i, item) in arr.iter().enumerate() {
+                    env.poll_cancelled(i)?;
                     let fv1 = hof_fast::get_field(item, field1);
                     let fv2 = hof_fast::get_field(item, field2);
                     let val = hof_fast::eval_binary_simple(&fv1, *op, &fv2)?;
@@ -173,7 +178,8 @@ pub fn fn_filter(
             } => {
                 let is_and = *combiner == BinaryOp::And;
                 let mut result = Vec::new();
-                'outer: for item in arr.iter() {
+                'outer: for (i, item) in arr.iter().enumerate() {
+                    env.poll_cancelled(i)?;
                     for clause in clauses {
                         let fv = hof_fast::get_field(item, &clause.field);
                         let pass = hof_fast::eval_binary_simple(&fv, clause.op, &clause.literal)?
@@ -249,7 +255,8 @@ pub fn fn_reduce(
     // Fast path: simple reduce — function($prev,$curr){$prev + $curr.field}
     match try_fast_lambda(&func, arena) {
         Some(SimpleLambda::ReduceAccum { field, op, .. }) => {
-            for item in &arr[start..] {
+            for (i, item) in arr[start..].iter().enumerate() {
+                env.poll_cancelled(i)?;
                 let fv = hof_fast::get_field(item, &field);
                 acc = hof_fast::eval_binary_simple(&acc, op, &fv)?;
             }
@@ -262,7 +269,8 @@ pub fn fn_reduce(
             inner_op,
             ..
         }) => {
-            for item in &arr[start..] {
+            for (i, item) in arr[start..].iter().enumerate() {
+                env.poll_cancelled(i)?;
                 let fv1 = hof_fast::get_field(item, &field1);
                 let fv2 = hof_fast::get_field(item, &field2);
                 let inner = hof_fast::eval_binary_simple(&fv1, inner_op, &fv2)?;
@@ -525,7 +533,8 @@ pub fn fn_single(
         && let Some(pred) = fast_single_predicate(fast)
     {
         let mut matches = Vec::new();
-        for item in arr.iter() {
+        for (i, item) in arr.iter().enumerate() {
+            env.poll_cancelled(i)?;
             if pred(item)? {
                 matches.push(item.clone());
                 if matches.len() > 1 {

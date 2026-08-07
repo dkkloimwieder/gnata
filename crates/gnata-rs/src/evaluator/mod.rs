@@ -1616,7 +1616,8 @@ fn eval_path_step(
 
     let mut seq = Sequence::with_capacity(arr.len());
 
-    for item in arr.iter() {
+    for (i, item) in arr.iter().enumerate() {
+        env.poll_cancelled(i)?;
         let val = if matches!(arena.get(step), Expr::Function { .. }) {
             eval_path_function_step(arena, step, item, env)?
         } else {
@@ -1682,7 +1683,8 @@ fn eval_mapped_call_step(
     arena: &AstArena,
 ) -> JsonataResult {
     let mut seq = Sequence::with_capacity(arr.len());
-    for item in arr {
+    for (i, item) in arr.iter().enumerate() {
+        env.poll_cancelled(i)?;
         let val = crate::stdlib::hof_fast::exec_mapped_call(mc, item, env, arena)?;
         if val.is_undefined() {
             continue;
@@ -2244,6 +2246,7 @@ fn eval_subscript(
     let eval_env = filter_env_owned.as_ref().unwrap_or(env);
     let mut seq = Sequence::with_capacity(arr.len());
     for (i, item) in arr.iter().enumerate() {
+        eval_env.poll_cancelled(i)?;
         // Bind index variable if present (e.g. $#$pos[...]).
         if let Some(var_name) = index_var {
             eval_env.bind(var_name.clone(), Value::Number(i as f64));
