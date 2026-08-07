@@ -57,6 +57,12 @@ pub struct Environment {
     /// Lazy cache of non-local lookups. Populated on first parent-chain hit.
     /// Vec-based for cache-line friendliness at typical sizes (0-5 entries).
     cache: RefCell<Vec<(CompactString, Value)>>,
+    /// Chain-shared bind counter: every `bind` anywhere in the chain bumps
+    /// it, and `lookup` discards a cache filled at an older generation —
+    /// so an ancestor rebind can never serve a stale cached value.
+    generation: Rc<Cell<u64>>,
+    /// The generation this environment's cache was filled at.
+    cache_gen: Cell<u64>,
     calls: Rc<CallCounter>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -68,6 +74,8 @@ impl Environment {
             parent: None,
             bindings: RefCell::new(HashMap::new()),
             cache: RefCell::new(Vec::new()),
+            generation: Rc::new(Cell::new(0)),
+            cache_gen: Cell::new(0),
             calls: Rc::new(CallCounter::new()),
             cancel: None,
         }
@@ -77,10 +85,14 @@ impl Environment {
     pub fn new_child(parent: Rc<Environment>) -> Self {
         let calls = Rc::clone(&parent.calls);
         let cancel = parent.cancel.clone();
+        let generation = Rc::clone(&parent.generation);
+        let cache_gen = Cell::new(generation.get());
         Self {
             parent: Some(parent),
             bindings: RefCell::new(HashMap::new()),
             cache: RefCell::new(Vec::new()),
+            generation,
+            cache_gen,
             calls,
             cancel,
         }
@@ -90,6 +102,7 @@ impl Environment {
     /// Uses interior mutability so this works through `Rc<Environment>`.
     pub fn bind(&self, name: impl Into<CompactString>, value: Value) {
         self.bindings.borrow_mut().insert(name.into(), value);
+        self.generation.set(self.generation.get().wrapping_add(1));
     }
 
     /// Look up a variable, walking the parent chain iteratively.
@@ -100,11 +113,18 @@ impl Environment {
         if let Some(v) = self.bindings.borrow().get(name) {
             return Some(v.clone());
         }
-        // 2. Check cache (only for non-local lookups)
-        for (k, v) in &*self.cache.borrow() {
-            if k == name {
-                return Some(v.clone());
+        // 2. Check cache (only for non-local lookups); a bind anywhere in
+        // the chain since the cache was filled invalidates it wholesale.
+        let generation = self.generation.get();
+        if self.cache_gen.get() == generation {
+            for (k, v) in &*self.cache.borrow() {
+                if k == name {
+                    return Some(v.clone());
+                }
             }
+        } else {
+            self.cache.borrow_mut().clear();
+            self.cache_gen.set(generation);
         }
         // 3. Walk parent chain iteratively
         let mut current = self.parent.as_ref();
@@ -222,6 +242,8 @@ impl Environment {
             parent: self.parent.clone(),
             bindings: RefCell::new(self.bindings.borrow().clone()),
             cache: RefCell::new(Vec::new()),
+            generation: Rc::clone(&self.generation),
+            cache_gen: Cell::new(self.generation.get()),
             calls: Rc::clone(&self.calls),
             cancel: self.cancel.clone(),
         }
@@ -249,6 +271,29 @@ mod tests {
         let env = Environment::new();
         env.bind("x", Value::Number(42.0));
         assert_eq!(env.lookup("x"), Some(Value::Number(42.0)));
+    }
+
+    /// A rebind anywhere in the chain invalidates descendants' lookup
+    /// caches — the second lookup used to serve the stale cached value
+    /// (gnata-eci.7).
+    #[test]
+    fn ancestor_rebind_invalidates_descendant_cache() {
+        let root = Rc::new({
+            let e = Environment::new();
+            e.bind("x", Value::Number(1.0));
+            e
+        });
+        let child = Rc::new(Environment::new_child(Rc::clone(&root)));
+        assert_eq!(child.lookup("x"), Some(Value::Number(1.0)));
+        root.bind("x", Value::Number(2.0));
+        assert_eq!(child.lookup("x"), Some(Value::Number(2.0)));
+
+        // A fresh shadow in an intermediate scope also wins over a
+        // grandparent value the grandchild had cached.
+        let grandchild = Rc::new(Environment::new_child(Rc::clone(&child)));
+        assert_eq!(grandchild.lookup("x"), Some(Value::Number(2.0)));
+        child.bind("x", Value::Number(3.0));
+        assert_eq!(grandchild.lookup("x"), Some(Value::Number(3.0)));
     }
 
     #[test]
