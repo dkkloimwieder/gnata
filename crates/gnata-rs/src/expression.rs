@@ -128,12 +128,10 @@ impl Expression {
             return Ok(result);
         }
 
-        let mut env = Environment::new();
-        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(Environment::new_eval_child(crate::stdlib::cached_root_env()));
         if !input.is_undefined() {
             env.bind("$", input.clone());
         }
-        let env = Rc::new(env);
         let result = crate::eval(&self.arena, self.root, input, &env);
         env.teardown_cycles();
         result
@@ -162,10 +160,11 @@ impl Expression {
 
     /// Evaluate with user-defined custom functions.
     ///
-    /// Creates a fresh environment with stdlib + the provided custom functions,
-    /// then evaluates. For repeated evaluations with the same custom functions,
-    /// prefer [`new_custom_env`] + [`Expression::evaluate_with_env`] to avoid
-    /// re-registering on every call.
+    /// Binds the custom functions into a per-evaluation scope over the
+    /// thread-cached stdlib environment. For repeated evaluations with the
+    /// same custom functions, prefer [`new_custom_env`] +
+    /// [`Expression::evaluate_with_env`] to avoid re-wrapping the functions
+    /// on every call.
     ///
     /// # Errors
     /// Returns JSONata evaluation errors.
@@ -178,7 +177,16 @@ impl Expression {
         if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
         }
-        let env = new_custom_env(custom_funcs);
+        let env = Rc::new(Environment::new_eval_child(crate::stdlib::cached_root_env()));
+        for (name, func) in custom_funcs {
+            let arc_fn = Arc::clone(func);
+            let builtin: Rc<crate::evaluator::BuiltinFn> =
+                Rc::new(move |args: &[Value], focus: &Value| arc_fn(args, focus));
+            env.bind(
+                name.clone(),
+                Value::Function(Box::new(FunctionValue::Builtin(builtin))),
+            );
+        }
         if !input.is_undefined() {
             env.bind("$", input.clone());
         }
@@ -200,15 +208,13 @@ impl Expression {
         if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
         }
-        let mut env = Environment::new();
-        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(Environment::new_eval_child(crate::stdlib::cached_root_env()));
         if !input.is_undefined() {
             env.bind("$", input.clone());
         }
         for (name, value) in vars {
             env.bind(name.clone(), value.clone());
         }
-        let env = Rc::new(env);
         let result = crate::eval(&self.arena, self.root, &input, &env);
         env.teardown_cycles();
         result
@@ -229,8 +235,7 @@ impl Expression {
         if let Some(result) = fast_path::eval_fast(&self.fast_path, &input) {
             return Ok(result);
         }
-        let mut env = Environment::new();
-        crate::stdlib::register_all(&mut env);
+        let mut env = Environment::new_eval_child(crate::stdlib::cached_root_env());
         env.set_cancel(cancel);
         if !input.is_undefined() {
             env.bind("$", input.clone());
@@ -323,6 +328,74 @@ impl std::fmt::Debug for Expression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The thread-cached stdlib root must be untouched by evaluations:
+    /// top-level `:=` binds land on the per-eval child, sequential lambda
+    /// evaluations (whose teardown clears eval-scope closure envs) leave
+    /// the stdlib intact, and `$$` still resolves per evaluation.
+    #[test]
+    fn cached_root_is_isolated_across_evaluations() {
+        let bind = Expression::compile("$x := 42").unwrap();
+        assert_eq!(
+            bind.evaluate("{}").unwrap().as_f64(),
+            Some(42.0),
+            "bare top-level bind evaluates to its value"
+        );
+        let read = Expression::compile("$x").unwrap();
+        assert!(
+            read.evaluate("{}").unwrap().is_undefined(),
+            "$x must not leak into the next evaluation via the cached root"
+        );
+
+        let lambda = Expression::compile("($f := function($n) { $n + 1 }; $f(41))").unwrap();
+        assert_eq!(lambda.evaluate("{}").unwrap().as_f64(), Some(42.0));
+        assert_eq!(
+            lambda.evaluate("{}").unwrap().as_f64(),
+            Some(42.0),
+            "second lambda evaluation works after the first teardown"
+        );
+        let stdlib = Expression::compile("$sum([40, 2])").unwrap();
+        assert_eq!(
+            stdlib.evaluate("{}").unwrap().as_f64(),
+            Some(42.0),
+            "stdlib survives closure-env teardown"
+        );
+
+        let root = Expression::compile("$$.x").unwrap();
+        assert_eq!(
+            root.evaluate(r#"{"x": 7}"#).unwrap().as_f64(),
+            Some(7.0),
+            "$$ binds in the per-eval child"
+        );
+    }
+
+    /// A cancelled evaluation and a depth-exhausted evaluation leave no
+    /// state behind for the next one: the cancel token and CallCounter are
+    /// per-eval, never the cached root's.
+    #[test]
+    fn cancel_and_depth_state_do_not_stick_to_the_cached_root() {
+        let expr = Expression::compile("($f := function($n) { $f($n + 1) }; $f(0))").unwrap();
+        let err = expr.evaluate("{}").unwrap_err();
+        assert_eq!(err.code, "U1001");
+        let ok = Expression::compile("1 + 1").unwrap();
+        assert_eq!(
+            ok.evaluate("{}").unwrap().as_f64(),
+            Some(2.0),
+            "depth exhaustion must not poison later evaluations"
+        );
+
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let loops = Expression::compile("$sum([1..100000].($ + 1))").unwrap();
+        let err = loops
+            .evaluate_with_cancel("{}", Arc::clone(&cancelled))
+            .unwrap_err();
+        assert_eq!(err.code, "D3001");
+        assert_eq!(
+            loops.evaluate("{}").unwrap().as_f64(),
+            Some(5_000_150_000.0),
+            "the cancel token must not stick to the shared root"
+        );
+    }
 
     #[test]
     fn clone_shares_ast_and_outlives_original() -> JsonataResult<()> {

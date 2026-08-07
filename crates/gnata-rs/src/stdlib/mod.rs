@@ -60,6 +60,26 @@ fn bind_canonical(env: &mut Environment, name: &str) {
     );
 }
 
+thread_local! {
+    static CACHED_ROOT_ENV: std::rc::Rc<Environment> = {
+        let mut env = Environment::new();
+        register_all(&mut env);
+        std::rc::Rc::new(env)
+    };
+}
+
+/// The thread-cached stdlib root environment.
+///
+/// Public evaluations build a per-evaluation child of this root
+/// ([`Environment::new_eval_child`](crate::evaluator::Environment)) instead
+/// of re-registering ~70 builtins per call. Invariants: the root is never
+/// bound into after construction, never handed out to user code, and never
+/// torn down — `teardown_cycles` only touches eval-scope closure
+/// environments, which are descendants of the per-eval child.
+pub(crate) fn cached_root_env() -> std::rc::Rc<Environment> {
+    CACHED_ROOT_ENV.with(std::rc::Rc::clone)
+}
+
 /// Register all built-in functions into an environment.
 pub fn register_all(env: &mut Environment) {
     // ~70 builtins land below; one up-front reserve avoids rehash churn.

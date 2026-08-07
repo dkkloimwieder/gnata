@@ -100,6 +100,30 @@ impl Environment {
         self.bindings.borrow_mut().reserve(additional);
     }
 
+    /// Child scope for one public evaluation on the thread-cached stdlib
+    /// root.
+    ///
+    /// Unlike [`Environment::new_child`], the call counter is FRESH: call
+    /// depth, `$eval` depth, and the closure-env suspects list drained by
+    /// [`Environment::teardown_cycles`] are per-evaluation state and must
+    /// not accumulate on the shared root. The generation chain is inherited
+    /// (caches snapshot it at creation; the root is set up once and never
+    /// bound into afterwards), and the cancel slot starts empty so each
+    /// evaluation carries its own token.
+    pub(crate) fn new_eval_child(parent: Rc<Environment>) -> Self {
+        let generation = Rc::clone(&parent.generation);
+        let cache_gen = Cell::new(generation.get());
+        Self {
+            parent: Some(parent),
+            bindings: RefCell::new(BindingsMap::default()),
+            cache: RefCell::new(Vec::new()),
+            generation,
+            cache_gen,
+            calls: Rc::new(CallCounter::new()),
+            cancel: None,
+        }
+    }
+
     /// Create a child scope inheriting from parent.
     pub fn new_child(parent: Rc<Environment>) -> Self {
         let calls = Rc::clone(&parent.calls);

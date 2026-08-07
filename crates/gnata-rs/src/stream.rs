@@ -194,8 +194,11 @@ impl StreamEvaluator {
         // Build shared env once per call if custom functions or cancel are set.
         let needs_env = !self.custom_funcs.is_empty() || cancel.is_some();
         let custom_env = if needs_env {
-            let mut env = crate::evaluator::Environment::new();
-            crate::stdlib::register_all(&mut env);
+            let mut env =
+                crate::evaluator::Environment::new_eval_child(crate::stdlib::cached_root_env());
+            if let Some(cancel) = cancel {
+                env.set_cancel(cancel);
+            }
             for (name, func) in &self.custom_funcs {
                 let arc_fn = Arc::clone(func);
                 let builtin: std::rc::Rc<crate::evaluator::BuiltinFn> =
@@ -204,9 +207,6 @@ impl StreamEvaluator {
                     name.clone(),
                     Value::Function(Box::new(crate::evaluator::FunctionValue::Builtin(builtin))),
                 );
-            }
-            if let Some(cancel) = cancel {
-                env.set_cancel(cancel);
             }
             if !input.is_undefined() {
                 env.bind("$", input.clone());

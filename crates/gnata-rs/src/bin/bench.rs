@@ -71,19 +71,13 @@ fn run_single_bench(expr_str: &str, data_str: &str, n: u64) {
     let compiled = Expression::compile(expr_str).expect("compile failed");
     let input = Value::from_json_str(data_str).unwrap_or(Value::Undefined);
 
-    // Build environment ONCE and reuse across all iterations.
-    // evaluate_value() rebuilds the env every call — 60+ stdlib registrations
-    // per iteration was the source of a 30x regression on small payloads.
-    let env = gnata::new_custom_env(&[]);
-    if !input.is_undefined() {
-        env.bind("$", input.clone());
-    }
-
+    // Benchmark the public API directly: evaluate_value() runs on a
+    // per-eval child of the thread-cached stdlib root, so per-iteration
+    // env setup is a handful of allocations, not ~70 registrations. (The
+    // pre-cached-root workaround here was a prebuilt new_custom_env.)
     let mut result = Value::Undefined;
     for _ in 0..n {
-        result = compiled
-            .evaluate_with_env(&input, &env)
-            .expect("eval failed");
+        result = compiled.evaluate_value(&input).expect("eval failed");
     }
 
     println!("{}", result.to_json_string());
