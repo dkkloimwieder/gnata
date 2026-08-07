@@ -233,13 +233,20 @@ impl Expression {
 
     /// Evaluate with a pre-configured environment.
     ///
+    /// The input is bound as `$` in a per-evaluation child scope, so `$$`
+    /// resolves to the current input and the shared `env` is never mutated.
+    ///
     /// # Errors
     /// Returns JSONata evaluation errors.
     pub fn evaluate_with_env(&self, input: &Value, env: &Rc<Environment>) -> JsonataResult {
         if let Some(result) = fast_path::eval_fast(&self.fast_path, input) {
             return Ok(result);
         }
-        crate::eval(&self.arena, self.root, input, env)
+        let eval_env = Rc::new(Environment::new_child(Rc::clone(env)));
+        if !input.is_undefined() {
+            eval_env.bind("$", input.clone());
+        }
+        crate::eval(&self.arena, self.root, input, &eval_env)
     }
 
     /// Empty input and the literal `null` document mean *no input*:
@@ -315,6 +322,30 @@ mod tests {
         let result = cloned.evaluate(r#"{"a": {"b": 41}}"#)?;
         assert_eq!(result.as_f64(), Some(42.0));
         Ok(())
+    }
+
+    #[test]
+    fn evaluate_with_env_binds_root_input_per_evaluation() {
+        let env = new_custom_env(&[]);
+        let expr = Expression::compile("$$.x").unwrap();
+        let a = Value::from_json_str(r#"{"x": 1}"#).unwrap();
+        let b = Value::from_json_str(r#"{"x": 2}"#).unwrap();
+        assert_eq!(
+            expr.evaluate_with_env(&a, &env).unwrap().as_f64(),
+            Some(1.0)
+        );
+        // A second evaluation must see ITS input in $$, not the first one.
+        assert_eq!(
+            expr.evaluate_with_env(&b, &env).unwrap().as_f64(),
+            Some(2.0)
+        );
+        // The shared env is never mutated: $$ stays unbound for absent input.
+        let bare = Expression::compile("$$").unwrap();
+        assert!(
+            bare.evaluate_with_env(&Value::Undefined, &env)
+                .unwrap()
+                .is_undefined()
+        );
     }
 
     #[test]
