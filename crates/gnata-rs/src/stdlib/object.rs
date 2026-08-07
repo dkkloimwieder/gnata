@@ -65,6 +65,20 @@ pub fn fn_values(args: &[Value], _focus: &Value) -> JsonataResult {
             let vals: Vec<Value> = obj.values().cloned().collect();
             Ok(Value::Array(Rc::from(vals)))
         }
+        Value::Array(arr) => {
+            // Collect values across object elements; non-objects are
+            // skipped. Nothing collected → undefined (Go: nil result).
+            let mut vals = Vec::new();
+            for item in arr.iter() {
+                if let Value::Object(obj) = item {
+                    vals.extend(obj.values().cloned());
+                }
+            }
+            if vals.is_empty() {
+                return Ok(Value::Undefined);
+            }
+            Ok(Value::Array(Rc::from(vals)))
+        }
         _ => Ok(Value::Undefined),
     }
 }
@@ -97,6 +111,9 @@ pub fn fn_spread(args: &[Value], _focus: &Value) -> JsonataResult {
             for item in arr.iter() {
                 if let Value::Object(obj) = item {
                     result.extend(spread_one(obj));
+                } else {
+                    // Non-object elements pass through unchanged (Go/spec).
+                    result.push(item.clone());
                 }
             }
             Ok(Value::Array(Rc::from(result)))
@@ -121,9 +138,13 @@ pub fn fn_merge(args: &[Value], _focus: &Value) -> JsonataResult {
     match &args[0] {
         Value::Array(arr) => {
             for item in arr.iter() {
-                if let Value::Object(obj) = item {
-                    merge_obj(&mut merged, obj);
-                }
+                let Value::Object(obj) = item else {
+                    return Err(JsonataError::new(
+                        "T0412",
+                        "$merge: array elements must be objects",
+                    ));
+                };
+                merge_obj(&mut merged, obj);
             }
         }
         Value::Object(obj) => merge_obj(&mut merged, obj),
@@ -292,6 +313,60 @@ mod tests {
             obj(&[("a", 1.0)]),
             obj(&[("b", 2.0)])
         ]))));
+    }
+
+    /// Go-verified (2026-08-07): non-object array elements pass through.
+    #[test]
+    fn spread_passes_non_objects_through() {
+        let arr = Value::Array(Rc::from(vec![
+            obj(&[("a", 1.0), ("b", 2.0)]),
+            Value::Number(3.0),
+            Value::String("x".into()),
+        ]));
+        assert!(
+            ok(fn_spread(&[arr], U)).deep_equal(&Value::Array(Rc::from(vec![
+                obj(&[("a", 1.0)]),
+                obj(&[("b", 2.0)]),
+                Value::Number(3.0),
+                Value::String("x".into()),
+            ])))
+        );
+    }
+
+    /// Go-verified (2026-08-07): a non-object element raises T0412.
+    #[test]
+    fn merge_rejects_non_object_elements() {
+        let arr = Value::Array(Rc::from(vec![obj(&[("a", 1.0)]), Value::Number(2.0)]));
+        let err = match fn_merge(&[arr], U) {
+            Err(e) => e,
+            other => panic!("expected T0412, got {other:?}"),
+        };
+        assert_eq!(err.code, "T0412");
+    }
+
+    /// Go-verified (2026-08-07): $values on arrays collects across object
+    /// elements, skips non-objects, and is undefined when nothing collects.
+    #[test]
+    fn values_collects_across_array_elements() {
+        let arr = Value::Array(Rc::from(vec![
+            obj(&[("a", 1.0)]),
+            obj(&[("b", 2.0), ("c", 3.0)]),
+            Value::Number(5.0),
+        ]));
+        assert!(
+            ok(fn_values(&[arr], U)).deep_equal(&Value::Array(Rc::from(vec![
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+            ])))
+        );
+        let no_objects = Value::Array(Rc::from(vec![Value::Number(1.0), Value::Number(2.0)]));
+        assert!(matches!(fn_values(&[no_objects], U), Ok(Value::Undefined)));
+        let empty_objects = Value::Array(Rc::from(vec![obj(&[])]));
+        assert!(matches!(
+            fn_values(&[empty_objects], U),
+            Ok(Value::Undefined)
+        ));
     }
 
     #[test]
