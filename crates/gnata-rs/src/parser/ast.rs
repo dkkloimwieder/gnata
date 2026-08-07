@@ -428,7 +428,12 @@ pub struct Slot {
 /// Lambda type signature.
 #[derive(Debug, Clone)]
 pub struct Signature {
+    /// Source text including the outer `<` `>` (kept for the formatter).
     pub raw: String,
+    /// Parameter specs parsed at compile time — invalid signatures are
+    /// compile errors, matching the Go reference (parser/signature.go).
+    /// `Arc` keeps the AST `Send + Sync`.
+    pub params: std::sync::Arc<[crate::evaluator::ParamSpec]>,
 }
 
 #[cfg(test)]

@@ -74,14 +74,39 @@ pub fn parse_signature(raw: &str) -> Result<Vec<ParamSpec>, JsonataError> {
 }
 
 /// Process call arguments: nil propagation, singleton coercion, type validation.
-/// Returns (coerced_args, return_undefined).
+/// Returns (coerced_args, return_undefined); `coerced_args` is `None` when the
+/// original arguments pass through unchanged, so the common no-coercion call
+/// avoids cloning every argument.
 ///
 /// # Errors
 /// Returns `T0410` or `T0412` for argument type mismatches.
 pub fn process_call_args(
     specs: &[ParamSpec],
     args: &[Value],
-) -> Result<(Vec<Value>, bool), JsonataError> {
+) -> Result<(Option<Vec<Value>>, bool), JsonataError> {
+    // Fast path: nothing to collapse and nothing to coerce — validate the
+    // originals in place and hand them back without cloning.
+    if !args.iter().any(|v| matches!(v, Value::Sequence(_))) {
+        let mut needs_coercion = false;
+        for (i, spec) in specs.iter().enumerate() {
+            if spec.variadic || i >= args.len() {
+                break;
+            }
+            // Nil propagation: undefined arg for a typed param → return undefined.
+            if args[i].is_undefined() && !arg_matches_types(&Value::Undefined, &spec.types) {
+                return Ok((None, true));
+            }
+            if needs_singleton_coercion(spec, &args[i]) {
+                needs_coercion = true;
+                break;
+            }
+        }
+        if !needs_coercion {
+            validate_call_args(specs, args)?;
+            return Ok((None, false));
+        }
+    }
+
     let mut coerced: Vec<Value> = args.to_vec();
 
     // Collapse any Sequence values before processing.
@@ -104,21 +129,26 @@ pub fn process_call_args(
 
         // Nil propagation: undefined arg for a typed param → return undefined.
         if coerced[i].is_undefined() && !arg_matches_types(&Value::Undefined, &spec.types) {
-            return Ok((Vec::new(), true));
+            return Ok((None, true));
         }
 
         // Singleton coercion: 'a' param with a non-array value → [arg].
-        if spec.types.contains(&b'a')
-            && !coerced[i].is_undefined()
-            && !arg_matches_types(&coerced[i], b"a")
-            && (spec.content_type == 0 || arg_matches_types(&coerced[i], &[spec.content_type]))
-        {
-            coerced[i] = Value::Array(Rc::from(vec![coerced[i].clone()]));
+        if needs_singleton_coercion(spec, &coerced[i]) {
+            let v = std::mem::replace(&mut coerced[i], Value::Undefined);
+            coerced[i] = Value::Array(Rc::from(vec![v]));
         }
     }
 
     validate_call_args(specs, &coerced)?;
-    Ok((coerced, false))
+    Ok((Some(coerced), false))
+}
+
+/// `'a'` param with a non-array value that satisfies the content type → `[arg]`.
+fn needs_singleton_coercion(spec: &ParamSpec, v: &Value) -> bool {
+    spec.types.contains(&b'a')
+        && !v.is_undefined()
+        && !arg_matches_types(v, b"a")
+        && (spec.content_type == 0 || arg_matches_types(v, &[spec.content_type]))
 }
 
 /// Validate arguments against parameter specs.
@@ -428,10 +458,26 @@ mod tests {
     fn singleton_coercion() {
         let specs = parse_signature("a<n>").unwrap();
         let (coerced, _) = process_call_args(&specs, &[Value::Number(42.0)]).unwrap();
+        let coerced = coerced.expect("coercion fired, args must be rebuilt");
         assert_eq!(
             coerced[0],
             Value::Array(Rc::from(vec![Value::Number(42.0)]))
         );
+    }
+
+    /// Args that already match pass through without a rebuilt Vec.
+    #[test]
+    fn matching_args_are_not_cloned() {
+        let specs = parse_signature("sn").unwrap();
+        let (coerced, return_undef) =
+            process_call_args(&specs, &[Value::String("hi".into()), Value::Number(1.0)]).unwrap();
+        assert!(coerced.is_none(), "no coercion → originals pass through");
+        assert!(!return_undef);
+        // An already-array arg for an 'a' param also stays borrowed.
+        let specs = parse_signature("a<n>").unwrap();
+        let arr = Value::Array(Rc::from(vec![Value::Number(1.0)]));
+        let (coerced, _) = process_call_args(&specs, &[arr]).unwrap();
+        assert!(coerced.is_none());
     }
 
     #[test]

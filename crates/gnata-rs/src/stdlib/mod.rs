@@ -176,11 +176,17 @@ fn bind_signed_builtin(
     signature: &str,
 ) {
     let func: Rc<BuiltinFn> = Rc::new(f);
+    // Registration signatures are static strings; a parse failure is a
+    // programming bug, not a runtime condition.
+    let specs = match crate::evaluator::parse_signature(signature) {
+        Ok(specs) => specs,
+        Err(e) => unreachable!("builtin ${name} has an invalid signature {signature:?}: {e}"),
+    };
     env.bind(
         name,
         Value::Function(Box::new(FunctionValue::SignedBuiltin {
             func,
-            signature: signature.into(),
+            signature: specs.into(),
         })),
     );
 }

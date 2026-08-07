@@ -34,9 +34,10 @@ pub enum FunctionValue {
     EnvAwareBuiltin(Rc<EnvAwareBuiltinFn>),
 
     /// Built-in with type signature for arity/type validation.
+    /// The signature is parsed once at registration, not per call.
     SignedBuiltin {
         func: Rc<BuiltinFn>,
-        signature: String,
+        signature: std::sync::Arc<[super::ParamSpec]>,
     },
 
     /// User-defined lambda (function expression).
@@ -52,7 +53,7 @@ impl fmt::Debug for FunctionValue {
             FunctionValue::Builtin(_) => write!(f, "Builtin(<fn>)"),
             FunctionValue::EnvAwareBuiltin(_) => write!(f, "EnvAwareBuiltin(<fn>)"),
             FunctionValue::SignedBuiltin { signature, .. } => {
-                write!(f, "SignedBuiltin({signature})")
+                write!(f, "SignedBuiltin({} params)", signature.len())
             }
             FunctionValue::Lambda(l) => write!(f, "Lambda({:?})", l.params),
             FunctionValue::Partial(_) => write!(f, "Partial(<fn>)"),
@@ -67,7 +68,8 @@ pub struct Lambda {
     pub body: NodeId,
     pub closure: Rc<Environment>,
     pub thunk: bool,
-    pub signature: String,
+    /// Parsed at compile time; `None` for an untyped lambda.
+    pub signature: Option<std::sync::Arc<[super::ParamSpec]>>,
     pub captured_focus: Value,
 }
 
@@ -151,12 +153,13 @@ pub fn eval_function(
     // Signature validation for SignedBuiltins at direct call site.
     // HOF callbacks bypass this (they go through call_function instead).
     if let FunctionValue::SignedBuiltin { signature, .. } = &*func {
-        let specs = super::parse_signature(signature)?;
-        let (coerced, return_undefined) = super::process_call_args(&specs, &args)?;
+        let (coerced, return_undefined) = super::process_call_args(signature, &args)?;
         if return_undefined {
             return Ok(Value::Undefined);
         }
-        args = coerced;
+        if let Some(coerced) = coerced {
+            args = coerced;
+        }
     }
 
     // Tail-call optimization: if this call is in tail position within a
@@ -175,14 +178,19 @@ pub fn eval_function(
 
 /// Evaluate a lambda expression node, creating a closure.
 pub fn eval_lambda(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Environment>) -> Value {
-    let (params, body, signature, thunk) = match arena.get(node) {
+    let (params, body, sig, thunk) = match arena.get(node) {
         Expr::Lambda {
             params,
             body,
             signature,
             thunk,
             ..
-        } => (params.clone(), *body, signature.clone(), *thunk),
+        } => (
+            params.clone(),
+            *body,
+            signature.as_ref().map(|s| std::sync::Arc::clone(&s.params)),
+            *thunk,
+        ),
         _ => unreachable!("eval_lambda called on non-Lambda node"),
     };
 
@@ -193,17 +201,6 @@ pub fn eval_lambda(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Envir
             _ => String::new(),
         })
         .collect();
-
-    let sig = signature
-        .map(|s| {
-            let r = s.raw.as_str();
-            // Strip outer <> brackets if present.
-            r.strip_prefix('<')
-                .and_then(|r| r.strip_suffix('>'))
-                .unwrap_or(r)
-                .to_string()
-        })
-        .unwrap_or_default();
 
     // The closure capture below can form an Rc cycle once the lambda is
     // bound into `env`'s scope chain; the API boundary breaks survivors.
@@ -354,14 +351,15 @@ pub fn call_function(
             }
             FunctionValue::Lambda(lambda) => {
                 // Lambda signature validation.
-                if !lambda.signature.is_empty() {
-                    let specs = super::parse_signature(&lambda.signature)?;
+                if let Some(specs) = &lambda.signature {
                     let (coerced, return_undefined) =
-                        super::process_call_args(&specs, &current_args)?;
+                        super::process_call_args(specs, &current_args)?;
                     if return_undefined {
                         return Ok(Value::Undefined);
                     }
-                    current_args = coerced;
+                    if let Some(coerced) = coerced {
+                        current_args = coerced;
+                    }
                 }
 
                 let depth = counter.depth.get() + 1;
