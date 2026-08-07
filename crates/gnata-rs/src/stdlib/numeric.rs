@@ -141,27 +141,83 @@ pub fn fn_round(args: &[Value], _focus: &Value) -> JsonataResult {
 }
 
 pub(crate) fn bankers_round(n: f64, scale: i32) -> f64 {
+    if scale >= 0 {
+        return bankers_round_decimal(n, scale.unsigned_abs() as usize);
+    }
+    // Negative scale: round to the nearest 10^|scale|. Mirrors Go
+    // (math.Pow-based) — extreme scales underflow the same way there
+    // and in jsonata-js (Math.pow(10, -400) is 0, giving NaN).
+    let mult = 10f64.powf(-f64::from(scale));
+    let scaled = n / mult;
+    bankers_round_decimal(scaled, 0) * mult
+}
+
+/// Round `n` to `places` decimal digits, half to even, working from the
+/// shortest decimal representation instead of scaling by a power of ten:
+/// scaling has IEEE 754 artifacts (4.525*100 is 452.50000000000006 and
+/// 0.5655*1000 is 565.4999999999999) and overflows for large scales
+/// ($round(1, 400) must be 1, not NaN). Port of Go's bankersRoundDecimal;
+/// Rust's `Display` matches Go's FormatFloat(n, 'f', -1, 64) — shortest
+/// round-trip digits, positional notation only.
+fn bankers_round_decimal(n: f64, places: usize) -> f64 {
     if !n.is_finite() {
         return n;
     }
-    let mult = 10f64.powi(scale);
-    let shifted = n * mult;
-    let truncated = shifted.trunc();
-    let remainder = (shifted - truncated).abs();
-
-    let rounded = if (remainder - 0.5).abs() < 1e-10 {
-        // Exactly 0.5: round to even.
-        if truncated as i64 % 2 == 0 {
-            truncated
-        } else {
-            truncated + shifted.signum()
-        }
-    } else if remainder > 0.5 {
-        truncated + shifted.signum()
+    let negative = n < 0.0;
+    let n_abs = n.abs();
+    let mut s = format!("{n_abs}");
+    let dot = if let Some(i) = s.find('.') {
+        i
     } else {
-        truncated
+        s.push('.');
+        s.len() - 1
     };
-    rounded / mult
+    let decimals = &s[dot + 1..];
+    // No digit at the rounding position — value is already at or below
+    // the requested precision.
+    if places >= decimals.len() {
+        return if negative { -n_abs } else { n_abs };
+    }
+    let round_digit = s.as_bytes()[dot + 1 + places] - b'0';
+
+    let truncated = if places == 0 {
+        &s[..dot]
+    } else {
+        &s[..dot + 1 + places]
+    };
+    let mut base: f64 = truncated.parse().unwrap_or(0.0);
+    let step = 10f64.powf(-(places as f64));
+
+    match round_digit.cmp(&5) {
+        std::cmp::Ordering::Less => {}
+        std::cmp::Ordering::Greater => base += step,
+        std::cmp::Ordering::Equal => {
+            // A non-zero digit after the 5 means this is not a tie.
+            let has_remainder = s.as_bytes()[dot + 2 + places..].iter().any(|&b| b != b'0');
+            if has_remainder {
+                base += step;
+            } else {
+                // Exact tie: round to even on the last kept digit.
+                let last_digit = if places == 0 {
+                    if dot > 0 {
+                        s.as_bytes()[dot - 1] - b'0'
+                    } else {
+                        0
+                    }
+                } else {
+                    s.as_bytes()[dot + places] - b'0'
+                };
+                if last_digit % 2 != 0 {
+                    base += step;
+                }
+            }
+        }
+    }
+
+    // Re-format at the target precision to strip float trailing error
+    // from the `+ step` additions (e.g. 12.000000000000002 → 12).
+    let result: f64 = format!("{base:.places$}").parse().unwrap_or(base);
+    if negative { -result } else { result }
 }
 
 pub fn fn_power(args: &[Value], _focus: &Value) -> JsonataResult {
@@ -367,6 +423,30 @@ mod tests {
     fn round_builtin_applies_scale_argument() {
         assert_eq!(num(fn_round(&[n(1.25), n(1.0)], U)), 1.2);
         assert_eq!(num(fn_round(&[n(2.5)], U)), 2.0);
+    }
+
+    /// Go-verified corner cases (2026-08-07): rounding works from the
+    /// shortest decimal string, so scaling artifacts and huge scales
+    /// cannot distort the result (gnata-nuo.5).
+    #[test]
+    fn round_string_based_corner_cases() {
+        // A hair above the tie must round up, not to even.
+        assert_eq!(bankers_round(2.500_000_000_01, 0), 3.0);
+        // IEEE scaling artifacts: 4.525*100 = 452.50000000000006 and
+        // 0.5655*1000 = 565.4999999999999 — both are true ties/round-ups
+        // in decimal.
+        assert_eq!(bankers_round(4.525, 2), 4.52);
+        assert_eq!(bankers_round(0.5655, 3), 0.566);
+        // Scales beyond f64's exponent range no longer overflow to NaN/Inf.
+        assert_eq!(bankers_round(1.0, 400), 1.0);
+        assert_eq!(bankers_round(1e300, 10), 1e300);
+        assert_eq!(bankers_round(1e-300, 2), 0.0);
+        // Step additions reformat cleanly: 11.99 + 0.01 is not 12.0 in f64.
+        assert_eq!(bankers_round(11.999_999_999_999_998, 2), 12.0);
+        // Negative scale keeps its Go/jsonata-js semantics, including the
+        // shared NaN underflow for absurd scales.
+        assert_eq!(bankers_round(123.456, -2), 100.0);
+        assert!(bankers_round(5.0, -400).is_nan());
     }
 
     #[test]
