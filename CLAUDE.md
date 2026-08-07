@@ -18,7 +18,7 @@ cargo clippy --release --all-targets   # gate: 121 warnings, 0 errors — do not
 cargo fmt --check                      # must stay clean
 cargo bench                            # criterion benches
 cargo check --target wasm32-unknown-unknown --no-default-features --features regex-lite
-../../scripts/build-wasm.sh            # optimized WASM build (run from repo root)
+../../scripts/build-wasm.sh            # optimized WASM build (cds to repo root itself)
 go test ./...                          # Go reference suite (repo root)
 ```
 
@@ -28,8 +28,9 @@ go test ./...                          # Go reference suite (repo root)
   by a hand-written Pratt parser; `process_ast` flattens `.` chains into paths
   and marks tail calls. `Expression` wraps the arena in an `Arc`: `Send + Sync`,
   cheap to clone — compile once, evaluate from any thread.
-- **`Value`**: 16-byte enum; the size is load-bearing (Rc-wrapping experiments
-  that grew it regressed benchmarks 12–40%). Strings are `CompactString` (inline
+- **`Value`**: compact 32-byte enum (`assert!(size <= 32)` in `value.rs`); the
+  size is load-bearing (Rc-wrapping experiments that grew it regressed
+  benchmarks 12–40%). Strings are `CompactString` (inline
   ≤24 bytes; beat `Rc<str>` on cache locality in A/B tests), arrays/objects are
   `Rc<[Value]>` / `Rc<ObjectMap>` with copy-on-write via `Rc::make_mut`,
   functions are `Box<FunctionValue>`. Deliberately `!Send`: share the
@@ -51,15 +52,18 @@ go test ./...                          # Go reference suite (repo root)
   They must be semantics-preserving: `tests/differential.rs` and the fuzz
   targets compare them against the general path. When a pattern is ambiguous,
   don't lift it.
-- **JSON**: simd-json parses input; serde_json (`arbitrary_precision` +
-  `preserve_order`) serializes output; `ryu-js` gives exact ECMAScript
-  `Number.toString()`. indexmap keeps object key order.
+- **JSON**: simd-json parses input; a hand-rolled `write_json` emits compact
+  output; serde_json (`arbitrary_precision` + `preserve_order`) is used only
+  for pretty-printing and `serde_json::Value` interop; `ryu-js` gives exact
+  ECMAScript `Number.toString()`. indexmap keeps object key order.
 - **Datetime / encodings**: hand-rolled calendar math (no jiff/chrono);
   base64 and percent-encoding crates for the encoding builtins.
-- **Regex**: `regex` (default) or `regex-lite` (small WASM builds) — enable
-  exactly one; both are finite-automaton, no backtracking.
+- **Regex**: `regex` (default) or `regex-lite` (small WASM builds) — at least
+  one must be enabled (neither is a `compile_error!`); if both are, `regex`
+  wins. Both are finite-automaton, no backtracking.
 - **Public API**: the curated re-exports in `lib.rs`; all modules are
-  `pub(crate)`. The `#[doc(hidden)]` re-exports exist for in-repo
+  `pub(crate)` except `wasm`, which stays public on wasm32 as the
+  wasm-bindgen surface. The `#[doc(hidden)]` re-exports exist for in-repo
   tests/benches/fuzz only and carry no stability guarantee.
 
 ## Behavioral invariants (DO NOT VIOLATE)

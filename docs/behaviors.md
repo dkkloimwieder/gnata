@@ -80,8 +80,6 @@ Source: `internal/evaluator/eval_helpers.go:27-49`
 | `5e-7` | float64 | `"0.0000005"` | decimal (>= 5e-7) |
 | `NaN` | float64 | `"null"` | |
 | `Inf` | float64 | `"null"` | |
-| `json.Number("123")` | json.Number | `"123"` | verbatim (no float conversion) |
-| `json.Number("1e5")` | json.Number | `"100000"` | converts via float (has e/E) |
 | `true` | bool | `"true"` | |
 | `false` | bool | `"false"` | |
 | `Null` | null | `"null"` | JSON marshaled |
@@ -103,7 +101,9 @@ Must match JavaScript's `Number.toString()` exactly. Rules:
 | `abs(n) >= 1e21` | scientific | `1e21` -> `"1e+21"` |
 | scientific exponent | cleaned | `"1e+21"` (no leading zeros in exponent) |
 
-`FormatNumber` for `json.Number`: only converts to float64 when the raw string contains `e` or `E`. Plain integers and decimals are returned **verbatim** to preserve precision for values beyond 2^53.
+Numbers have a **single** representation, `Value::Number(f64)` (`crates/gnata-rs/src/value.rs:82`). JSON input is converted to f64 at parse time (`Value::from_json`, `value.rs:464-467`), so integers beyond 2^53 are not preserved verbatim -- extra digits are lost on ingest. Output goes through `ryu-js` (`value.rs:521-528`) and `&`/`$string` coercion through `format_float` (`value.rs:399-401`).
+
+*Go reference:* the Go engine kept a second numeric type, `json.Number`, whose `FormatNumber` returned plain integers and decimals **verbatim** (converting to float64 only when the raw string contained `e` or `E`) to preserve precision beyond 2^53. That path was deliberately not ported.
 
 ---
 
@@ -163,7 +163,7 @@ Must match JavaScript's `Number.toString()` exactly. Rules:
 | D1009 | Duplicate key in object/group construction | Duplicate key |
 | D2014 | Range exceeds 10M elements | Range too large |
 | D3001 | Modulo by zero | Modulo by zero |
-| D3010 | Array size exceeded (10M in $append) | Array too large |
+| D3010 | `$replace` empty pattern; invalid regex argument to `$contains`/`$split`; malformed `$base64decode` input | Pattern cannot be empty / invalid regex / bad base64 |
 | D3030 | `$number` cannot cast value | Cannot cast to number |
 | D3060 | `$sqrt` of negative number | Negative square root |
 | D3061 | `$power` result non-finite | Power result non-finite |
@@ -298,7 +298,7 @@ Source: `internal/evaluator/eval_range.go`
 - Both operands must be integers (T2003/T2004 if not)
 - Max 10,000,000 elements (D2014)
 - `1..5` produces `[1, 2, 3, 4, 5]` (inclusive both ends)
-- `5..1` produces `[5, 4, 3, 2, 1]` (descending)
+- `5..1` produces nothing (undefined); wrapped in an array constructor, `[5..1]` evaluates to `[]`. The range operator never counts down.
 
 ---
 
@@ -387,14 +387,13 @@ Result: [1, 2, 3]
 
 ### 6.2 Wildcard on Array
 
-Wildcards on arrays recurse into **map elements only**:
+Wildcards on arrays recurse into map elements; non-map items are appended as-is if non-nil:
 ```
 Input: [{"a": 1}, {"b": 2}, 3]
 Expression: *
-Result: [1, 2]  (scalar 3 skipped on recursion, but kept if non-map)
+Result: [1, 2, 3]
 ```
 
-Actually: non-map items are appended as-is if non-nil:
 ```
 Input: [{"a": 1}, 3]
 Expression: *

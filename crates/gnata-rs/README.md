@@ -54,11 +54,12 @@ evaluation, and more.
 | Feature | Default | Purpose |
 |---|---|---|
 | `regex` | yes | Full Unicode regex backend (RE2 semantics, no backtracking) |
-| `regex-lite` | no | Lighter regex backend; shrinks WASM builds by ~250 KB |
-| `mimalloc-alloc` | yes | mimalloc as the global allocator on native targets |
+| `regex-lite` | no | Lighter regex backend; shrinks WASM builds by ~700 KB (1.3 MB → 579 KB in this repo's build) |
+| `mimalloc-alloc` | yes | Links mimalloc and sets it as the global allocator in the bundled `gnata-bench` binary; a library cannot set a consumer's allocator |
 
-Exactly one regex backend must be enabled. To use `regex-lite`, disable
-default features and re-enable what you need:
+At least one regex backend must be enabled; if both are, `regex` takes
+precedence. To use `regex-lite`, disable default features and re-enable what
+you need:
 
 ```toml
 gnata = { version = "0.1", default-features = false, features = ["regex-lite", "mimalloc-alloc"] }

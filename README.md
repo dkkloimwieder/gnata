@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  A full JSONata 2.x implementation in Go, built for production streaming workloads.
+  A full JSONata 2.x engine — Rust core, with the original Go implementation as the behavioral reference and streaming tier.
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#streaming-api">Streaming API</a> &middot;
   <a href="#metrics--observability">Metrics</a> &middot;
-  <a href="#performance">Performance</a> &middot;
+  <a href="#performance-go-implementation">Performance</a> &middot;
   <a href="#jsonata-compatibility">Compatibility</a> &middot;
   <a href="#wasm">WASM Playground</a> &middot;
   <a href="CONTRIBUTING.md">Contributing</a> &middot;
@@ -33,21 +33,29 @@
 
 ## What is gnata?
 
-[JSONata](https://jsonata.org) is a lightweight query and transformation language for JSON data — think "jq meets XPath with lambda functions." gnata brings the full JSONata 2.x specification to Go, with a production-grade streaming tier designed for evaluating thousands of expressions against millions of events per day with zero contention.
+[JSONata](https://jsonata.org) is a lightweight query and transformation language for JSON data — think "jq meets XPath with lambda functions." gnata implements the full JSONata 2.x specification twice over:
+
+- **Rust** — the production implementation, the crate in [`crates/gnata-rs`](crates/gnata-rs/README.md) (crate name `gnata`). Start there for library use, benchmarks, and the supported WASM build.
+- **Go** — the original implementation, in this repo root. It is kept as the behavioral reference and as the streaming tier: a production-grade `StreamEvaluator` designed for evaluating thousands of expressions against millions of events per day with zero contention.
+
+The rest of this README documents the Go module; see [`crates/gnata-rs/README.md`](crates/gnata-rs/README.md) for the Rust API.
 
 ## Features
 
 - **Full JSONata 2.x** — path navigation, wildcards, descendants, predicates, sorting, grouping, lambdas, closures, higher-order functions, transforms, regex, and the complete 50+ function standard library.
+- **1,733 test cases** (1,349 case files across 112 groups) — ported from the official jsonata-js test suite (0 failures, 0 skips).
+- **Linear-time regex** — a finite-automaton engine on both sides (Go's `regexp`/RE2; the `regex` / `regex-lite` crates in Rust) for guaranteed linear-time matching with no timeouts or backtracking.
+- **WASM support** — compile to WebAssembly for an in-browser playground. See [WASM](#wasm).
+
+### Go implementation
+
 - **Two-tier evaluation** — simple expressions use a zero-copy fast path (GJSON); complex expressions fall back to a full AST evaluator.
 - **Lock-free streaming** — `StreamEvaluator` batches multiple expressions per event with schema-keyed plan caching. After warm-up, the hot path uses only atomic loads — no mutexes, no RWLocks, no channels.
 - **Zero allocations** — simple field comparisons like `user.email = "admin@co.com"` evaluate with **0 heap allocations** via GJSON zero-copy string views.
 - **Bounded memory** — schema plan cache uses a FIFO ring-buffer with configurable capacity (`WithMaxCachedSchemas`), evicting the oldest entry on overflow.
 - **Context-aware** — all evaluation methods accept `context.Context` for cancellation and timeouts. Long-running expressions check context at loop boundaries.
-- **Linear-time regex** — uses Go's standard `regexp` (RE2 engine) for guaranteed linear-time matching with no timeouts or backtracking.
-- **1,778 test cases** — ported from the official jsonata-js test suite (0 failures, 0 skips).
 - **One dependency** — [`tidwall/gjson`](https://github.com/tidwall/gjson) for fast-path byte-level field extraction.
 - **~13K lines of Go** — complete implementation with no code generation.
-- **WASM support** — compile to WebAssembly for an in-browser playground.
 
 ## Quick Start
 
@@ -236,9 +244,11 @@ The `StreamEvaluator` accepts an optional `MetricsHook` (via `WithMetricsHook`) 
 
 For point-in-time cache stats without a hook, use `se.Stats()` which returns hit/miss/entry/eviction counts.
 
-## Performance
+## Performance (Go implementation)
 
-All benchmarks on Apple M4 Pro. gnata is compared against the reference [jsonata-js](https://github.com/jsonata-js/jsonata) implementation running in Node.js. The **JSONata (eval)** column estimates pure evaluation time by subtracting RPC overhead from the total; entries showing `< 1 us` mean the expression evaluated faster than the measurement floor.
+Every number below comes from the Go microbenchmarks (`bench_test.go`) on Apple M4 Pro, compared against the reference [jsonata-js](https://github.com/jsonata-js/jsonata) implementation running in Node.js. The **JSONata (eval)** column estimates pure evaluation time by subtracting RPC overhead from the total; entries showing `< 1 us` mean the expression evaluated faster than the measurement floor.
+
+For the Rust engine and the cross-language comparison (Go / Rust / WASI / jsonata-js / jsonata-core), see [`bench/benchmark_results.csv`](bench/benchmark_results.csv) and [`crates/gnata-rs/README.md`](crates/gnata-rs/README.md).
 
 ### Fast Path (GJSON zero-copy)
 
@@ -260,7 +270,7 @@ Fast-path expressions typically achieve **0-2 allocations** and **0-40 bytes** p
 
 Expressions calling a supported built-in function on a pure path (e.g. `$exists(a.b)`, `$lowercase(name)`, `$contains(path, "literal")`) are classified at compile time. At runtime, the field is extracted with a single `gjson.GetBytes` call and the function is applied directly — no `json.Unmarshal`, no AST walk.
 
-Supported functions (21): `$exists`, `$contains`, `$string`, `$boolean`, `$number`, `$keys`, `$distinct`, `$not`, `$lowercase`, `$uppercase`, `$trim`, `$length`, `$type`, `$abs`, `$floor`, `$ceil`, `$sqrt`, `$count`, `$reverse`, `$sum`, `$max`, `$min`, `$average`.
+Supported functions (23): `$exists`, `$contains`, `$string`, `$boolean`, `$number`, `$keys`, `$distinct`, `$not`, `$lowercase`, `$uppercase`, `$trim`, `$length`, `$type`, `$abs`, `$floor`, `$ceil`, `$sqrt`, `$count`, `$reverse`, `$sum`, `$max`, `$min`, `$average`.
 
 ### Boolean Logic
 
@@ -366,7 +376,7 @@ Supported functions (21): `$exists`, `$contains`, `$string`, `$boolean`, `$numbe
 
 ## JSONata Compatibility
 
-gnata targets full compatibility with [JSONata 2.x](https://docs.jsonata.org), validated against **1,778 test cases** from the official [jsonata-js test suite](https://github.com/jsonata-js/jsonata/tree/master/test/test-suite) — **0 failures, 0 skips**.
+gnata targets full compatibility with [JSONata 2.x](https://docs.jsonata.org), validated against **1,733 test cases** (1,349 case files across 112 groups) from the official [jsonata-js test suite](https://github.com/jsonata-js/jsonata/tree/master/test/test-suite) — **0 failures, 0 skips**.
 
 ### Supported Features
 
@@ -398,14 +408,14 @@ gnata targets exact parity with the JSONata reference implementation ([jsonata-j
 
 | # | Area | gnata | jsonata-js | Notes |
 |---|------|-------|------------|-------|
-| 1 | **Large integer precision** | `"123456789012345678"` (exact) | `"123456789012345680"` (float64 rounding) | Go's `json.Number` preserves full precision; JS loses it beyond 2^53. Compare with relative tolerance ~1e-12. |
+| 1 | **Large integer precision** | Go engine: `"123456789012345678"` (exact)<br>Rust engine: `"123456789012345680"` | `"123456789012345680"` (float64 rounding) | Go's `json.Number` preserves full precision; JS loses it beyond 2^53. The Rust engine stores every number as an `f64`, so it rounds exactly like jsonata-js. Compare with relative tolerance ~1e-12. |
 | 2 | **Null placeholders in auto-mapping** | `["ext1", "ext2"]` | `[null, "ext1", "ext2"]` | jsonata-js inserts `null` for groups with no predicate match. gnata omits them per spec. Strip `null` entries when comparing. |
 
-## Regex Engine: RE2 vs JavaScript RegExp
+## Regex Engine: Finite Automata vs JavaScript RegExp
 
-The JSONata specification inherits JavaScript's `RegExp` engine (ECMA-262), which uses backtracking and supports lookahead, lookbehind, and backreferences. gnata uses Go's `regexp` package, which implements [RE2](https://github.com/google/re2) — a linear-time regex engine that guarantees O(n) matching regardless of pattern complexity.
+The JSONata specification inherits JavaScript's `RegExp` engine (ECMA-262), which uses backtracking and supports lookahead, lookbehind, and backreferences. gnata uses a finite-automaton regex engine — Go's `regexp` package ([RE2](https://github.com/google/re2)) in the Go implementation, the [`regex`](https://docs.rs/regex) / [`regex-lite`](https://docs.rs/regex-lite) crates in the Rust implementation — which guarantees O(n) matching regardless of pattern complexity.
 
-This is a **deliberate architectural choice**. RE2 makes [ReDoS](https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS) structurally impossible, which matters when evaluating untrusted or user-authored expressions at scale.
+This is a **deliberate architectural choice**. A non-backtracking engine makes [ReDoS](https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS) structurally impossible, which matters when evaluating untrusted or user-authored expressions at scale.
 
 The following JavaScript RegExp features are **not supported** in gnata:
 
@@ -424,6 +434,7 @@ gnata/
 ├── gnata.go                     # Public API: Compile, Eval, EvalBytes, EvalWithVars, CustomFunc
 ├── stream.go                    # StreamEvaluator, GroupPlan, EvalMany, EvalMap, MetricsHook
 ├── bounded_cache.go             # Lock-free FIFO ring-buffer plan cache
+├── func_fast.go                 # Function fast-path handlers
 ├── deep_equal.go                # JSONata-compatible deep equality
 ├── internal/
 │   ├── lexer/                   # Tokenizer (all JSONata 2.x token types)
@@ -451,12 +462,23 @@ gnata/
 │   ├── datetime_funcs.go        # $now, $millis, $fromMillis, $toMillis
 │   ├── datetime_format.go       #   Datetime formatting (picture strings)
 │   └── datetime_parse.go        #   Datetime parsing (picture strings)
-├── testdata/                    # 1,298 test files from jsonata-js
-├── wasm/                        # WASM entry point for browser playground
+├── crates/gnata-rs/             # Rust engine (production implementation)
+│   ├── src/                     #   Lexer, parser, evaluator, stdlib, fast paths
+│   ├── tests/                   #   Conformance, differential, unit tests
+│   ├── benches/                 #   Criterion benchmarks
+│   ├── examples/                #   Usage examples
+│   └── fuzz/                    #   Fuzz targets
+├── scripts/                     # build-wasm.sh, build-npm.sh
+├── pkg/                         # wasm-bindgen output (gnata_bg.wasm)
+├── npm/                         # gnata-js package
+├── bench/                       # Cross-language benchmark suite
+├── docs/                        # spec.md, behaviors.md, migration notes
+├── testdata/                    # 1,349 case files (112 groups) + 28 shared datasets
+├── wasm/                        # Go WASM entry point for browser playground
 └── assets/                      # Project logo
 ```
 
-## Dependencies
+## Dependencies (Go implementation)
 
 | Package | Purpose |
 |---|---|
@@ -465,9 +487,21 @@ gnata/
 
 One external dependency. Pure Go with no CGo or system library requirements.
 
+The Rust engine's dependencies are listed in [`crates/gnata-rs/Cargo.toml`](crates/gnata-rs/Cargo.toml).
+
 ## WASM
 
-gnata compiles to WebAssembly for use in browsers:
+gnata compiles to WebAssembly for use in browsers. The supported build is the Rust/wasm-bindgen one:
+
+```bash
+./scripts/build-wasm.sh
+```
+
+This runs `wasm-pack` against `crates/gnata-rs` (with the `regex-lite` feature in place of `regex`, which keeps the binary ~700 KB smaller — 1.3 MB → 579 KB in this repo's build) followed by `wasm-opt -O3`, and writes `pkg/gnata_bg.wasm` — ~820 KB, before any transport compression.
+
+### Go WASM build (playground / gnata-js npm package)
+
+The Go implementation also compiles to WebAssembly, and is what the bundled playground and the `gnata-js` npm package use:
 
 ```bash
 GOOS=js GOARCH=wasm go build -ldflags="-s -w" -trimpath -o gnata.wasm ./wasm/
@@ -485,7 +519,7 @@ python3 -m http.server 8899
 caddy file-server --root . --listen :8899
 ```
 
-The WASM build exposes `gnataEval`, `gnataCompile`, and `gnataEvalHandle` functions for use from JavaScript, with a compiled-expression cache for repeated evaluations. A ready-made `playground.html` is included — build the WASM binary, copy the Go WASM support file, and serve the directory:
+The Go WASM build exposes `_gnataEval`, `_gnataCompile`, `_gnataEvalHandle`, and `_gnataReleaseHandle` on `globalThis` (`playground.html` wraps them as `gnataEval`/`gnataCompile`/`gnataEvalHandle`), with a compiled-expression cache for repeated evaluations. A ready-made `playground.html` is included — build the WASM binary, copy the Go WASM support file, and serve the directory:
 
 ```bash
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .

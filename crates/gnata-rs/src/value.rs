@@ -57,7 +57,7 @@ impl std::fmt::Display for CompareOp {
 /// that dominated the profile (62% of CPU was malloc/free/clone/drop).
 ///
 /// `Value` is deliberately **`!Send`**: `Rc` (not `Arc`) keeps clone and
-/// drop free of atomic operations, and keeps the enum at exactly 16 bytes —
+/// drop free of atomic operations, and keeps the enum at 32 bytes —
 /// both measured as load-bearing for evaluation throughput. Share a compiled
 /// [`Expression`](crate::Expression) across threads (it is `Send + Sync`)
 /// and let each thread parse or build its own input `Value`.
@@ -87,12 +87,12 @@ pub enum Value {
     Object(Rc<ObjectMap>),
     /// Internal sequence used during evaluation. Collapsed at the public
     /// API boundary — user code never observes this variant.
-    /// Boxed to keep Value at 16 bytes (same as Go's interface{}).
+    /// Boxed to keep Value from growing beyond 32 bytes.
     #[doc(hidden)]
     #[non_exhaustive]
     Sequence(Box<Sequence>),
     /// Function value (built-in, lambda, partial application).
-    /// Boxed to keep Value at 16 bytes.
+    /// Boxed to keep Value from growing beyond 32 bytes.
     #[doc(hidden)]
     #[non_exhaustive]
     Function(Box<crate::evaluator::FunctionValue>),

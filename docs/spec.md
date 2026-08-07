@@ -4,7 +4,7 @@ This is the authoritative behavioral reference for the gnata JSONata 2.x engine,
 
 **Source repository:** github.com/recolabs/gnata
 **Language:** Go 1.25.6
-**Test suite:** 1,349 cases (1,283 conformance + 66 supplemental)
+**Test suite:** 1,733 cases across 1,349 JSON files in `testdata/groups/` (112 groups); the Rust harness gates on >=1,700 passing (`crates/gnata-rs/tests/conformance.rs`)
 
 ---
 
@@ -19,7 +19,7 @@ The gnata evaluator represents all JSONata values as Go `any` (empty interface).
 | Undefined | `nil` | Go nil; represents absence of a value |
 | Null | `jsonNullType{}` (singleton `Null`) | Distinct from undefined (`nil`); see Section 1.2 |
 | Boolean | `bool` | `true` or `false` |
-| Number | `float64` or `json.Number` | Dual representation; see Section 1.4 |
+| Number | `float64` or `json.Number` | Dual representation in Go; the Rust port uses a single f64 -- see Section 1.4 |
 | String | `string` | Go string (UTF-8) |
 | Array | `[]any` | Plain Go slice; collapsed from `*Sequence` |
 | Object | `*OrderedMap` or `map[string]any` | Input data may be `map[string]any`; expressions produce `*OrderedMap`; see Section 1.9 |
@@ -89,9 +89,11 @@ type Sequence struct {
 - `*Sequence` → recursively append each element (flattens nested sequences)
 - Anything else → append directly to `seq.Values`
 
-## 1.4 Number Handling: Dual Representation
+## 1.4 Number Handling: Single f64 Representation
 
-Numbers have two Go representations:
+**Rust port (shipped behavior).** Numbers are `Value::Number(f64)` only -- there is no second numeric variant (`crates/gnata-rs/src/value.rs:82`). JSON input is converted to f64 at parse time (`Value::from_json`, `value.rs:464-467`, via `n.as_f64()`), so integers beyond 2^53 are **not** preserved verbatim; digits past that limit are lost on ingest. JSON output re-renders through `ryu-js` (`value.rs:521-528`) and `&`/`$string` coercion goes through `format_float` (`value.rs:399-401`). The Go `json.Number` verbatim-precision path was deliberately not ported, and `FormatNumber` has no Rust counterpart.
+
+**Go reference implementation.** Numbers have two Go representations:
 
 1. **`float64`**: Used for computed values and literal numbers in AST.
 2. **`json.Number`**: Used for numbers decoded from JSON input via `DecodeJSON` (which calls `dec.UseNumber()`). Preserves the original string form for precision beyond float64's 2^53 limit.
@@ -106,7 +108,7 @@ Numbers have two Go representations:
 
 **`normalizeNumber(v any) any`** (value.go line 179): Converts `json.Number` to `float64` for comparison purposes.
 
-### FormatFloat and FormatNumber
+### FormatFloat and FormatNumber (Go reference)
 
 Must match JavaScript's `Number.toString()` behavior.
 
@@ -247,10 +249,10 @@ type Lambda struct {
 | 60 | `**` `*` `/` `%` |
 | 50 | `+` `-` `&` |
 | 45 | `~>` |
-| 40 | `=` `!=` `<` `>` `<=` `>=` `in` `^` `?:` `??` |
+| 40 | `=` `!=` `<` `>` `<=` `>=` `in` `^` |
 | 30 | `and` |
 | 25 | `or` |
-| 20 | `..` `|` `?` |
+| 20 | `..` `|` `?` `?:` `??` |
 | 10 | `:=` |
 | 0 | all others (separators, delimiters, EOF, NUD-only tokens) |
 
@@ -371,7 +373,7 @@ Key transformations:
 Three classifiers checked in order:
 1. **Pure path**: Simple dotted field navigation → GJSON path
 2. **Comparison**: `<pure-path> = <literal>` → ComparisonFastPath
-3. **Function**: `$func(<pure-path>)` → FuncFastPath (23 supported functions, excluding `$round`)
+3. **Function**: `$func(<pure-path>)` → FuncFastPath (23 supported functions in Go; the Rust port covers 26 kinds -- see Section 6.5. `$round` excluded in both)
 
 GJSON name escaping: `@`-prefix names excluded entirely; names with special chars backtick-escaped.
 
@@ -379,7 +381,7 @@ GJSON name escaping: `@`-prefix names excluded entirely; names with special char
 
 **Source:** `internal/parser/signature.go`
 
-Format: `<params:returnType>`. Type specifiers: `b`(bool), `n`(num), `s`(str), `l`(lambda), `a`(array), `o`(obj), `f`(func), `j`(JSON), `x`(any). Modifiers: `?`(optional), `+`(variadic), `-`(separator). Content types: `a<n>` (array of numbers). Union types: `(sn)`.
+Format: `<params:returnType>`. Type specifiers: `b`(bool), `n`(num), `s`(str), `l`(null), `a`(array), `o`(obj), `f`(func), `j`(JSON), `x`(any). Modifiers: `?`(optional), `+`(variadic), `-`(separator). Content types: `a<n>` (array of numbers). Union types: `(sn)`.
 
 ---
 
@@ -471,7 +473,7 @@ Used by the `&` concatenation operator:
 
 Matches JavaScript `Number.toString()`:
 - Numbers between `5e-7` and `1e21` (exclusive): decimal notation via `strconv.FormatFloat('g', 15, 64)`
-- Numbers outside that range: scientific notation `e` with cleaned exponents (no leading zeros, no `+` sign for positive exponents)
+- Numbers outside that range: scientific notation with cleaned exponents -- leading zeros stripped, sign always present (`1e+21`, `1e-7`)
 - `NaN` / `Inf` -> `"null"`
 
 ### 4.2.7 `compareValues` -- Relational Operators (line 104)
@@ -1091,6 +1093,8 @@ Walks specs and args in parallel:
 
 # Section 5: Standard Library Specification
 
+**Missing-argument errors (Rust port).** The Rust port raises **T0410** for a call with too few arguments, *except* `$not`, `$eval`, `$match`, `$formatNumber`, `$formatInteger` and `$parseInteger`, which raise **D3006**. `$boolean()` with no arguments does not error at all -- it falls back to the focus (arity is deliberately unenforced so HOF callbacks such as `$filter($boolean)`, which pass `value, index, array`, keep working). No conformance case exercises D3006, so nothing pins the Go codes; the per-function bullets below give the shipped Rust code.
+
 ## 5.1 Registration (`functions/register.go`)
 
 ### 5.1.1 Function Types
@@ -1148,7 +1152,7 @@ For builtins: always `[]any{value}` only.
 ### 5.2.3 `$substring` (`string_funcs.go:145`)
 
 - **Parameters**: `(string, start [, length])` -- 2 or 3 args.
-- **<2 args**: **D3006**.
+- **<2 args**: **T0410** (Go reference: D3006).
 - **>3 args**: **T0410**.
 - **nil first arg**: undefined propagation.
 - **start**: float64, negative values count from end (clamped to 0).
@@ -1187,9 +1191,9 @@ For builtins: always `[]any{value}` only.
 ### 5.2.8 `$pad` (`string_funcs.go:300`)
 
 - **Parameters**: `(string, width [, char])` -- 2 or 3 args.
-- **<2 args**: **D3006**.
+- **<2 args**: **T0410** (Go reference: D3006).
 - **nil first arg**: undefined propagation.
-- **width**: positive = right-pad, negative = left-pad. Max absolute width: 10,000 (**D3010** if exceeded).
+- **width**: positive = right-pad, negative = left-pad. No width cap in the Rust port (`crates/gnata-rs/src/stdlib/string_funcs.rs:272-317` allocates whatever is asked for). Go reference: `|width| > 10,000` is rejected with **D3010**.
 - **char**: padding character string (default `" "`). Empty string treated as `" "`. Repeats cyclically for multi-char pad strings.
 - **Operates on runes** (Unicode-aware).
 
@@ -1200,7 +1204,7 @@ For builtins: always `[]any{value}` only.
 - **Array auto-mapping**: If first arg is array, maps `$contains` over string elements; returns true if any match.
 - **String pattern**: `strings.Contains`.
 - **Regex pattern** (map with `pattern` key): Compiles regex, tests via `MatchString`.
-- **Error codes**: T0410, D3006, D3137.
+- **Error codes**: T0410 (bad arity/types), D3010 (invalid regex argument).
 
 ### 5.2.10 `$split` (`string_funcs.go:418`)
 
@@ -1304,7 +1308,7 @@ For builtins: always `[]any{value}` only.
 ### 5.2.21 `$formatBase` (`string_format_integer.go:16`)
 
 - **Parameters**: `(number [, radix])`.
-- **<1 arg**: **D3006**.
+- **<1 arg**: **T0410** (Go reference: D3006).
 - **nil**: undefined propagation.
 - **radix**: 2-36, default 10. Out of range: **D3100**.
 - **Returns**: `strconv.FormatInt(int64(math.Round(n)), base)`.
@@ -1438,9 +1442,9 @@ For builtins: always `[]any{value}` only.
 ### 5.4.2 `$append` (`array_funcs.go:31`)
 
 - **Parameters**: `(array1, array2)`.
-- **<2 args**: **D3006**.
+- **<2 args**: **T0410** (Go reference: D3006).
 - **nil arg**: Returns the other arg unchanged.
-- **Max result size**: 10,000,000 (**D3010**).
+- **Max result size**: no cap in the Rust port (`crates/gnata-rs/src/stdlib/array.rs:24-46`). Go reference: results over 10,000,000 elements raise **D3010**.
 - **Returns**: Concatenation of both arrays (wrapped via `wrapArray`).
 
 ### 5.4.3 `$sort` (`array_funcs.go:83`) -- EnvAwareBuiltin
@@ -1531,7 +1535,7 @@ For builtins: always `[]any{value}` only.
 ### 5.5.5 `$lookup` (`object_funcs.go:278`)
 
 - **Parameters**: `(object, key)`.
-- **<2 args**: **D3006**.
+- **<2 args**: **T0410** (Go reference: D3006).
 - **nil args**: undefined propagation.
 - **Non-string key**: **T0410**.
 - **Map input**: Returns value for key, or nil if not found.
@@ -1548,7 +1552,7 @@ For builtins: always `[]any{value}` only.
 ### 5.5.7 `$sift` (`object_funcs.go:179`) -- EnvAwareBuiltin
 
 - **Parameters**: `(object, function)` or `(function)` with focus.
-- **0 args**: **D3006**.
+- **0 args**: **T0410** (Go reference: D3006).
 - **nil object**: undefined propagation.
 - **Non-map**: **T0410**.
 - **Callback arity** (`siftArgs`, line 161): Lambda param count determines args:
@@ -1561,7 +1565,7 @@ For builtins: always `[]any{value}` only.
 ### 5.5.8 `$each` (`object_funcs.go:222`) -- EnvAwareBuiltin
 
 - **Parameters**: `(object, function)` or `(function)` with focus.
-- **0 args**: **D3006**.
+- **0 args**: **T0410** (Go reference: D3006).
 - **nil object**: undefined propagation.
 - **Non-map**: **T0410**.
 - **Callback**: Called with `(value, key)` for each entry.
@@ -1574,7 +1578,7 @@ For builtins: always `[]any{value}` only.
 ### 5.6.1 `$map` (`hof_funcs.go:35`) -- EnvAwareBuiltin
 
 - **Parameters**: `(array, function)` or `(function)` with focus.
-- **0 args**: **D3006**.
+- **0 args**: **T0410** (Go reference: D3006).
 - **1 arg function**: Uses focus as array.
 - **nil array (2-arg form)**: undefined propagation.
 - **nil array (1-arg focus form)**: **T0410** ("array argument is undefined").
@@ -1599,7 +1603,7 @@ For builtins: always `[]any{value}` only.
 ### 5.6.4 `$reduce` (`hof_funcs.go:176`) -- EnvAwareBuiltin
 
 - **Parameters**: `(array, function [, init])` or `(function)` with focus.
-- **0 args**: **D3006**.
+- **0 args**: **T0410** (Go reference: D3006).
 - **nil array**: undefined propagation.
 - **Lambda with <2 params**: **D3050** ("must have arity of at least 2").
 - **Empty array with init**: Returns init.
@@ -1617,9 +1621,9 @@ For builtins: always `[]any{value}` only.
 
 ### 5.7.1 `$boolean` (`boolean_funcs.go:7`)
 
-- **Parameters**: `(value)` -- exactly 1 arg.
-- **0 args**: **D3006**.
-- **>1 args**: **T0410**.
+- **Parameters**: `(value)` -- nominally 1 arg.
+- **0 args**: no error -- uses the focus (`crates/gnata-rs/src/stdlib/boolean.rs:10-17`). Go reference: **D3006**.
+- **>1 args**: no error -- extra arguments are ignored. Arity is deliberately unenforced so HOF callbacks such as `$filter($boolean)`, which pass `(value, index, array)`, keep working. Go reference: **T0410**.
 - **nil**: undefined propagation.
 - **Returns**: `ToBoolean(args[0])` -- see Section 4.2.10 for coercion rules.
 
@@ -1644,7 +1648,7 @@ For builtins: always `[]any{value}` only.
 ### 5.8.1 `$now` (`datetime_funcs.go:10`)
 
 - **Parameters**: `([picture [, timezone]])`.
-- **0 args**: Returns RFC 3339 Nano timestamp string (UTC).
+- **0 args**: Returns an ISO 8601 UTC timestamp with milliseconds, `YYYY-MM-DDTHH:MM:SS.sssZ` (JSONata-spec format). Go reference: RFC 3339 Nano.
 - **With picture**: Formats current time using XPath picture string.
 - **Non-string picture**: **T0410**.
 - **timezone**: Named timezone or numeric offset (e.g., `"+05:30"`, `"America/New_York"`).
@@ -1774,6 +1778,12 @@ For builtins: always `[]any{value}` only.
 
 # Section 6: Fast-Path System
 
+> **Go reference implementation.** The struct layouts, the GJSON tiering in 6.3-6.4 and the API table in 6.6 describe the Go engine. The Rust port keeps the same three-way classification (pure path / comparison / function, `fast_path::analyze`) but not the machinery below.
+>
+> **Rust port (shipped behavior).** There is no GJSON tier -- the crate has no GJSON-equivalent dependency. Fast paths run either over a raw JSON byte tape (`fast_path::eval_tape_path`, `crates/gnata-rs/src/fast_path.rs:843`) or over an already-built `Value` (`fast_path::eval_fast`, `fast_path.rs:322`); both are dispatched from `crates/gnata-rs/src/expression.rs:108,127,145,173` and fall back to full evaluation when they return `None`.
+>
+> Public API (`crates/gnata-rs/src/expression.rs:78-258`): `Expression::compile`, `evaluate`, `evaluate_value`, `evaluate_bytes`, `evaluate_with_vars`, `evaluate_with_custom_funcs`, `evaluate_with_cancel`, `is_fast_path`, `fast_path_info`. Helpers live on `Value` (`from_json_str`, `is_null`, `deep_equal`). The Go names `EvalBytes`, `NormalizeValue`, `DecodeJSON`, `IsNull`, `DeepEqual`, `IsFuncFastPath` and `IsComparisonFastPath` have no Rust counterpart.
+
 ## 6.1 Expression Struct
 
 **File:** `gnata.go`, lines 26-38
@@ -1826,7 +1836,7 @@ Cascade of three fast-path tiers with fallback:
 
 **File:** `func_fast.go`
 
-21 handlers in `funcFastHandlers` map:
+23 handlers in Go's `funcFastHandlers` map (`func_fast.go:49-73`); the Rust port covers 26 kinds (`FuncFastKind`, `crates/gnata-rs/src/fast_path.rs:94-121`), adding `$values`, `$shuffle` and `$flatten` to the Go set. `$round` is excluded in both.
 
 | Kind | Handler | Behavior |
 |---|---|---|
@@ -1868,6 +1878,12 @@ Cascade of three fast-path tiers with fallback:
 ---
 
 # Section 7: StreamEvaluator & Concurrency
+
+> **Go reference implementation only.** Everything in 7.1-7.9 below (COW expression list, `sync.Mutex`, schema-keyed `GroupPlan`/`BoundedCache`, four-method `MetricsHook`, concurrent `EvalMany`) describes the Go engine and was **not** ported.
+>
+> **Rust port (shipped behavior).** The Rust `StreamEvaluator` (`crates/gnata-rs/src/stream.rs`) is single-threaded by design: "each JSON stream gets its own evaluator on its own thread. No locking, no atomic operations" (`stream.rs:1-4`). The struct (`stream.rs:38-42`) is just `exprs: Vec<Option<Expression>>`, an optional `metrics` hook and `custom_funcs` -- no COW snapshot pointer, no mutex, no `BoundedCache`, no `GroupPlan`, no schema-keyed caching. `MetricsHook` has a single method, `on_eval` (`stream.rs:15-25`), and `StreamStats` (`stream.rs:27-31`) exposes only an expression-slot count -- no hits/misses/evictions.
+>
+> Concurrency is achieved by giving each thread its own evaluator: `Value` is deliberately `!Send` (`crates/gnata-rs/src/value.rs:57-63`), so concurrent evaluation inside one evaluator is impossible, while a compiled `Expression` is `Send + Sync` and cheap to clone -- compile once, share the `Expression`, build input `Value`s per thread.
 
 ## 7.1 StreamEvaluator Struct
 

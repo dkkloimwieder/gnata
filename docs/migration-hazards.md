@@ -69,9 +69,11 @@ Numbers from JSON input arrive as `json.Number` (string-backed) via `json.Decode
 - `NaN` and `Inf` format as `"null"` (not `"NaN"` or `"Infinity"`)
 
 ### Rust Approach
-Use `serde_json` with `arbitrary_precision` feature. Use `ryu-js` crate for `Number.toString()` formatting. Ensure `json.Number` string preservation for integers > 2^53.
+**As built, the port keeps a single `Value::Number(f64)`** -- Go's `json.Number` string preservation was NOT ported. `Value::from_json` and the simd-json visitors collapse every input number to `f64`, so precision beyond 2^53 is lost on input. `arbitrary_precision` remains enabled on `serde_json` for the interop path but does not preserve digits inside `Value`.
 
-### Test: `$string(12345678901234567)` must preserve all digits, not round to float64.
+What *is* preserved is output formatting: `ryu-js` for exact `Number.toString()`, with the two-layer split described in Hazard 11.
+
+### Test: `$string(12345678901234567)` round-trips at f64 precision -- the digit-preservation guarantee the Go engine gives does not hold here.
 
 ---
 
@@ -97,7 +99,9 @@ Input JSON decoded via `DecodeJSON` produces `*OrderedMap`. Some Go code paths p
 If you miss a code path that creates a plain map, key ordering breaks silently. Object equality (`DeepEqual`) must handle both types cross-compared.
 
 ### Rust Approach
-Use `IndexMap<String, Value>` uniformly. With `serde_json`'s `preserve_order` feature, JSON deserialization produces `IndexMap` natively. **Eliminates the duality entirely** -- this is a Rust advantage.
+Use one ordered map type uniformly. **Eliminates the duality entirely** -- this is a Rust advantage.
+
+As built: `ObjectMap = IndexMap<CompactString, Value, foldhash::fast::RandomState>`, held behind `Rc` as `Value::Object(Rc<ObjectMap>)` (`src/value.rs`). Input is parsed by simd-json directly into `Value` rather than through `serde_json`'s `preserve_order` path, so ordering is preserved by construction.
 
 ---
 
@@ -147,7 +151,7 @@ for _, expr := range node.Expressions {
 ```
 
 ### Rust Approach
-`Value::Sequence(Sequence)` as a dedicated variant. The `Sequence` struct carries all 4 flags. Array constructor evaluation must check the AST node type (via `NodeId` lookup in arena) to decide flatten vs nest.
+`Value::Sequence(Box<Sequence>)` as a dedicated variant. As built the struct carries **two** flags (`keep_singleton`, `cons_array`); Go's `OuterWrapper`/`TupleStream` are not flags in Rust -- tuple mode is selected from AST shape by `path_has_tuple_step` (`src/evaluator/mod.rs`). Array constructor evaluation must check the AST node type (via `NodeId` lookup in arena) to decide flatten vs nest.
 
 ### Test: `[[1,2], [3,4]]` must produce `[[1,2],[3,4]]` (nested), but path expressions returning arrays must flatten.
 
@@ -167,7 +171,7 @@ The `%` operator navigates the **environment chain**, not the data structure. Im
 - Tuple mode maintains per-element `(value, env)` pairs where each element's env has its parent bound under `%%`
 
 ### Rust Approach
-With bumpalo-allocated environments, parent links are raw pointers within the same bump arena. The `%%` binding must be set on every child environment during path evaluation. `LookupWithEnv` must return a reference to the environment where the binding was found (pointer into bump arena).
+As built, environments are reference-counted rather than bump-allocated: `Environment { parent: Option<Rc<Environment>>, bindings: RefCell<HashMap<CompactString, Value>>, .. }`, with children built by `Environment::new_child(parent: Rc<Environment>)` (`src/evaluator/environment.rs`). The `%%` binding (`PARENT_BINDING`, `src/evaluator/mod.rs`) is set on child environments during path evaluation, and the lookup returns both the value and the environment that held it.
 
 ### Test: `Account.Order.Product.(%.%.`Account Name`)` must navigate up two levels to the Account object.
 
@@ -224,7 +228,9 @@ func evalCore(expr *Expression, ctx context.Context, input any, env *evaluator.E
 Go uses panics for early exit in deep evaluation paths (e.g., stack overflow U1001). The `defer/recover` at the top catches everything. In Rust, there is no equivalent -- every function must explicitly propagate errors via `Result<T, E>`.
 
 ### Rust Approach
-`Result<Value, JsonataError>` return type on every evaluator function. Use `?` operator for propagation. The `JsonataError` enum (via `thiserror`) covers all error codes. No `panic!()` in evaluation code.
+`Result<Value, JsonataError>` return type on every evaluator function. Use `?` operator for propagation. No `panic!()` in evaluation code.
+
+As built, `JsonataError` is a hand-rolled **struct** carrying `code`/`token`/`value`/`message` (`src/error.rs`), with `Display` and `std::error::Error` implemented manually -- `thiserror` was not needed, since every error shares one shape.
 
 ---
 
@@ -282,7 +288,7 @@ Two expressions can return the same runtime value (`[1, 2]`) but be treated diff
 This distinction exists only in the AST structure. In Rust with the index-based arena, the evaluator must check `arena.get(child_id)` to determine if the child is an explicit array constructor.
 
 ### Rust Approach
-During array constructor evaluation, for each child `NodeId`, check `arena.get(child_id)` -- if it's `Expr::ArrayConstructor`, keep nested; otherwise, flatten via `append_to_sequence`.
+During array constructor evaluation, for each child `NodeId`, check `arena.get(child_id)` -- if it's `Expr::Unary { op: UnaryOp::ArrayCons, .. }`, keep nested; otherwise, flatten via `append_to_sequence`.
 
 ---
 
@@ -315,7 +321,7 @@ The `callCounter` is a **shared pointer** across all child environments in an ev
 In Rust, the call counter lives in the bumpalo arena. But `$eval()` creates a NEW parser + evaluator for the nested expression. The nested evaluator must share the same depth counter. With bumpalo raw pointers, this means passing a `*mut u32` (or `&Cell<u32>`) from the parent evaluator into the nested one.
 
 ### Rust Approach
-The call counter should be a `Cell<u32>` allocated in the bump arena, with a raw pointer shared across parent and nested evaluations. Since all evaluations in a single `eval()` call share the same bump arena (and therefore the same thread), this is safe. The `$eval` function receives the counter reference when creating the nested evaluator.
+The call counter is an `Rc<CallCounter>` holding `Cell<u32>` depth and eval-depth counters, cloned into each child environment (`src/evaluator/environment.rs`) -- no bump arena and no raw pointers. Since all evaluations in a single `eval()` call stay on one thread, `Rc`+`Cell` suffices. The `$eval` function receives the counter when creating the nested evaluator, which preserves the shared-D3121 behavior this hazard warns about.
 
 ---
 
@@ -359,6 +365,7 @@ Keep the layers separate: `format_float` ('g' 15) for `$string()`/casting per
 | 5 | Parent operator (%) | Critical | Very High |
 | 4 | Sequence collapse + ConsArray | Critical | High |
 | 1 | Null vs Undefined | High | Medium |
+| 11 | Two number-formatting layers | High | Low (two call sites) |
 | 10 | $eval depth sharing | High | Medium |
 | 8 | Zero-param focus capture | High | Low |
 | 9 | Array constructor flattening | Medium | Medium |

@@ -43,10 +43,11 @@
 //! # Cargo features
 //!
 //! - `regex` *(default)* — full Unicode regex backend.
-//! - `regex-lite` — lighter backend for smaller WASM builds (enable exactly
-//!   one of the two).
-//! - `mimalloc-alloc` *(default)* — mimalloc as the global allocator on
-//!   native targets.
+//! - `regex-lite` — lighter backend for smaller WASM builds (at least one
+//!   backend must be enabled; if both are, `regex` wins).
+//! - `mimalloc-alloc` *(default)* — links mimalloc; it is set as the global
+//!   allocator only in the bundled `gnata-bench` binary (a library cannot
+//!   set a consumer's allocator).
 
 // Pedantic by default, with targeted allows
 #![warn(clippy::pedantic)]

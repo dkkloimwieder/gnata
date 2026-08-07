@@ -71,7 +71,7 @@ impl AstArena {
 
 **Why:**
 1. **O(1) drop in WASM** -- no recursive destructor stack overflow for deep ASTs (500+ levels). Drop the single `Vec`, done.
-2. **Serializable ASTs** -- `NodeId` is just `u32`, `Expr` has no pointers. `#[derive(Serialize, Deserialize)]` enables compiling on a server and sending pre-compiled ASTs to WASM edge clients.
+2. **Serializable ASTs** -- `NodeId` is just `u32` and `Expr` has no pointers, so `#[derive(Serialize, Deserialize)]` would allow compiling on a server and sending pre-compiled ASTs to WASM edge clients. *(Not implemented: the as-built arena types derive only `Debug`/`Clone`, and compile-on-server/execute-on-client was never wired up.)*
 3. **Cache-friendly** -- contiguous memory, CPU prefetching works naturally during tree-walking evaluation.
 4. **Trivial `ArcSwap` sharing** -- `StreamEvaluator` wraps `ArcSwap<AstArena>`. Worker threads get a read-only ref and pass `u32` indices. Zero locks.
 
@@ -110,6 +110,8 @@ pub struct Sequence {
     pub tuple_stream: bool,
 }
 ```
+
+**As built:** two flags only (`keep_singleton`, `cons_array`), boxed as `Value::Sequence(Box<Sequence>)` to keep `Value` small. Go's `OuterWrapper`/`TupleStream` were not ported -- tuple-stream handling moved into path evaluation.
 
 ### 1.4 State: bumpalo for Environment Chain Only
 
@@ -188,6 +190,19 @@ wasm-bindgen = "0.2"      # WASM JS interop (replaces Go syscall/js)
 
 Total: **15 direct dependencies** (Go has 1 external + stdlib). All actively maintained.
 
+**As built** -- the real manifest is `crates/gnata-rs/Cargo.toml`. Seven crates above were never used: `arc-swap`, `dashmap`, `parking_lot` (no shared mutable state -- `Expression` is immutable and shared via `Arc`), `thiserror` (hand-rolled error struct), `jiff` (hand-rolled calendar math), `bumpalo` (`Rc`+`RefCell` environments), and `unicode-segmentation`. `regex` became optional and feature-gated. Crates adopted during implementation:
+
+| Crate | Purpose |
+|---|---|
+| `simd-json` | Input JSON parsing straight into `Value` |
+| `compact_str` | Inline small strings for keys and string values |
+| `foldhash` | Hasher for `ObjectMap` |
+| `regex-lite` | Alternate regex backend for small WASM builds |
+| `stacker` (non-WASM) | Segmented stack growth at recursion entry points |
+| `mimalloc` (optional, default on native) | Global allocator |
+| `dhat` (optional) | Heap profiling for the `gnata-dhat` bin |
+| `js-sys` (WASM) | JS interop alongside `wasm-bindgen` |
+
 ---
 
 ## 3. Design Decisions with Rationale
@@ -214,6 +229,10 @@ Rust's `regex` crate uses finite automata (like RE2), guaranteeing linear-time m
 
 The regex compilation cache (`sync.Map` in Go) becomes `DashMap<String, Arc<Regex>>`. Must clone the `Arc` before execution to drop the shard lock.
 
+**As built:** there is no regex cache -- `stdlib::regex::compile_regex` compiles a fresh `Regex` on every call, and `dashmap` is not a dependency. Caching remains an open optimization.
+
+**As built:** two interchangeable backends sit behind Cargo features -- `regex` (default, full Unicode) and `regex-lite` (~700 KB smaller WASM: 1.3 MB → 579 KB). At least one must be enabled; if both are, `regex` wins. `scripts/build-wasm.sh` selects `regex-lite` for the shipped WASM build.
+
 ### 3.3 Parser: Hand-written Pratt (direct translation)
 
 The existing Go parser is a hand-written Pratt parser. **Translate it directly to Rust** -- Pratt parsers map cleanly to Rust's `match` expressions. Parser combinator libraries (`nom`, `winnow`, `pest`) would require rethinking the architecture and introduce unnecessary divergence from the Go reference.
@@ -237,8 +256,9 @@ Go uses `tidwall/gjson` for zero-copy JSON field extraction. There is no mature 
 | `json.Decoder.UseNumber()` | `serde_json` `arbitrary_precision` feature | Preserves numeric precision as strings |
 | `encoding/json` ordered decode | `serde_json` `preserve_order` feature | Uses `IndexMap` internally |
 | `strconv.FormatFloat` (JS compat) | **`ryu-js`** crate | Implements ECMAScript `Number.toString()` exactly |
-| `math.Round` (round-half-away) | Custom helper needed | Rust `f64::round()` uses banker's rounding; JSONata needs round-half-away-from-zero |
-| `time` package | **`jiff`** crate | DST-aware, modern API, by BurntSushi |
+| `math.Round` (round-half-away) | Rust `f64::round()` (direct match) | `f64::round()` is ties-away-from-zero like Go `math.Round`; used for `$formatNumber` mantissas |
+| `$round` (round-half-to-even) | Custom `bankers_round` helper | JSONata `$round` is half-to-even, so neither `f64::round()` nor `math.Round` fits -- hand-rolled in `src/stdlib/numeric.rs` |
+| `time` package | hand-rolled calendar math in `src/stdlib/datetime/` | `jiff` was dropped for WASM size; no external datetime crate |
 | `net/url` encoding | **`percent-encoding`** crate | Configurable encode sets |
 | `encoding/base64` | **`base64`** crate | Standard |
 | `math/rand` | **`fastrand`** crate | For `$random()` and `$shuffle()` |
@@ -247,17 +267,20 @@ Go uses `tidwall/gjson` for zero-copy JSON field extraction. There is no mature 
 
 Go WASM binaries are 2-3 MB minimum (runtime + GC). Rust WASM binaries are **50-200 KB** optimized -- a 10-50x reduction.
 
+**As built:** the Rust WASM artifact lands at ~580 KB (`opt-level = "z"`) to ~840 KB (`opt-level = 3`, the shipped build) against ~5.4 MB for the Go build -- roughly 6-9x smaller, not 10-50x. The extra size buys runtime speed: opt-level 3 evaluates ~30% faster than `"z"`.
+
 **Toolchain:** `wasm-bindgen` + `wasm-pack` + `wasm-opt`
 
-**Key `Cargo.toml` profile settings:**
+**Key `Cargo.toml` profile settings (as built):**
 ```toml
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
 ```
+
+WASM size is handled by `scripts/build-wasm.sh` -- `regex-lite` plus a manual `wasm-opt -O3 --enable-bulk-memory` pass -- not by an `opt-level = "z"` release profile. The release profile shown here is the native one; the script overrides `CARGO_PROFILE_RELEASE_OPT_LEVEL` itself. `panic = "abort"` is not set.
 
 The existing `npm/` package structure and TypeScript API can be preserved with much smaller bundle size.
 
@@ -363,6 +386,8 @@ Start with functions used in most test cases, then expand:
 - `EvalMany`, `EvalMap`, `EvalOne`
 - `MetricsHook` trait
 
+**As built (partially delivered):** `StreamEvaluator` holds a plain `Vec<Option<Expression>>` -- no `ArcSwap`, since `Expression` is already `Send + Sync` and callers share it via `Arc`. `BoundedCache`, `GroupPlan`, and `eval_map` were not ported. `MetricsHook`, `eval_many`, `eval_one`, and their `_with_cancel` variants exist (`src/stream.rs`).
+
 ### Phase 13: WASM + npm Package
 - `wasm-bindgen` exports matching Go's `_gnataEval`, `_gnataCompile`, `_gnataEvalHandle`, `_gnataReleaseHandle`
 - TypeScript wrapper preserving the existing `npm/src/` API
@@ -382,15 +407,19 @@ Port `suite_test.go` to Rust. The harness loads JSON test cases from `testdata/g
     "data": { ... },           // or "dataset": "dataset5"
     "bindings": {},
     "result": expected_value,  // or "undefinedResult": true, or "code": "T2001"
-    "unordered": true          // optional: array order doesn't matter
+    "unordered": true          // present in some fixtures; see note below
 }
 ```
 
+**As built:** `unordered` is not honoured by `tests/conformance.rs` -- every comparison is order-sensitive. The fixtures carrying the flag happen to pass on exact ordering.
+
 ### 5.2 Progress Tracking
 
-Track conformance as `X/1349` passing. The 1,349 total breaks down as:
-- 1,283 cases from official jsonata-js test suite (103 directories)
-- 66 supplemental cases in `testdata/groups/rust-*/` (10 directories)
+Track conformance as `X/1733` cases passing. 1,349 is the number of JSON *files*; 19 of them hold arrays of cases, so the suite expands to 1,733 individual cases:
+- 1,667 cases from the official jsonata-js test suite (103 directories)
+- 66 supplemental cases in `testdata/groups/rust-*/` (9 directories)
+
+`tests/conformance.rs` expands the array files and gates on zero unexpected failures.
 
 ### 5.3 Validation Against Go
 
@@ -406,19 +435,19 @@ go test -race -count=1 ./...
 | Purpose | Path | Lines |
 |---|---|---|
 | Public API, fast-path dispatch | `gnata.go` | 436 |
-| StreamEvaluator | `stream.go` | ~200 |
-| Bounded cache | `bounded_cache.go` | ~112 |
-| Fast-path functions | `func_fast.go` | ~300 |
+| StreamEvaluator | `stream.go` | ~460 |
+| Bounded cache | `bounded_cache.go` | ~140 |
+| Fast-path functions | `func_fast.go` | ~420 |
 | AST node types | `internal/parser/ast.go` | 131 |
 | Pratt parser | `internal/parser/parser.go` | ~1000 |
 | AST post-processing | `internal/parser/process.go` | ~300 |
-| Fast-path analysis | `internal/parser/analysis.go` | ~200 |
+| Fast-path analysis | `internal/parser/analysis.go` | ~325 |
 | Tail-call marking | `internal/parser/tailcall.go` | ~50 |
 | Lexer | `internal/lexer/lexer.go` | ~400 |
 | Token types | `internal/lexer/token.go` | ~100 |
 | Eval dispatch | `internal/evaluator/evaluator.go` | ~85 |
-| Binary operators | `internal/evaluator/eval_binary.go` | ~200 |
-| Path evaluation | `internal/evaluator/path.go` | ~400 |
+| Binary operators | `internal/evaluator/eval_binary.go` | ~410 |
+| Path evaluation | `internal/evaluator/path.go` | ~1200 |
 | Function calls/TCO | `internal/evaluator/eval_function.go` | ~225 |
 | Value types/coercion | `internal/evaluator/value.go` | 264 |
 | Environment/scoping | `internal/evaluator/env.go` | 194 |
@@ -432,8 +461,8 @@ go test -race -count=1 ./...
 | Function registry | `functions/register.go` | ~99 |
 | String functions | `functions/string_funcs.go` | ~200 |
 | HOF functions | `functions/hof_funcs.go` | ~150 |
-| Conformance harness | `suite_test.go` | ~130 |
-| Test data | `testdata/groups/` (113 dirs) | 1,349 cases |
+| Conformance harness | `suite_test.go` | ~240 |
+| Test data | `testdata/groups/` (112 dirs) | 1,349 files / 1,733 cases |
 
 ---
 
@@ -443,5 +472,5 @@ go test -race -count=1 ./...
 |---|---|
 | `CLAUDE.md` | Project guide for Claude Code sessions |
 | `docs/spec.md` | Complete behavioral specification (1,966 lines) |
-| `docs/migration-hazards.md` | 10 ranked migration hazards with Go/Rust code examples |
+| `docs/migration-hazards.md` | 11 ranked migration hazards with Go/Rust code examples |
 | `docs/behaviors.md` | Type coercion truth tables, error code catalog, equality semantics |
