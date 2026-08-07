@@ -326,6 +326,15 @@ const CASES: &[(&str, &str)] = &[
     ),
     // Shadow visible from a .() path function step.
     ("( $round := function($x){ 99 }; arr.$round(v) )", NESTED),
+    // ── Array items auto-map through lifted HOF field access (gnata-dx5.8) ──
+    ("$map(m, function($v){$v.v})", NESTED_ARRAYS),
+    ("$map(a, function($v){$v.b})", NESTED_ARRAYS),
+    ("$filter(m, function($v){$v.v > 1})", NESTED_ARRAYS),
+    ("$filter(m, function($v){$v.v = 3})", NESTED_ARRAYS),
+    ("$map(m, function($v){\"id-\" & $v.v})", NESTED_ARRAYS),
+    ("$map(m, function($v){$round($v.v)})", NESTED_ARRAYS),
+    ("$sort(m, function($a,$b){$a.v > $b.v})", NESTED_ARRAYS),
+    ("$map(deep, function($v){$v.b})", EMPTY_FIELDS),
     // ── $distinct must dedupe like deep_equal (gnata-dx5.10) ──
     ("$distinct(objs)", DISTINCT_SHAPES),
     ("$distinct(zeros)", DISTINCT_SHAPES),

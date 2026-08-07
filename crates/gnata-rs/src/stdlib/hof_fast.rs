@@ -498,13 +498,12 @@ fn flip_relational(op: BinaryOp) -> BinaryOp {
 
 // ── Fast-path evaluation helpers ────────────────────────────────────────────
 
-/// Get a field value from an object without cloning (returns reference-safe clone).
+/// Get a field value from an item, auto-mapping over array items exactly
+/// like the general path's `eval_name` (CLAUDE.md invariant 3) — a lambda
+/// item can itself be an array, e.g. `$map([[{"x":1},{"x":2}]], fn)`.
 #[inline]
 pub fn get_field(item: &Value, field: &str) -> Value {
-    match item {
-        Value::Object(obj) => obj.get(field).cloned().unwrap_or(Value::Undefined),
-        _ => Value::Undefined,
-    }
+    crate::fast_path::path_step(field, item)
 }
 
 /// Evaluate a binary op on two Values (for predicates and comparators).

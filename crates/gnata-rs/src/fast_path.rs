@@ -355,7 +355,7 @@ fn eval_pure_path(segments: &[String], input: &Value) -> Value {
 /// resolved on some item but contributed no values (empty-array field)
 /// collapses to `[]`, not undefined — this keeps `$exists(a.b)` true on
 /// `{"a": [{"b": []}]}` like the general path.
-fn path_step(segment: &str, input: &Value) -> Value {
+pub(crate) fn path_step(segment: &str, input: &Value) -> Value {
     match input {
         Value::Object(obj) => obj.get(segment).cloned().unwrap_or(Value::Undefined),
         Value::Array(arr) => {
