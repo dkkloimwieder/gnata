@@ -29,109 +29,118 @@ impl Lexer {
     /// # Errors
     /// Returns a `JsonataError` with an S0xxx code for malformed tokens.
     pub fn next(&mut self, infix: bool) -> Result<Token, JsonataError> {
-        // Skip whitespace
-        while self.pos < self.src.len() {
-            match self.src[self.pos] {
-                b' ' | b'\t' | b'\n' | b'\r' | 0x0B => self.pos += 1,
-                _ => break,
-            }
-        }
-
-        if self.pos >= self.src.len() {
-            return Ok(Token::eof());
-        }
-
-        let start_pos = self.pos;
-        let ch = self.src[self.pos];
-
-        // Block comments: /* ... */
-        if ch == b'/' && self.peek(1) == Some(b'*') {
-            self.pos += 2;
+        // Iterative, not recursive: consecutive comments (or runs of
+        // unrecognised characters) must not grow the stack.
+        loop {
+            // Skip whitespace
             while self.pos < self.src.len() {
-                if self.src[self.pos] == b'*' && self.peek(1) == Some(b'/') {
-                    self.pos += 2;
-                    return self.next(infix);
+                match self.src[self.pos] {
+                    b' ' | b'\t' | b'\n' | b'\r' | 0x0B => self.pos += 1,
+                    _ => break,
                 }
-                self.pos += 1;
             }
-            return Err(lex_error("S0106", "unclosed block comment"));
-        }
 
-        // Regex literal — only in prefix position
-        if ch == b'/' && !infix {
-            return self.scan_regex(start_pos);
-        }
-
-        // Two-character operators — checked before single-character
-        if let Some(tok) = self.try_two_char(start_pos) {
-            return Ok(tok);
-        }
-
-        // Single-character operators
-        if let Some(tt) = single_char_op(ch) {
-            self.pos += 1;
-            return Ok(Token::new(tt, String::from(ch as char), start_pos));
-        }
-
-        // String literals
-        if ch == b'"' || ch == b'\'' {
-            return self.scan_string(ch, start_pos);
-        }
-
-        // Number literals
-        if ch.is_ascii_digit() {
-            return self.scan_number(start_pos);
-        }
-
-        // Backtick names
-        if ch == b'`' {
-            self.pos += 1;
-            let name_start = self.pos;
-            while self.pos < self.src.len() && self.src[self.pos] != b'`' {
-                self.pos += 1;
-            }
             if self.pos >= self.src.len() {
-                return Err(lex_error("S0105", "unterminated backtick name"));
+                return Ok(Token::eof());
             }
-            let name = std::str::from_utf8(&self.src[name_start..self.pos])
+
+            let start_pos = self.pos;
+            let ch = self.src[self.pos];
+
+            // Block comments: /* ... */
+            if ch == b'/' && self.peek(1) == Some(b'*') {
+                self.pos += 2;
+                let mut closed = false;
+                while self.pos < self.src.len() {
+                    if self.src[self.pos] == b'*' && self.peek(1) == Some(b'/') {
+                        self.pos += 2;
+                        closed = true;
+                        break;
+                    }
+                    self.pos += 1;
+                }
+                if !closed {
+                    return Err(lex_error("S0106", "unclosed block comment"));
+                }
+                continue;
+            }
+
+            // Regex literal — only in prefix position
+            if ch == b'/' && !infix {
+                return self.scan_regex(start_pos);
+            }
+
+            // Two-character operators — checked before single-character
+            if let Some(tok) = self.try_two_char(start_pos) {
+                return Ok(tok);
+            }
+
+            // Single-character operators
+            if let Some(tt) = single_char_op(ch) {
+                self.pos += 1;
+                return Ok(Token::new(tt, String::from(ch as char), start_pos));
+            }
+
+            // String literals
+            if ch == b'"' || ch == b'\'' {
+                return self.scan_string(ch, start_pos);
+            }
+
+            // Number literals
+            if ch.is_ascii_digit() {
+                return self.scan_number(start_pos);
+            }
+
+            // Backtick names
+            if ch == b'`' {
+                self.pos += 1;
+                let name_start = self.pos;
+                while self.pos < self.src.len() && self.src[self.pos] != b'`' {
+                    self.pos += 1;
+                }
+                if self.pos >= self.src.len() {
+                    return Err(lex_error("S0105", "unterminated backtick name"));
+                }
+                let name = std::str::from_utf8(&self.src[name_start..self.pos])
+                    .unwrap_or("")
+                    .to_owned();
+                self.pos += 1;
+                return Ok(Token::new(TokenType::Name, name, start_pos));
+            }
+
+            // Identifiers, keywords, and variables
+            let id_start = self.pos;
+            while self.pos < self.src.len() && !is_stop_char(self.src[self.pos]) {
+                self.pos += 1;
+            }
+            let id = std::str::from_utf8(&self.src[id_start..self.pos])
                 .unwrap_or("")
                 .to_owned();
-            self.pos += 1;
-            return Ok(Token::new(TokenType::Name, name, start_pos));
-        }
 
-        // Identifiers, keywords, and variables
-        let id_start = self.pos;
-        while self.pos < self.src.len() && !is_stop_char(self.src[self.pos]) {
-            self.pos += 1;
-        }
-        let id = std::str::from_utf8(&self.src[id_start..self.pos])
-            .unwrap_or("")
-            .to_owned();
-
-        if id.is_empty() {
-            // Unrecognised character — skip and retry
-            self.pos += char_len_at(&self.src, self.pos);
-            return self.next(infix);
-        }
-
-        if let Some(rest) = id.strip_prefix('$') {
-            if rest == "$" {
-                // $$ → variable named "$"
-                return Ok(Token::new(TokenType::Variable, "$", start_pos));
+            if id.is_empty() {
+                // Unrecognised character — skip and retry
+                self.pos += char_len_at(&self.src, self.pos);
+                continue;
             }
-            // bare $ → variable named ""; $foo → variable named "foo"
-            return Ok(Token::new(TokenType::Variable, rest, start_pos));
-        }
 
-        match id.as_str() {
-            "or" => Ok(Token::new(TokenType::Or, id, start_pos)),
-            "in" => Ok(Token::new(TokenType::In, id, start_pos)),
-            "and" => Ok(Token::new(TokenType::And, id, start_pos)),
-            "true" => Ok(Token::bool_value(true, start_pos)),
-            "false" => Ok(Token::bool_value(false, start_pos)),
-            "null" => Ok(Token::null_value(start_pos)),
-            _ => Ok(Token::new(TokenType::Name, id, start_pos)),
+            if let Some(rest) = id.strip_prefix('$') {
+                if rest == "$" {
+                    // $$ → variable named "$"
+                    return Ok(Token::new(TokenType::Variable, "$", start_pos));
+                }
+                // bare $ → variable named ""; $foo → variable named "foo"
+                return Ok(Token::new(TokenType::Variable, rest, start_pos));
+            }
+
+            return match id.as_str() {
+                "or" => Ok(Token::new(TokenType::Or, id, start_pos)),
+                "in" => Ok(Token::new(TokenType::In, id, start_pos)),
+                "and" => Ok(Token::new(TokenType::And, id, start_pos)),
+                "true" => Ok(Token::bool_value(true, start_pos)),
+                "false" => Ok(Token::bool_value(false, start_pos)),
+                "null" => Ok(Token::null_value(start_pos)),
+                _ => Ok(Token::new(TokenType::Name, id, start_pos)),
+            };
         }
     }
 
@@ -638,6 +647,16 @@ mod tests {
         assert_eq!(toks.len(), 2);
         assert_eq!(toks[0].value, "a");
         assert_eq!(toks[1].value, "b");
+    }
+
+    #[test]
+    fn many_consecutive_comments_lex_iteratively() {
+        // 100k comments before a token — the recursive lexer overflowed here.
+        let src = format!("{}42", "/**/".repeat(100_000));
+        let toks = lex_all(&src);
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].typ, TokenType::Number);
+        assert_eq!(toks[0].value, "42");
     }
 
     #[test]
