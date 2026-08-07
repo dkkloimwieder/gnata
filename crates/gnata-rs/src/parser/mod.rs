@@ -558,6 +558,9 @@ impl Parser {
                     ));
                 }
                 let var_name = self.token.value.clone();
+                // The bound variable ends an operand: lex what follows in
+                // infix context so `/` is division, not a regex start.
+                self.infix = true;
                 self.advance()?;
                 self.set_focus(left, var_name);
                 Ok(left)
@@ -581,6 +584,8 @@ impl Parser {
                     ));
                 }
                 let var_name = self.token.value.clone();
+                // Same as `@`: the token after the variable is infix context.
+                self.infix = true;
                 self.advance()?;
                 self.set_index(left, var_name);
                 Ok(left)
@@ -1224,6 +1229,23 @@ mod tests {
     fn parse_variable() {
         let (arena, root) = parse("$x");
         assert!(matches!(arena.get(root), Expr::Variable { name, .. } if name == "x"));
+    }
+
+    #[test]
+    fn focus_and_index_bindings_keep_infix_context() {
+        // `/` after `@$var` / `#$var` is division, not a regex start
+        // (Go parses both; they only fail later at eval with T2001).
+        for src in ["Nums@$n / 2", "Nums#$i / 2"] {
+            assert!(
+                Parser::parse(src).is_ok(),
+                "expected {src:?} to parse without S0302"
+            );
+        }
+        // `/regex/` after the binding also lexes as division — the dangling
+        // `/` hits EOF (S0207, this port's code for `1 +` too; Go says
+        // S0201 here), never S0302 unterminated regex.
+        let err = Parser::parse("Nums@$n /regex/").unwrap_err();
+        assert_eq!(err.code, "S0207");
     }
 
     #[test]
