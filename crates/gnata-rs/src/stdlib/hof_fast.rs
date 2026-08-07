@@ -711,6 +711,8 @@ pub enum CallArg {
 
 /// Analyze a function call node in a mapped context.
 /// `param` is the mapping variable name (e.g., the implicit scope in `.()` or the lambda param).
+/// `env` must be the scope the callee name resolves in on the general path:
+/// the lambda's closure for HOF lifts, the step's own env for `.()` steps.
 ///
 /// Returns Some(MappedCall) if the call can be lifted, None otherwise.
 pub(crate) fn analyze_mapped_call(
@@ -765,7 +767,17 @@ pub(crate) fn analyze_mapped_call(
     }
 
     // Try to pre-compute function-specific state from constant args.
-    let prepared = try_prepare(func_name, &arg_template);
+    // Prepared state re-implements stdlib semantics keyed by name, so it
+    // must only engage when the name resolved to a builtin — a user lambda
+    // shadowing $round must dispatch through call_function below.
+    let prepared = if matches!(
+        *func,
+        FunctionValue::Builtin(_) | FunctionValue::SignedBuiltin { .. }
+    ) {
+        try_prepare(func_name, &arg_template)
+    } else {
+        None
+    };
 
     Some(MappedCall {
         func,

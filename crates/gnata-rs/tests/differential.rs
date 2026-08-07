@@ -300,6 +300,24 @@ const CASES: &[(&str, &str)] = &[
     ("$map(arr, function($v)<o>{$v.v})", NESTED),
     ("$filter(arr, function($v)<n:b>{$v.v > 1})", NESTED),
     ("$filter(arr, function($v)<o:b>{$v.v > 1})", NESTED),
+    // ── Shadowed callee names in lifted $map/.() dispatch (gnata-dx5.7) ──
+    // Same-scope shadow: prepared-by-name exec must not engage.
+    (
+        "( $round := function($x){ 99 }; $map(arr, function($v){ $round($v.v) }) )",
+        NESTED,
+    ),
+    // Shadow only in the lambda's closure, not at the $map call site.
+    (
+        "( $f := ( $round := function($x){ 99 }; function($v){ $round($v.v) } ); $map(arr, $f) )",
+        NESTED,
+    ),
+    // Shadow only at the call site: the closure's builtin must win.
+    (
+        "( $f := function($v){ $round($v.v) }; ( $round := function($x){ 99 }; $map(arr, $f) ) )",
+        NESTED,
+    ),
+    // Shadow visible from a .() path function step.
+    ("( $round := function($x){ 99 }; arr.$round(v) )", NESTED),
 ];
 
 type EvalResult = Result<Value, JsonataError>;

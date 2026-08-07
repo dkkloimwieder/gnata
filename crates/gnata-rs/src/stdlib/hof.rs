@@ -92,14 +92,17 @@ pub fn fn_map(
     }
 
     // Lifted dispatch: if the lambda body is a function call with field/const args,
-    // resolve the inner function once and dispatch directly per item.
+    // resolve the inner function once and dispatch directly per item. The
+    // callee name resolves in the lambda's closure, not the $map call site —
+    // the general path evaluates the body in a child of the closure.
     if let FunctionValue::Lambda(ref lambda) = *func
         && let Some(param) = lambda.params.first()
-        && let Some(mc) = hof_fast::analyze_mapped_call(lambda.body, arena, Some(param), env)
+        && let Some(mc) =
+            hof_fast::analyze_mapped_call(lambda.body, arena, Some(param), &lambda.closure)
     {
         let mut seq = Sequence::new();
         for item in arr.iter() {
-            let val = hof_fast::exec_mapped_call(&mc, item, env, arena)?;
+            let val = hof_fast::exec_mapped_call(&mc, item, &lambda.closure, arena)?;
             if !val.is_undefined() {
                 seq.values.push(val);
             }
