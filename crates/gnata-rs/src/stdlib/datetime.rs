@@ -218,8 +218,21 @@ fn value_to_f64(v: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::calendar::{day_of_week, iso_week, secs_to_ymd_hms};
+    use super::parse::parse_word_number;
     use super::*;
     use crate::stdlib::number_words::{int_to_words, to_roman};
+
+    /// The consumed count is in chars of the original input, not bytes of
+    /// the lowercased copy (gnata-nuo.7).
+    #[test]
+    fn parse_word_number_returns_char_count() {
+        let runes: Vec<char> = "twenty-first century".chars().collect();
+        assert_eq!(parse_word_number(&runes), (21, 12));
+        let runes: Vec<char> = "TWELVE more".chars().collect();
+        assert_eq!(parse_word_number(&runes), (12, 6));
+        let runes: Vec<char> = "no number".chars().collect();
+        assert_eq!(parse_word_number(&runes), (-1, -1));
+    }
 
     fn millis_val(ms: i64) -> Value {
         Value::Number(ms as f64)

@@ -22,6 +22,8 @@ pub fn fn_count(args: &[Value], _focus: &Value) -> JsonataResult {
 }
 
 pub fn fn_append(args: &[Value], _focus: &Value) -> JsonataResult {
+    // Go caps the result at 10M elements (guards runaway growth in loops).
+    const MAX_APPEND_SIZE: usize = 10_000_000;
     if args.len() < 2 {
         return Err(JsonataError::new("T0410", "$append: requires 2 arguments"));
     }
@@ -33,6 +35,16 @@ pub fn fn_append(args: &[Value], _focus: &Value) -> JsonataResult {
     }
     if b.is_undefined() {
         return Ok(a.clone());
+    }
+    let len_of = |v: &Value| match v {
+        Value::Array(arr) => arr.len(),
+        _ => 1,
+    };
+    if len_of(a) + len_of(b) > MAX_APPEND_SIZE {
+        return Err(JsonataError::new(
+            "D3010",
+            format!("$append: result array exceeds maximum size of {MAX_APPEND_SIZE} elements"),
+        ));
     }
     let mut result = match a {
         Value::Array(arr) => arr.to_vec(),
@@ -187,6 +199,20 @@ mod tests {
             Ok(v) => v,
             Err(e) => panic!("unexpected error: {e:?}"),
         }
+    }
+
+    /// $append caps the result at 10M elements with D3010, like Go
+    /// (Go-verified 2026-08-07: $append([1..5000000],[1..5000001])
+    /// errors D3010).
+    #[test]
+    fn append_caps_result_size() {
+        let a = arr(vec![n(0.0); 5_000_000]);
+        let b = arr(vec![n(0.0); 5_000_001]);
+        let err = fn_append(&[a.clone(), b], U).unwrap_err();
+        assert_eq!(err.code, "D3010");
+        // At exactly the cap it succeeds.
+        let b2 = arr(vec![n(0.0); 5_000_000]);
+        assert!(matches!(ok(fn_append(&[a, b2], U)), Value::Array(r) if r.len() == 10_000_000));
     }
 
     /// $append treats undefined as the empty sequence and wraps scalars.

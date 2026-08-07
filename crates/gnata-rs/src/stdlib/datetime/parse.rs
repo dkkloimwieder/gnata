@@ -752,7 +752,22 @@ pub(super) fn parse_name_max_len(modifier: &str) -> usize {
 pub(super) fn parse_word_number(runes: &[char]) -> (i64, i64) {
     let s: String = runes.iter().collect();
     match parse_word_number_from_string(&s) {
-        (consumed, val) if consumed > 0 => (val, consumed as i64),
+        (consumed, val) if consumed > 0 => {
+            // `consumed` is a byte offset into s.to_lowercase(); the caller
+            // advances a rune index. Map it back through each original
+            // char's lowercase byte length (identical for the ASCII words
+            // the parser matches, but the contract shouldn't rely on that).
+            let mut lower_bytes = 0usize;
+            let mut orig_chars = 0i64;
+            for c in runes {
+                if lower_bytes >= consumed {
+                    break;
+                }
+                lower_bytes += c.to_lowercase().map(char::len_utf8).sum::<usize>();
+                orig_chars += 1;
+            }
+            (val, orig_chars)
+        }
         _ => (-1, -1),
     }
 }

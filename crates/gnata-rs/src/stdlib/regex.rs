@@ -121,10 +121,24 @@ pub fn fn_match(
         }
     };
 
-    let limit: Option<usize> = args
-        .get(2)
-        .and_then(super::super::value::Value::as_f64)
-        .map(|n| n as usize);
+    // Go: absent/undefined or negative -> unlimited; non-number -> T0410;
+    // fractional truncates.
+    let limit: Option<usize> = match args.get(2) {
+        None | Some(Value::Undefined) => None,
+        Some(Value::Number(n)) => {
+            if *n < 0.0 {
+                None
+            } else {
+                Some(*n as usize)
+            }
+        }
+        Some(_) => {
+            return Err(JsonataError::new(
+                "T0410",
+                "$match: argument 3 must be a number",
+            ));
+        }
+    };
 
     // If the second argument is a function, use custom matcher protocol.
     if let Value::Function(func) = &args[1] {
@@ -504,6 +518,36 @@ mod tests {
         let m = eval_expr(r#"$match("héllo world", /(l+)o/)"#);
         let expected = eval_expr(r#"{"match": "llo", "start": 2, "end": 5, "groups": ["ll"]}"#);
         assert!(m.deep_equal(&expected), "got {m:?}");
+    }
+
+    /// $match limit semantics, Go-verified 2026-08-07: negative means
+    /// unlimited, zero means no matches, fractional truncates, and a
+    /// non-numeric limit is T0410 (gnata-nuo.7).
+    #[test]
+    fn match_limit_edge_cases() {
+        assert_eq!(
+            eval_expr(r#"$count($match("ababab", /ab/, -1))"#),
+            Value::Number(3.0)
+        );
+        assert_eq!(
+            eval_expr(r#"$count($match("ababab", /ab/, 0))"#),
+            Value::Number(0.0)
+        );
+        assert_eq!(
+            eval_expr(r#"$count($match("ababab", /ab/, 2))"#),
+            Value::Number(2.0)
+        );
+        assert_eq!(
+            eval_expr(r#"$count($match("ababab", /ab/, 1.9))"#),
+            Value::Number(1.0)
+        );
+        let (mut arena, root) = Parser::parse(r#"$match("ababab", /ab/, "x")"#).unwrap();
+        let root = process_ast(&mut arena, root).unwrap();
+        let mut env = Environment::new();
+        crate::stdlib::register_all(&mut env);
+        let env = Rc::new(env);
+        let err = eval(&arena, root, &Value::Undefined, &env).unwrap_err();
+        assert_eq!(err.code, "T0410");
     }
 
     /// $replace supports $N group references (JSONata documentation
