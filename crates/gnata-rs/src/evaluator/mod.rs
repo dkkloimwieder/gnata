@@ -224,8 +224,18 @@ fn eval_inner(
                 }
                 return eval_function(arena, cur_node, input, cur_env);
             }
-            Expr::Binary { .. } => return eval_binary(arena, cur_node, input, cur_env),
-            Expr::Unary { .. } => return eval_unary(arena, cur_node, input, cur_env),
+            Expr::Binary { group, .. } => {
+                if group.is_some() {
+                    return eval_group_by(arena, cur_node, input, cur_env);
+                }
+                return eval_binary(arena, cur_node, input, cur_env);
+            }
+            Expr::Unary { group, .. } => {
+                if group.is_some() {
+                    return eval_group_by(arena, cur_node, input, cur_env);
+                }
+                return eval_unary(arena, cur_node, input, cur_env);
+            }
             Expr::Bind { .. } => return eval_bind(arena, cur_node, input, cur_env),
             Expr::Lambda { .. } => return Ok(eval_lambda(arena, cur_node, input, cur_env)),
             Expr::Partial { .. } => return eval_partial(arena, cur_node, input, cur_env),
@@ -3203,6 +3213,8 @@ fn eval_group_by(
         Expr::Path { group: Some(g), .. } => g.clone(),
         Expr::Variable { group: Some(g), .. } => g.clone(),
         Expr::Function { group: Some(g), .. } => g.clone(),
+        Expr::Binary { group: Some(g), .. } => g.clone(),
+        Expr::Unary { group: Some(g), .. } => g.clone(),
         _ => return eval_no_stack_check(arena, node, input, env),
     };
 
@@ -3213,6 +3225,8 @@ fn eval_group_by(
         Expr::Path { .. } => eval_path(arena, node, input, env)?,
         Expr::Variable { name, .. } => eval_variable(name, input, env),
         Expr::Function { .. } => eval_function(arena, node, input, env)?,
+        Expr::Binary { .. } => eval_binary(arena, node, input, env)?,
+        Expr::Unary { .. } => eval_unary(arena, node, input, env)?,
         _ => eval_no_stack_check(arena, node, input, env)?,
     };
     if base.is_undefined() {
@@ -3600,6 +3614,43 @@ mod tests {
         assert_eq!(
             eval_with_data("a[b]", r#"{"a": [{"b": 1}, {"b": 0}]}"#),
             eval_with_data("$", r#"{"b": 0}"#)
+        );
+    }
+
+    /// Group-by `{...}` also attaches to Function/Binary/Unary nodes: the
+    /// pairs must be processed (dots → paths) and dispatch must route to
+    /// eval_group_by. Expectations verified against the Go engine, except
+    /// the dotted-pairs Function case where Go itself errors ("unknown
+    /// binary operator: .") — that one follows jsonata-js.
+    #[test]
+    fn group_by_on_function_binary_unary_nodes() {
+        // Unary array constructor.
+        assert_eq!(
+            eval_simple(r#"[1,2,3]{"num": $}"#),
+            eval_simple(r#"{"num": [1,2,3]}"#)
+        );
+        assert_eq!(
+            eval_simple(r#"[{"a":1},{"a":2}]{"n": a}"#),
+            eval_simple(r#"{"n": [1,2]}"#)
+        );
+        // Unary negation.
+        assert_eq!(
+            eval_with_data(r#"-a{"k": $}"#, r#"{"a":3}"#),
+            eval_simple(r#"{"k": -3}"#)
+        );
+        // Binary subscript.
+        assert_eq!(
+            eval_simple(r#"[{"a":1},{"a":2}][0]{"n": a}"#),
+            eval_simple(r#"{"n": 1}"#)
+        );
+        // Function call, with and without dots in the pairs.
+        assert_eq!(
+            eval_simple(r#"$string(1){"k": $}"#),
+            eval_simple(r#"{"k": "1"}"#)
+        );
+        assert_eq!(
+            eval_simple(r#"$map([{"a":{"b":1}}], function($x){$x}){"k": a.b}"#),
+            eval_simple(r#"{"k": 1}"#)
         );
     }
 

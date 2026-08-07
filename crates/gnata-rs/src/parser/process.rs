@@ -114,6 +114,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
                 *l = new_lhs;
                 *r = new_rhs;
             }
+            process_group(arena, node)?;
             Ok(node)
         }
         Expr::Unary {
@@ -143,6 +144,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
                 *es = new_exprs;
                 *l = new_lhs;
             }
+            process_group(arena, node)?;
             Ok(node)
         }
         Expr::Block { expressions, .. } => {
@@ -191,6 +193,7 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
                 }
                 _ => {}
             }
+            process_group(arena, node)?;
             Ok(node)
         }
         Expr::Lambda { body, .. } => {
@@ -332,6 +335,8 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
         Expr::Variable { group, .. } => group.clone(),
         Expr::Path { group, .. } => group.clone(),
         Expr::Function { group, .. } => group.clone(),
+        Expr::Binary { group, .. } => group.clone(),
+        Expr::Unary { group, .. } => group.clone(),
         _ => None,
     };
     if let Some(mut g) = group {
@@ -344,6 +349,8 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
             Expr::Variable { group: gr, .. } => *gr = Some(g),
             Expr::Path { group: gr, .. } => *gr = Some(g),
             Expr::Function { group: gr, .. } => *gr = Some(g),
+            Expr::Binary { group: gr, .. } => *gr = Some(g),
+            Expr::Unary { group: gr, .. } => *gr = Some(g),
             _ => {}
         }
     }
