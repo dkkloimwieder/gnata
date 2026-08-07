@@ -269,6 +269,10 @@ pub fn fn_trim(args: &[Value], focus: &Value) -> JsonataResult {
     }
 }
 
+/// Widths beyond this are rejected with D3010: unbounded width would reserve
+/// `width` bytes up front (alloc abort on absurd values). Matches the Go cap.
+const MAX_PAD_WIDTH: i64 = 10_000;
+
 pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
     if args.len() < 2 {
         return Err(JsonataError::new(
@@ -292,6 +296,12 @@ pub fn fn_pad(args: &[Value], _focus: &Value) -> JsonataResult {
         .as_f64()
         .ok_or_else(|| JsonataError::new("T0410", "$pad: width must be a number"))?
         as i64;
+    if !(-MAX_PAD_WIDTH..=MAX_PAD_WIDTH).contains(&width) {
+        return Err(JsonataError::new(
+            "D3010",
+            format!("$pad: width argument exceeds maximum of {MAX_PAD_WIDTH}"),
+        ));
+    }
     let pad_str: compact_str::CompactString = if args.len() >= 3 {
         match &args[2] {
             Value::String(c) if !c.is_empty() => c.clone(),
@@ -736,6 +746,18 @@ mod tests {
         assert_eq!(text(fn_pad(&[s("abc"), n(5.0), s("-")], U)), "abc--");
         assert_eq!(text(fn_pad(&[s("abc"), n(2.0)], U)), "abc");
         assert_eq!(text(fn_pad(&[s("éé"), n(3.0)], U)), "éé ");
+    }
+
+    /// Width beyond ±10,000 → D3010; unguarded it reserved `width` bytes
+    /// (1e18 aborted the process via handle_alloc_error).
+    #[test]
+    fn pad_rejects_width_beyond_cap() {
+        assert_eq!(code(fn_pad(&[s("a"), n(10_001.0)], U)), "D3010");
+        assert_eq!(code(fn_pad(&[s("a"), n(-10_001.0)], U)), "D3010");
+        assert_eq!(code(fn_pad(&[s("a"), n(1e18)], U)), "D3010");
+        assert_eq!(code(fn_pad(&[s("a"), n(1e19)], U)), "D3010");
+        // The boundary itself is allowed.
+        assert_eq!(text(fn_pad(&[s("a"), n(10_000.0)], U)).len(), 10_000);
     }
 
     #[test]

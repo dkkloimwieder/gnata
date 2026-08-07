@@ -1193,7 +1193,7 @@ For builtins: always `[]any{value}` only.
 - **Parameters**: `(string, width [, char])` -- 2 or 3 args.
 - **<2 args**: **T0410** (Go reference: D3006).
 - **nil first arg**: undefined propagation.
-- **width**: positive = right-pad, negative = left-pad. No width cap in the Rust port (`crates/gnata-rs/src/stdlib/string_funcs.rs:272-317` allocates whatever is asked for). Go reference: `|width| > 10,000` is rejected with **D3010**.
+- **width**: positive = right-pad, negative = left-pad. `|width| > 10,000` is rejected with **D3010** (matches the Go reference).
 - **char**: padding character string (default `" "`). Empty string treated as `" "`. Repeats cyclically for multi-char pad strings.
 - **Operates on runes** (Unicode-aware).
 
