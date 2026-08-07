@@ -15,8 +15,6 @@ pub struct Sequence {
     pub(crate) values: Vec<Value>,
     /// Do NOT unwrap single-element sequences (set by `[]` suffix).
     pub(crate) keep_singleton: bool,
-    /// Explicitly constructed via `[...]`; prevents flattening.
-    pub(crate) cons_array: bool,
 }
 
 impl Sequence {
@@ -25,7 +23,6 @@ impl Sequence {
         Self {
             values: Vec::with_capacity(4),
             keep_singleton: false,
-            cons_array: false,
         }
     }
 
@@ -34,7 +31,6 @@ impl Sequence {
         Self {
             values: Vec::with_capacity(cap),
             keep_singleton: false,
-            cons_array: false,
         }
     }
 
@@ -43,7 +39,6 @@ impl Sequence {
         Self {
             values: items,
             keep_singleton: false,
-            cons_array: false,
         }
     }
 

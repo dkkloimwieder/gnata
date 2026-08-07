@@ -36,7 +36,7 @@ go test ./...                          # Go reference suite (repo root)
   functions are `Box<FunctionValue>`. Deliberately `!Send`: share the
   `Expression`, build input `Value`s per thread.
 - **`Sequence`**: internal-only `Value` variant carrying the
-  `keep_singleton`/`cons_array` flags. `eval()` collapses it at the API
+  `keep_singleton` flag. `eval()` collapses it at the API
   boundary; it must never reach users.
 - **`Environment`**: `Rc` parent chain with `RefCell` bindings and a small
   cache for non-local lookups; carries the shared call counter and an

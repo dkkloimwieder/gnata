@@ -2567,7 +2567,7 @@ fn eval_unary(
                 );
                 match val {
                     Value::Sequence(seq) => {
-                        if seq.cons_array || is_explicit_array {
+                        if is_explicit_array {
                             result.push(seq.into_value());
                         } else {
                             result.extend(seq.values);

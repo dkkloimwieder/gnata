@@ -111,7 +111,7 @@ pub struct Sequence {
 }
 ```
 
-**As built:** two flags only (`keep_singleton`, `cons_array`), boxed as `Value::Sequence(Box<Sequence>)` to keep `Value` small. Go's `OuterWrapper`/`TupleStream` were not ported -- tuple-stream handling moved into path evaluation.
+**As built:** one flag only (`keep_singleton`), boxed as `Value::Sequence(Box<Sequence>)` to keep `Value` small. `ConsArray` was dead state even in Go (never set; nesting is decided syntactically at the array-constructor node) and was dropped. Go's `OuterWrapper`/`TupleStream` were not ported -- tuple-stream handling moved into path evaluation.
 
 ### 1.4 State: bumpalo for Environment Chain Only
 

@@ -132,7 +132,7 @@ func CollapseSequence(s *Sequence) any {
 
 ### Why It's Dangerous
 The interaction between `KeepSingleton` and `ConsArray` in `evalUnary` (`eval_unary.go:30-60`) is subtle:
-- Explicit arrays `[x]` set `ConsArray = true` -- prevents flattening when nested inside another `[...]`
+- Explicit arrays `[x]` must not flatten when nested inside another `[...]` (the `ConsArray` field exists for this but is never set, even in Go -- the syntactic check below does the work)
 - Implicit arrays (from path evaluation) are spread into parent sequences
 - The decision is AST-structural (is the sub-expression a `NodeUnary "["`) not runtime
 
@@ -151,7 +151,7 @@ for _, expr := range node.Expressions {
 ```
 
 ### Rust Approach
-`Value::Sequence(Box<Sequence>)` as a dedicated variant. As built the struct carries **two** flags (`keep_singleton`, `cons_array`); Go's `OuterWrapper`/`TupleStream` are not flags in Rust -- tuple mode is selected from AST shape by `path_has_tuple_step` (`src/evaluator/mod.rs`). Array constructor evaluation must check the AST node type (via `NodeId` lookup in arena) to decide flatten vs nest.
+`Value::Sequence(Box<Sequence>)` as a dedicated variant. As built the struct carries **one** flag (`keep_singleton`); `ConsArray` was never set even in Go, and Go's `OuterWrapper`/`TupleStream` are not flags in Rust -- tuple mode is selected from AST shape by `path_has_tuple_step` (`src/evaluator/mod.rs`). Array constructor evaluation must check the AST node type (via `NodeId` lookup in arena) to decide flatten vs nest.
 
 ### Test: `[[1,2], [3,4]]` must produce `[[1,2],[3,4]]` (nested), but path expressions returning arrays must flatten.
 
