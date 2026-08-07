@@ -270,7 +270,9 @@ fn words_to_float(s: &str) -> Result<f64, JsonataError> {
 }
 
 fn words_to_int(s: &str) -> Result<i64, JsonataError> {
-    const MAX_SAFE: f64 = (1_i64 << 63) as f64 - 1024.0;
+    // Largest f64 below 2^63; Go writes `1<<63 - 1024` in untyped-constant
+    // (arbitrary-precision) arithmetic. `(1_i64 << 63)` wraps to i64::MIN.
+    const MAX_SAFE: f64 = 9_223_372_036_854_774_784.0; // 2^63 - 1024
     let f = words_to_float(s)?;
     if f > MAX_SAFE || f < -MAX_SAFE {
         return Err(JsonataError::new("D3137_FLOAT", format!("{f}")));
@@ -316,7 +318,13 @@ fn from_alphabetic(s: &str) -> Result<i64, JsonataError> {
                 format!("$parseInteger: invalid alphabetic character {c:?}"),
             ));
         }
-        result = result * 26 + (c as i64 - 'a' as i64 + 1);
+        // Go wraps silently past i64; a clean range error beats garbage.
+        result = result
+            .checked_mul(26)
+            .and_then(|r| r.checked_add(c as i64 - 'a' as i64 + 1))
+            .ok_or_else(|| {
+                JsonataError::new("D3137", "$parseInteger: alphabetic value out of range")
+            })?;
     }
     Ok(result)
 }
@@ -344,5 +352,30 @@ mod tests {
         assert_eq!(parse("mcmxcix", "i"), 1999.0);
         assert_eq!(parse("12,345,678", "#,##0"), 12_345_678.0);
         assert_eq!(parse("0123", "0000"), 123.0);
+    }
+
+    /// In-range word values take the i64 path; values past ±(2^63-1024)
+    /// pass through as floats via the D3137_FLOAT detour (Go-verified:
+    /// "trillion trillion" -> 1e24, "nine hundred trillion" -> 9e14).
+    #[test]
+    fn words_range_guard_boundary() {
+        assert_eq!(parse("nine hundred trillion", "w"), 9e14);
+        assert_eq!(parse("trillion trillion", "w"), 1e24);
+    }
+
+    /// Alphabetic overflow errors cleanly. Deliberate Go divergence:
+    /// Go wraps int64 silently ("zzzzzzzzzzzzzz" -> -6.69e18 garbage).
+    #[test]
+    fn alphabetic_overflow_is_clean_error() {
+        assert_eq!(parse("zz", "a"), 702.0); // Go-verified
+        let err = fn_parse_integer(
+            &[
+                Value::String("zzzzzzzzzzzzzz".into()),
+                Value::String("a".into()),
+            ],
+            &Value::Undefined,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "D3137");
     }
 }
