@@ -411,7 +411,7 @@ Port `suite_test.go` to Rust. The harness loads JSON test cases from `testdata/g
 }
 ```
 
-**As built:** `unordered` is not honoured by `tests/conformance.rs` -- every comparison is order-sensitive. The fixtures carrying the flag happen to pass on exact ordering.
+**As built:** `unordered` is honoured by `tests/conformance.rs`: flagged cases compare arrays as multisets at every depth (the reference harness's deep-equal-in-any-order). The nine fixtures carrying the flag also pass order-sensitively today, so the flag is robustness, not a pass/fail difference.
 
 ### 5.2 Progress Tracking
 

@@ -34,6 +34,9 @@ struct TestCase {
     input: Value,
     expected: Expected,
     bindings: Vec<(String, Value)>,
+    /// Fixture flag: compare arrays as multisets (any order, any depth),
+    /// like the reference harness's deep-equal-in-any-order.
+    unordered: bool,
 }
 
 #[derive(Debug)]
@@ -104,6 +107,7 @@ fn load_surrogate_test_cases(content: &str, _path: &Path) -> Vec<TestCase> {
         input,
         expected,
         bindings: Vec::new(),
+        unordered: false,
     }]
 }
 
@@ -187,6 +191,7 @@ fn parse_test_object(
         input,
         expected,
         bindings,
+        unordered: obj.get("unordered").and_then(|v| v.as_bool()) == Some(true),
     })
 }
 
@@ -254,7 +259,7 @@ fn run_test_case(tc: &TestCase) -> Result<(), String> {
             }
         }
         (Expected::Result(expected), Ok(actual)) => {
-            if values_match(expected, &actual) {
+            if values_match(expected, &actual, tc.unordered) {
                 Ok(())
             } else {
                 Err(format!(
@@ -273,11 +278,44 @@ fn run_test_case(tc: &TestCase) -> Result<(), String> {
 }
 
 /// Compare values, treating both as JSON for comparison.
-fn values_match(expected: &Value, actual: &Value) -> bool {
+fn values_match(expected: &Value, actual: &Value, unordered: bool) -> bool {
     // Compare via JSON representation for robustness.
     let ej = expected.to_json();
     let aj = actual.to_json();
-    json_equal(&ej, &aj)
+    if unordered {
+        json_equal_unordered(&ej, &aj)
+    } else {
+        json_equal(&ej, &aj)
+    }
+}
+
+/// Like `json_equal`, but arrays compare as multisets at every depth —
+/// the reference harness's deep-equal-in-any-order for fixtures flagged
+/// `"unordered": true`.
+fn json_equal_unordered(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a, b) {
+        (serde_json::Value::Array(a), serde_json::Value::Array(b)) => {
+            if a.len() != b.len() {
+                return false;
+            }
+            let mut unmatched: Vec<&serde_json::Value> = b.iter().collect();
+            for x in a {
+                match unmatched.iter().position(|y| json_equal_unordered(x, y)) {
+                    Some(i) => {
+                        unmatched.swap_remove(i);
+                    }
+                    None => return false,
+                }
+            }
+            true
+        }
+        (serde_json::Value::Object(a), serde_json::Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, v)| b.get(k).is_some_and(|bv| json_equal_unordered(v, bv)))
+        }
+        _ => json_equal(a, b),
+    }
 }
 
 fn json_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
