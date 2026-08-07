@@ -44,8 +44,33 @@ const NESTED: &str = r#"{"a": {"b": {"c": 42, "s": "hello"}},
     "mixed": [{"v": 1}, {"w": 2}, {"v": null}],
     "empty": []}"#;
 
+/// Arrays of arrays — auto-map must recurse per level, and singleton
+/// collapse interacts with the one-level flatten (gnata-dx5.4).
+const NESTED_ARRAYS: &str = r#"{
+    "a": [[{"b": 1}]],
+    "c": [{"d": {"e": [1]}}],
+    "f": [[{"g": {"h": [1, 2]}}], [{"g": {"h": 3}}]],
+    "m": [[{"v": 1}, {"v": 2}], [{"v": 3}]],
+    "p": [{"q": [[1, 2]]}],
+    "s": [[1, 2], [3]]}"#;
+
 /// (expression, data) pairs. Every pair runs fast vs general.
 const CASES: &[(&str, &str)] = &[
+    // ── Pure paths over nested arrays (gnata-dx5.4) ──
+    ("a.b", NESTED_ARRAYS),
+    ("c.d.e", NESTED_ARRAYS),
+    ("f.g.h", NESTED_ARRAYS),
+    ("m.v", NESTED_ARRAYS),
+    ("p.q", NESTED_ARRAYS),
+    ("s", NESTED_ARRAYS),
+    ("$count(a.b)", NESTED_ARRAYS),
+    ("$count(m.v)", NESTED_ARRAYS),
+    ("$count(p.q)", NESTED_ARRAYS),
+    ("$exists(a.b)", NESTED_ARRAYS),
+    ("$sum(m.v)", NESTED_ARRAYS),
+    ("$max(f.g.h)", NESTED_ARRAYS),
+    ("$min(m.v)", NESTED_ARRAYS),
+    ("$average(m.v)", NESTED_ARRAYS),
     // ── SimpleLambda::FieldAccess ──
     ("$map(items, function($v){$v.x})", CLEAN),
     ("$map(items, function($v){$v.x})", HOSTILE),

@@ -340,49 +340,54 @@ pub fn eval_fast(fast_path: &FastPath, input: &Value) -> Option<Value> {
 fn eval_pure_path(segments: &[String], input: &Value) -> Value {
     let mut current = input.clone();
     for segment in segments {
-        current = match &current {
-            Value::Object(obj) => match obj.get(segment.as_str()) {
-                Some(v) => v.clone(),
-                None => return Value::Undefined,
-            },
-            // Auto-map over arrays.
-            Value::Array(arr) => {
-                let mut results = Vec::new();
-                for item in arr.iter() {
-                    if let Value::Object(obj) = item
-                        && let Some(v) = obj.get(segment.as_str())
-                    {
-                        match v {
-                            Value::Array(inner) => results.extend(inner.iter().cloned()),
-                            Value::Undefined => {}
-                            other => results.push(other.clone()),
-                        }
-                    }
-                }
-                if results.is_empty() {
-                    return Value::Undefined;
-                }
-                if results.len() == 1 {
-                    results.into_iter().next().unwrap_or(Value::Undefined)
-                } else {
-                    Value::Array(Rc::from(results))
-                }
-            }
-            _ => return Value::Undefined,
-        };
+        current = path_step(segment, &current);
+        if current.is_undefined() {
+            return Value::Undefined;
+        }
     }
     current
 }
 
+/// One path step with array auto-mapping (mirror of `evaluator::eval_name`):
+/// nested arrays auto-map recursively, each array level flattens one level
+/// of array-valued results and collapses (0 → undefined, 1 → unwrapped,
+/// n → array), so `a.b` on `{"a": [[{"b": 1}]]}` yields 1.
+fn path_step(segment: &str, input: &Value) -> Value {
+    match input {
+        Value::Object(obj) => obj.get(segment).cloned().unwrap_or(Value::Undefined),
+        Value::Array(arr) => {
+            let mut results = Vec::new();
+            for item in arr.iter() {
+                match path_step(segment, item) {
+                    Value::Undefined => {}
+                    Value::Array(inner) => results.extend(inner.iter().cloned()),
+                    other => results.push(other),
+                }
+            }
+            match results.len() {
+                0 => Value::Undefined,
+                1 => results.into_iter().next().unwrap_or(Value::Undefined),
+                _ => Value::Array(Rc::from(results)),
+            }
+        }
+        _ => Value::Undefined,
+    }
+}
+
 /// Count matches along a pure path without materializing values.
 /// Avoids cloning leaf values — just counts how many exist.
-fn count_pure_path(segments: &[String], input: &Value) -> usize {
+///
+/// Returns `None` when the data contains nested arrays: their per-level
+/// singleton collapse can merge or split results in ways a count-only
+/// traversal cannot reproduce, so the caller must fall back to full
+/// evaluation.
+fn count_pure_path(segments: &[String], input: &Value) -> Option<usize> {
     if segments.is_empty() {
-        return match input {
+        return Some(match input {
             Value::Undefined => 0,
             Value::Array(arr) => arr.len(),
             _ => 1,
-        };
+        });
     }
 
     let segment = &segments[0];
@@ -391,34 +396,65 @@ fn count_pure_path(segments: &[String], input: &Value) -> usize {
     match input {
         Value::Object(obj) => match obj.get(segment.as_str()) {
             Some(v) if !v.is_undefined() => count_pure_path(rest, v),
-            _ => 0,
+            _ => Some(0),
         },
         Value::Array(arr) => {
             let mut total = 0;
             for item in arr.iter() {
-                if let Value::Object(obj) = item
-                    && let Some(v) = obj.get(segment.as_str())
-                {
-                    if rest.is_empty() {
-                        match v {
-                            Value::Array(inner) => total += inner.len(),
-                            Value::Undefined => {}
-                            _ => total += 1,
+                match item {
+                    Value::Object(obj) => {
+                        if let Some(v) = obj.get(segment.as_str()) {
+                            if rest.is_empty() {
+                                match v {
+                                    Value::Array(inner) => {
+                                        // An array element inside the leaf
+                                        // array can collapse to a different
+                                        // count (singleton unwrap) — defer.
+                                        if inner.iter().any(|e| matches!(e, Value::Array(_))) {
+                                            return None;
+                                        }
+                                        total += inner.len();
+                                    }
+                                    Value::Undefined => {}
+                                    _ => total += 1,
+                                }
+                            } else {
+                                total += count_pure_path(rest, v)?;
+                            }
                         }
-                    } else {
-                        total += count_pure_path(rest, v);
                     }
+                    Value::Array(_) => return None,
+                    _ => {}
                 }
             }
-            total
+            Some(total)
         }
-        _ => 0,
+        _ => Some(0),
+    }
+}
+
+/// `$count` semantics on the per-segment collapsed path result — the exact
+/// (but materializing) fallback when `count_pure_path` defers.
+fn collapsed_count(segments: &[String], input: &Value) -> usize {
+    match eval_pure_path(segments, input) {
+        Value::Undefined => 0,
+        Value::Array(arr) => arr.len(),
+        _ => 1,
     }
 }
 
 /// Visit each leaf value along a pure path without cloning.
 /// Calls `f` with a borrowed reference to each matching value.
-fn fold_pure_path<'a>(segments: &[String], input: &'a Value, f: &mut impl FnMut(&'a Value)) {
+///
+/// Returns `false` when the data contains nested arrays: their per-level
+/// singleton collapse can reshape the leaves, so the caller must fall
+/// back to full evaluation.
+#[must_use]
+fn fold_pure_path<'a>(
+    segments: &[String],
+    input: &'a Value,
+    f: &mut impl FnMut(&'a Value),
+) -> bool {
     if segments.is_empty() {
         match input {
             Value::Array(arr) => {
@@ -429,7 +465,7 @@ fn fold_pure_path<'a>(segments: &[String], input: &'a Value, f: &mut impl FnMut(
             Value::Undefined => {}
             other => f(other),
         }
-        return;
+        return true;
     }
 
     let segment = &segments[0];
@@ -438,31 +474,37 @@ fn fold_pure_path<'a>(segments: &[String], input: &'a Value, f: &mut impl FnMut(
     match input {
         Value::Object(obj) => {
             if let Some(v) = obj.get(segment.as_str()) {
-                fold_pure_path(rest, v, f);
+                return fold_pure_path(rest, v, f);
             }
+            true
         }
         Value::Array(arr) => {
             for item in arr.iter() {
-                if let Value::Object(obj) = item
-                    && let Some(v) = obj.get(segment.as_str())
-                {
-                    if rest.is_empty() {
-                        match v {
-                            Value::Array(inner) => {
-                                for elem in inner.iter() {
-                                    f(elem);
+                match item {
+                    Value::Object(obj) => {
+                        if let Some(v) = obj.get(segment.as_str()) {
+                            if rest.is_empty() {
+                                match v {
+                                    Value::Array(inner) => {
+                                        for elem in inner.iter() {
+                                            f(elem);
+                                        }
+                                    }
+                                    Value::Undefined => {}
+                                    other => f(other),
                                 }
+                            } else if !fold_pure_path(rest, v, f) {
+                                return false;
                             }
-                            Value::Undefined => {}
-                            other => f(other),
                         }
-                    } else {
-                        fold_pure_path(rest, v, f);
                     }
+                    Value::Array(_) => return false,
+                    _ => {}
                 }
             }
+            true
         }
-        _ => {}
+        _ => true,
     }
 }
 
@@ -499,18 +541,20 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
     // Aggregations that don't need materialized values — traverse and accumulate.
     match func.kind {
         FuncFastKind::Count => {
-            let n = count_pure_path(&func.path, input);
+            let n = count_pure_path(&func.path, input)
+                .unwrap_or_else(|| collapsed_count(&func.path, input));
             return Some(Value::Number(n as f64));
         }
         FuncFastKind::Exists => {
-            let n = count_pure_path(&func.path, input);
+            let n = count_pure_path(&func.path, input)
+                .unwrap_or_else(|| collapsed_count(&func.path, input));
             return Some(Value::Bool(n > 0));
         }
         FuncFastKind::Sum => {
             let mut total = 0.0_f64;
             let mut count = 0usize;
             let mut all_numbers = true;
-            fold_pure_path(&func.path, input, &mut |v| {
+            let clean = fold_pure_path(&func.path, input, &mut |v| {
                 count += 1;
                 if let Value::Number(n) = v {
                     total += n;
@@ -518,9 +562,10 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
                     all_numbers = false;
                 }
             });
-            // Non-number leaves (general path raises T0412) or an empty
-            // path (general returns Undefined) → defer to full eval.
-            if !all_numbers || count == 0 {
+            // Nested arrays, non-number leaves (general path raises T0412),
+            // or an empty path (general returns Undefined) → defer to full
+            // eval.
+            if !clean || !all_numbers || count == 0 {
                 return None;
             }
             return Some(Value::Number(total));
@@ -528,14 +573,14 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
         FuncFastKind::Max => {
             let mut result: Option<f64> = None;
             let mut all_numbers = true;
-            fold_pure_path(&func.path, input, &mut |v| {
+            let clean = fold_pure_path(&func.path, input, &mut |v| {
                 if let Value::Number(n) = v {
                     result = Some(result.map_or(*n, |cur| cur.max(*n)));
                 } else {
                     all_numbers = false;
                 }
             });
-            if !all_numbers {
+            if !clean || !all_numbers {
                 return None;
             }
             return Some(result.map_or(Value::Undefined, Value::Number));
@@ -543,14 +588,14 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
         FuncFastKind::Min => {
             let mut result: Option<f64> = None;
             let mut all_numbers = true;
-            fold_pure_path(&func.path, input, &mut |v| {
+            let clean = fold_pure_path(&func.path, input, &mut |v| {
                 if let Value::Number(n) = v {
                     result = Some(result.map_or(*n, |cur| cur.min(*n)));
                 } else {
                     all_numbers = false;
                 }
             });
-            if !all_numbers {
+            if !clean || !all_numbers {
                 return None;
             }
             return Some(result.map_or(Value::Undefined, Value::Number));
@@ -559,7 +604,7 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
             let mut total = 0.0_f64;
             let mut count = 0_usize;
             let mut all_numbers = true;
-            fold_pure_path(&func.path, input, &mut |v| {
+            let clean = fold_pure_path(&func.path, input, &mut |v| {
                 if let Value::Number(n) = v {
                     total += n;
                     count += 1;
@@ -567,7 +612,7 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
                     all_numbers = false;
                 }
             });
-            if !all_numbers {
+            if !clean || !all_numbers {
                 return None;
             }
             return Some(if count == 0 {
@@ -861,47 +906,84 @@ pub fn eval_tape_path(
     Some(Ok(tape_walk(root, segments)))
 }
 
+/// Intermediate result of a per-segment tape walk: the collapsed value at
+/// the current step, held as un-materialized tape nodes.
+enum TapeStep<'tape, 'input> {
+    Undefined,
+    One(tape::Value<'tape, 'input>),
+    Many(Vec<tape::Value<'tape, 'input>>),
+}
+
 /// Walk a simd-json tape value through path segments with array auto-mapping.
 ///
-/// Tape equivalent of `eval_pure_path` — same semantics but operates on
-/// `simd_json::tape::Value` to avoid building the full Value tree.
-/// If path semantics change in `eval_pure_path` or `evaluator::eval_name`,
-/// update this function to match.
-fn tape_walk(val: tape::Value<'_, '_>, segments: &[String]) -> Value {
-    if segments.is_empty() {
-        return tape_to_value(val);
-    }
-
-    let key = segments[0].as_str();
-    let rest = &segments[1..];
-
-    // Object: descend into the key
-    if let Some(obj) = val.as_object() {
-        return match obj.get(key) {
-            Some(child) => tape_walk(child, rest),
-            None => Value::Undefined,
+/// Tape equivalent of `eval_pure_path` — the same per-segment algorithm
+/// (auto-map with nested-array recursion, one-level flatten, 0/1/n collapse
+/// at every array level), operating on tape nodes so only the final leaves
+/// are converted to `Value`. A fused walk (whole remaining path per item) is
+/// NOT equivalent: an intermediate singleton collapse switches the path back
+/// to object-chain mode, which suppresses the terminal flatten. If path
+/// semantics change in `eval_pure_path` or `evaluator::eval_name`, update
+/// this function to match.
+fn tape_walk(root: tape::Value<'_, '_>, segments: &[String]) -> Value {
+    let mut cur = TapeStep::One(root);
+    for segment in segments {
+        cur = match cur {
+            TapeStep::Undefined => return Value::Undefined,
+            TapeStep::One(tv) => tape_path_step(segment, tv),
+            TapeStep::Many(nodes) => tape_step_over(segment, nodes),
         };
     }
-
-    // Array: auto-map — descend into each element
-    if let Some(arr) = val.as_array() {
-        let mut results = Vec::new();
-        for item in &arr {
-            let child = tape_walk(item, segments);
-            match child {
-                Value::Undefined => {}
-                Value::Array(inner) => results.extend(inner.iter().cloned()),
-                other => results.push(other),
-            }
+    match cur {
+        TapeStep::Undefined => Value::Undefined,
+        TapeStep::One(tv) => tape_to_value(tv),
+        TapeStep::Many(nodes) => {
+            let items: Vec<Value> = nodes.into_iter().map(tape_to_value).collect();
+            Value::Array(Rc::from(items))
         }
-        return match results.len() {
-            0 => Value::Undefined,
-            1 => results.into_iter().next().unwrap_or(Value::Undefined),
-            _ => Value::Array(Rc::from(results)),
+    }
+}
+
+/// One path step on a single tape node (tape mirror of `path_step`).
+fn tape_path_step<'t, 'i>(segment: &str, tv: tape::Value<'t, 'i>) -> TapeStep<'t, 'i> {
+    if let Some(obj) = tv.as_object() {
+        return match obj.get(segment) {
+            Some(child) => TapeStep::One(child),
+            None => TapeStep::Undefined,
         };
     }
+    if let Some(arr) = tv.as_array() {
+        let nodes: Vec<_> = (&arr).into_iter().collect();
+        return tape_step_over(segment, nodes);
+    }
+    TapeStep::Undefined
+}
 
-    Value::Undefined
+/// Auto-map a segment over tape nodes (tape mirror of `path_step`'s array
+/// arm): recurse into nested arrays, flatten one level of array-valued
+/// results, collapse 0/1/n.
+fn tape_step_over<'t, 'i>(segment: &str, nodes: Vec<tape::Value<'t, 'i>>) -> TapeStep<'t, 'i> {
+    let mut results: Vec<tape::Value<'t, 'i>> = Vec::new();
+    for node in nodes {
+        match tape_path_step(segment, node) {
+            TapeStep::Undefined => {}
+            TapeStep::One(child) => {
+                if let Some(inner) = child.as_array() {
+                    results.extend(&inner);
+                } else {
+                    results.push(child);
+                }
+            }
+            TapeStep::Many(vs) => results.extend(vs),
+        }
+    }
+    match results.len() {
+        0 => TapeStep::Undefined,
+        1 => match results.pop() {
+            Some(v) => TapeStep::One(v),
+            None => TapeStep::Undefined,
+        },
+        _ => TapeStep::Many(results),
+    }
 }
 
 /// Convert a simd-json tape value to a gnata Value.
