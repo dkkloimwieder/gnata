@@ -205,6 +205,9 @@ pub fn eval_lambda(arena: &AstArena, node: NodeId, input: &Value, env: &Rc<Envir
         })
         .unwrap_or_default();
 
+    // The closure capture below can form an Rc cycle once the lambda is
+    // bound into `env`'s scope chain; the API boundary breaks survivors.
+    env.note_closure_env(env);
     Value::Function(Box::new(FunctionValue::Lambda(Rc::new(Lambda {
         params: param_names,
         body,

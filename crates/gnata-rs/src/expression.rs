@@ -134,7 +134,9 @@ impl Expression {
             env.bind("$", input.clone());
         }
         let env = Rc::new(env);
-        crate::eval(&self.arena, self.root, input, &env)
+        let result = crate::eval(&self.arena, self.root, input, &env);
+        env.teardown_cycles();
+        result
     }
 
     /// Evaluate against raw bytes. Equivalent to [`Self::evaluate`] but takes `&[u8]`.
@@ -180,7 +182,9 @@ impl Expression {
         if !input.is_undefined() {
             env.bind("$", input.clone());
         }
-        crate::eval(&self.arena, self.root, &input, &env)
+        let result = crate::eval(&self.arena, self.root, &input, &env);
+        env.teardown_cycles();
+        result
     }
 
     /// Evaluate with extra variable bindings.
@@ -205,7 +209,9 @@ impl Expression {
             env.bind(name.clone(), value.clone());
         }
         let env = Rc::new(env);
-        crate::eval(&self.arena, self.root, &input, &env)
+        let result = crate::eval(&self.arena, self.root, &input, &env);
+        env.teardown_cycles();
+        result
     }
 
     /// Evaluate with a cancellation token.
@@ -230,7 +236,9 @@ impl Expression {
             env.bind("$", input.clone());
         }
         let env = Rc::new(env);
-        crate::eval(&self.arena, self.root, &input, &env)
+        let result = crate::eval(&self.arena, self.root, &input, &env);
+        env.teardown_cycles();
+        result
     }
 
     /// Evaluate with a pre-configured environment.
@@ -248,7 +256,9 @@ impl Expression {
         if !input.is_undefined() {
             eval_env.bind("$", input.clone());
         }
-        crate::eval(&self.arena, self.root, input, &eval_env)
+        let result = crate::eval(&self.arena, self.root, input, &eval_env);
+        eval_env.teardown_cycles();
+        result
     }
 
     /// Empty input and the literal `null` document mean *no input*:
@@ -495,6 +505,26 @@ mod tests {
     fn custom_func_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<CustomFunc>();
+    }
+
+    /// A lambda bound into its own scope forms an Rc cycle; the API
+    /// boundary must break it or every evaluation leaks its env chain —
+    /// including the bound input (gnata-0mb.7: 200k evals leaked 2.5 GB).
+    #[test]
+    fn recursive_lambda_does_not_leak_the_input() {
+        let expr = Expression::compile("($f := function($n){$n < 2 ? 1 : $n * $f($n - 1)}; $f(5))")
+            .unwrap();
+        let input = Value::from_json_str(r#"{"a": [1, 2, 3]}"#).unwrap();
+        let Value::Object(obj) = &input else {
+            panic!("expected object input")
+        };
+        let base = Rc::strong_count(obj);
+        assert_eq!(expr.evaluate_value(&input).unwrap().as_f64(), Some(120.0));
+        assert_eq!(
+            Rc::strong_count(obj),
+            base,
+            "evaluation leaked the env chain holding the input"
+        );
     }
 
     #[test]

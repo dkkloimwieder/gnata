@@ -23,6 +23,12 @@ pub struct CallCounter {
     pub depth: Cell<u32>,
     pub eval_depth: Cell<u32>,
     pub max: u32,
+    /// Closure environments created during evaluation. A lambda bound into
+    /// its own defining scope forms an `Rc` cycle (env -> binding ->
+    /// lambda -> closure env) that would leak; the public API boundary
+    /// drains this list and breaks surviving cycles. Shared chain-wide,
+    /// like the counters.
+    pub(crate) closure_envs: RefCell<Vec<std::rc::Weak<Environment>>>,
 }
 
 impl Default for CallCounter {
@@ -37,6 +43,7 @@ impl CallCounter {
             depth: Cell::new(0),
             eval_depth: Cell::new(0),
             max: DEFAULT_MAX_CALL_DEPTH,
+            closure_envs: RefCell::new(Vec::new()),
         }
     }
 }
@@ -225,6 +232,37 @@ impl Environment {
             return Err(JsonataError::new("D3001", "evaluation cancelled"));
         }
         Ok(())
+    }
+
+    /// Record `closure_env` as a potential cycle participant.
+    ///
+    /// Called when a lambda captures its defining environment; see
+    /// `CallCounter::closure_envs`.
+    pub(crate) fn note_closure_env(&self, closure_env: &Rc<Environment>) {
+        let mut suspects = self.calls.closure_envs.borrow_mut();
+        // Repeated lambdas in the same scope register once.
+        if let Some(last) = suspects.last()
+            && let Some(last) = last.upgrade()
+            && Rc::ptr_eq(&last, closure_env)
+        {
+            return;
+        }
+        suspects.push(Rc::downgrade(closure_env));
+    }
+
+    /// Break `Rc` cycles left behind by lambdas bound into their own
+    /// scope chain. Called at the public API boundary, after evaluation
+    /// has produced its (fully materialized) result: any closure env
+    /// still alive is only reachable through such a cycle — or through a
+    /// `Value::Function` in the result, which the public API cannot call.
+    pub(crate) fn teardown_cycles(&self) {
+        let suspects = std::mem::take(&mut *self.calls.closure_envs.borrow_mut());
+        for weak in suspects {
+            if let Some(env) = weak.upgrade() {
+                env.bindings.borrow_mut().clear();
+                env.cache.borrow_mut().clear();
+            }
+        }
     }
 
     /// Iterate over direct bindings (no parent chain walk).
