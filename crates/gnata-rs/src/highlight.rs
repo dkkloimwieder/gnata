@@ -415,6 +415,12 @@ impl<'a> HlWalker<'a> {
                     self.walk(term.expression);
                 }
             }
+            Expr::Grouped {
+                expr, ref group, ..
+            } => {
+                self.walk(expr);
+                self.walk_group(Some(group));
+            }
         }
     }
 

@@ -161,6 +161,14 @@ fn process_ast_inner(arena: &mut AstArena, node: NodeId) -> Result<NodeId, Jsona
             }
             Ok(node)
         }
+        Expr::Grouped { expr, .. } => {
+            let new_expr = process_ast(arena, expr)?;
+            if let Expr::Grouped { expr: e, .. } = arena.get_mut(node) {
+                *e = new_expr;
+            }
+            process_group(arena, node)?;
+            Ok(node)
+        }
         Expr::Function {
             procedure,
             arguments,
@@ -337,6 +345,7 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
         Expr::Function { group, .. } => group.clone(),
         Expr::Binary { group, .. } => group.clone(),
         Expr::Unary { group, .. } => group.clone(),
+        Expr::Grouped { group, .. } => Some(group.clone()),
         _ => None,
     };
     if let Some(mut g) = group {
@@ -351,6 +360,7 @@ fn process_group(arena: &mut AstArena, node: NodeId) -> Result<(), JsonataError>
             Expr::Function { group: gr, .. } => *gr = Some(g),
             Expr::Binary { group: gr, .. } => *gr = Some(g),
             Expr::Unary { group: gr, .. } => *gr = Some(g),
+            Expr::Grouped { group: gr, .. } => *gr = g,
             _ => {}
         }
     }

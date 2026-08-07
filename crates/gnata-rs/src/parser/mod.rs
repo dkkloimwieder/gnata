@@ -505,15 +505,22 @@ impl Parser {
                 let pairs_flat = self.parse_object_pairs()?;
                 let pairs = pairs_to_group_pairs(&pairs_flat);
                 self.infix = true;
-                // Attach group to left node
-                self.set_group(
+                // Attach group to the left node; nodes without a group
+                // slot (Block, literals, ...) get a Grouped wrapper.
+                match self.set_group(
                     left,
                     GroupExpr {
                         pairs,
                         pos: tok.pos,
                     },
-                );
-                Ok(left)
+                ) {
+                    None => Ok(left),
+                    Some(group) => Ok(self.arena.alloc(Expr::Grouped {
+                        expr: left,
+                        group,
+                        pos: tok.pos,
+                    })?),
+                }
             }
             TokenType::At => {
                 // S0215: @ cannot follow a predicate (subscript) expression.
@@ -986,19 +993,24 @@ impl Parser {
             Expr::Variable { group, .. } => group.is_some(),
             Expr::Unary { group, .. } => group.is_some(),
             Expr::Function { group, .. } => group.is_some(),
+            Expr::Grouped { .. } => true,
             _ => false,
         }
     }
 
-    fn set_group(&mut self, id: NodeId, group: GroupExpr) {
+    /// Attach a group-by to `id` if the node has a `group` slot; otherwise
+    /// hand the group back so the caller can wrap the node in
+    /// [`Expr::Grouped`] — silently dropping it loses `(1+2){"k": $}`.
+    fn set_group(&mut self, id: NodeId, group: GroupExpr) -> Option<GroupExpr> {
         match self.arena.get_mut(id) {
             Expr::Name { group: g, .. } => *g = Some(group),
             Expr::Binary { group: g, .. } => *g = Some(group),
             Expr::Variable { group: g, .. } => *g = Some(group),
             Expr::Unary { group: g, .. } => *g = Some(group),
             Expr::Function { group: g, .. } => *g = Some(group),
-            _ => {}
+            _ => return Some(group),
         }
+        None
     }
 
     fn set_focus(&mut self, id: NodeId, name: String) {

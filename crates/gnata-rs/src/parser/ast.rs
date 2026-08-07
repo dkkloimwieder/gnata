@@ -385,6 +385,16 @@ pub enum Expr {
         focus: Option<String>,
         pos: usize,
     },
+
+    /// Group-by attached to a node with no inline `group` slot
+    /// (Block, literals, ...): `(1+2){"k": $}` or `-3{"k": $}`.
+    /// Created by the parser's `{` handler when `set_group` cannot
+    /// place the group on `expr` directly.
+    Grouped {
+        expr: NodeId,
+        group: GroupExpr,
+        pos: usize,
+    },
 }
 
 impl Expr {
@@ -410,7 +420,8 @@ impl Expr {
             | Expr::Partial { pos, .. }
             | Expr::Lambda { pos, .. }
             | Expr::Transform { pos, .. }
-            | Expr::Sort { pos, .. } => *pos,
+            | Expr::Sort { pos, .. }
+            | Expr::Grouped { pos, .. } => *pos,
         }
     }
 

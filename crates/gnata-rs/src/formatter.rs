@@ -329,6 +329,13 @@ impl<'a> Formatter<'a> {
                 }
                 self.out.push(')');
             }
+
+            Expr::Grouped {
+                expr, ref group, ..
+            } => {
+                self.emit(expr, depth);
+                self.emit_group(Some(group), depth);
+            }
         }
     }
 

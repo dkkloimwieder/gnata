@@ -236,6 +236,7 @@ fn eval_inner(
                 }
                 return eval_unary(arena, cur_node, input, cur_env);
             }
+            Expr::Grouped { .. } => return eval_group_by(arena, cur_node, input, cur_env),
             Expr::Bind { .. } => return eval_bind(arena, cur_node, input, cur_env),
             Expr::Lambda { .. } => return Ok(eval_lambda(arena, cur_node, input, cur_env)),
             Expr::Partial { .. } => return eval_partial(arena, cur_node, input, cur_env),
@@ -533,6 +534,10 @@ fn push_children(expr: &Expr, out: &mut Vec<NodeId>) {
             push_group_pairs(group.as_ref(), out);
         }
         Expr::Variable { group, .. } => push_group_pairs(group.as_ref(), out),
+        Expr::Grouped { expr, group, .. } => {
+            out.push(*expr);
+            push_group_pairs(Some(group), out);
+        }
         Expr::Path { steps, group, .. } => {
             out.extend_from_slice(steps);
             push_group_pairs(group.as_ref(), out);
@@ -3215,6 +3220,7 @@ fn eval_group_by(
         Expr::Function { group: Some(g), .. } => g.clone(),
         Expr::Binary { group: Some(g), .. } => g.clone(),
         Expr::Unary { group: Some(g), .. } => g.clone(),
+        Expr::Grouped { group, .. } => group.clone(),
         _ => return eval_no_stack_check(arena, node, input, env),
     };
 
@@ -3227,6 +3233,7 @@ fn eval_group_by(
         Expr::Function { .. } => eval_function(arena, node, input, env)?,
         Expr::Binary { .. } => eval_binary(arena, node, input, env)?,
         Expr::Unary { .. } => eval_unary(arena, node, input, env)?,
+        Expr::Grouped { expr, .. } => eval_no_stack_check(arena, *expr, input, env)?,
         _ => eval_no_stack_check(arena, node, input, env)?,
     };
     if base.is_undefined() {
@@ -3652,6 +3659,52 @@ mod tests {
             eval_simple(r#"$map([{"a":{"b":1}}], function($x){$x}){"k": a.b}"#),
             eval_simple(r#"{"k": 1}"#)
         );
+    }
+
+    /// Group-by on nodes with no inline group slot — Block and literals —
+    /// goes through the Grouped wrapper (gnata-eci.8). All expectations
+    /// Go-verified 2026-08-07; the parser used to drop these groups
+    /// silently, so (1+2){"k": $} evaluated to 3.
+    #[test]
+    fn group_by_on_block_and_literal_nodes() {
+        assert_eq!(eval_simple(r#"(1+2){"k": $}"#), eval_simple(r#"{"k": 3}"#));
+        assert_eq!(eval_simple(r#"-3{"k": $}"#), eval_simple(r#"{"k": -3}"#));
+        assert_eq!(eval_simple(r#""s"{"k": $}"#), eval_simple(r#"{"k": "s"}"#));
+        assert_eq!(
+            eval_simple(r#"true{"k": $}"#),
+            eval_simple(r#"{"k": true}"#)
+        );
+        assert_eq!(
+            eval_simple(r#"null{"k": $}"#),
+            eval_simple(r#"{"k": null}"#)
+        );
+        // A block yielding a sequence groups over its items, and dotted
+        // pairs inside the group must still be processed into paths.
+        assert_eq!(
+            eval_with_data(r#"(a){"k": $}"#, r#"{"a": [1, 2]}"#),
+            eval_simple(r#"{"k": [1, 2]}"#)
+        );
+        assert_eq!(
+            eval_simple(r#"([{"a":{"b":1}},{"a":{"b":2}}]){"k": a.b}"#),
+            eval_simple(r#"{"k": [1, 2]}"#)
+        );
+        // Chained access into the grouped result — including the Grouped
+        // node standing as the first step of a path.
+        assert_eq!(eval_simple(r#"((1+2){"k": $}).k"#), Value::Number(3.0));
+        assert_eq!(eval_simple(r#"(1+2){"k": $}.k"#), Value::Number(3.0));
+    }
+
+    /// S0210 (one group per step) and S0209 (no predicate after group)
+    /// apply to Grouped wrappers exactly as to inline groups (Go-verified).
+    #[test]
+    fn grouped_wrapper_keeps_parse_errors() {
+        for (expr, code) in [
+            (r#"(1+2){"a":1}{"b":2}"#, "S0210"),
+            (r#"(1+2){"k": $}[0]"#, "S0209"),
+        ] {
+            let err = crate::Expression::compile(expr).expect_err("should not parse");
+            assert_eq!(err.code, code, "for {expr}");
+        }
     }
 
     // ── Wildcard ────────────────────────────────────────────────
