@@ -129,14 +129,12 @@ fn format_g15(n: f64) -> String {
 }
 
 /// Convert a number in the range [5e-7, 1e21) to full decimal representation.
-/// Equivalent to Go's `strconv.FormatFloat(n, 'f', -1, 64)`.
+/// Equivalent to Go's `strconv.FormatFloat(n, 'f', -1, 64)` — and so is
+/// Rust's `Display`: shortest round-trip digits, positional notation only.
+/// (A fixed-precision `{n:.20}` kept only ~14 significant digits for the
+/// [5e-7, 1e-6) band, so $string(7/9000000) failed to round-trip.)
 fn scientific_to_decimal(n: f64) -> String {
-    // Use format! with enough precision to get exact representation
-    // Then trim trailing zeros after decimal point
-    let s = format!("{n:.20}");
-    let s = s.trim_end_matches('0');
-    let s = s.trim_end_matches('.');
-    s.to_owned()
+    n.to_string()
 }
 
 /// Clean up a scientific notation string: remove leading zeros from exponent,
@@ -209,6 +207,28 @@ mod tests {
             format_float(999999999999999900000.0),
             "999999999999999900000"
         );
+    }
+
+    /// Go-verified (2026-08-07): the [5e-7, 1e-6) band prints full decimal
+    /// with shortest round-trip digits, not 14-sig-digit truncation
+    /// (gnata-nuo.4).
+    #[test]
+    fn format_small_band_keeps_full_precision() {
+        assert_eq!(
+            format_float(7.0_f64 / 9_000_000.0),
+            "0.0000007777777777777778"
+        );
+        assert_eq!(format_float(0.000_000_5), "0.0000005");
+        assert_eq!(
+            format_float(0.000_000_999_999_999_999_999_7),
+            "0.0000009999999999999997"
+        );
+        assert_eq!(
+            format_float(0.000_001_234_567_890_123_456_7),
+            "0.0000012345678901234567"
+        );
+        // Just below the band stays scientific.
+        assert_eq!(format_float(0.000_000_49), "4.9e-7");
     }
 
     #[test]
