@@ -472,6 +472,7 @@ fn node_has_index_binding(arena: &AstArena, node: NodeId) -> bool {
         Expr::Variable { index: Some(_), .. } | Expr::Variable { focus: Some(_), .. } => true,
         Expr::Binary { index: Some(_), .. } | Expr::Binary { focus: Some(_), .. } => true,
         Expr::Sort { index: Some(_), .. } | Expr::Sort { focus: Some(_), .. } => true,
+        Expr::Block { index: Some(_), .. } | Expr::Block { focus: Some(_), .. } => true,
         Expr::Binary { op, lhs, rhs, .. } if *op == BinaryOp::Subscript => {
             let lhs = *lhs;
             let rhs = *rhs;
@@ -1275,6 +1276,7 @@ fn get_step_bindings(arena: &AstArena, step: NodeId) -> (Option<String>, Option<
         Expr::Name { index, focus, .. } => (index.clone(), focus.clone()),
         Expr::Variable { index, focus, .. } => (index.clone(), focus.clone()),
         Expr::Sort { index, focus, .. } => (index.clone(), focus.clone()),
+        Expr::Block { index, focus, .. } => (index.clone(), focus.clone()),
         Expr::Binary {
             op,
             lhs,
@@ -3645,6 +3647,27 @@ mod tests {
         // node standing as the first step of a path.
         assert_eq!(eval_simple(r#"((1+2){"k": $}).k"#), Value::Number(3.0));
         assert_eq!(eval_simple(r#"(1+2){"k": $}.k"#), Value::Number(3.0));
+    }
+
+    /// Focus/index bindings on Block path steps evaluate like Go instead
+    /// of being silently discarded by the parser (gnata-0mb.4). All five
+    /// expectations Go-verified 2026-08-07.
+    #[test]
+    fn focus_and_index_bindings_on_block_steps() {
+        let data = r#"{"a": [1, 2]}"#;
+        for (src, expected) in [
+            ("a.($ * 2)@$v.$v", "[2, 4]"),
+            ("(a)@$v.$v", "[1, 2]"),
+            ("a@$v.$v", "[1, 2]"),
+            ("a.($ * 2)#$i.$i", "[0, 0]"),
+            ("(a)#$i.$i", "[0, 1]"),
+        ] {
+            assert_eq!(
+                eval_with_data(src, data),
+                eval_simple(expected),
+                "for {src}"
+            );
+        }
     }
 
     /// Sort comparators that raise a JSONata error mid-sort must surface

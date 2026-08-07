@@ -21,6 +21,8 @@ pub struct JsonataError {
     pub value: Option<String>,
     /// Human-readable description of the error.
     pub message: String,
+    /// Byte offset into the source expression, for parse errors.
+    pub position: Option<usize>,
 }
 
 impl JsonataError {
@@ -31,6 +33,7 @@ impl JsonataError {
             token: String::new(),
             value: None,
             message: message.into(),
+            position: None,
         }
     }
 
@@ -41,6 +44,7 @@ impl JsonataError {
             token: String::new(),
             value: None,
             message: String::new(),
+            position: None,
         }
     }
 
@@ -55,6 +59,13 @@ impl JsonataError {
     #[must_use]
     pub fn with_value(mut self, value: impl Into<String>) -> Self {
         self.value = Some(value.into());
+        self
+    }
+
+    /// Attach the source byte offset the error refers to.
+    #[must_use]
+    pub fn with_position(mut self, position: usize) -> Self {
+        self.position = Some(position);
         self
     }
 }

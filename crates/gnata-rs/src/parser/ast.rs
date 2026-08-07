@@ -34,38 +34,6 @@ pub enum BinaryOp {
 }
 
 impl BinaryOp {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "+" => Some(Self::Add),
-            "-" => Some(Self::Sub),
-            "*" => Some(Self::Mul),
-            "/" => Some(Self::Div),
-            "%" => Some(Self::Mod),
-            "**" => Some(Self::Pow),
-            "&" => Some(Self::Concat),
-            "=" => Some(Self::Eq),
-            "!=" => Some(Self::Ne),
-            "<" => Some(Self::Lt),
-            "<=" => Some(Self::Le),
-            ">" => Some(Self::Gt),
-            ">=" => Some(Self::Ge),
-            "and" => Some(Self::And),
-            "or" => Some(Self::Or),
-            "in" => Some(Self::In),
-            "~>" => Some(Self::Chain),
-            "??" => Some(Self::NullCoal),
-            "?:" => Some(Self::CondTern),
-            "[" => Some(Self::Subscript),
-            ".." => Some(Self::Range),
-            "{" => Some(Self::ObjConst),
-            "." => Some(Self::Dot),
-            "^" => Some(Self::Sort),
-            ":=" => Some(Self::Assign),
-            "|" => Some(Self::Pipe),
-            _ => None,
-        }
-    }
-
     /// Return the canonical string representation of this operator.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -114,15 +82,6 @@ pub enum UnaryOp {
 }
 
 impl UnaryOp {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "-" => Some(Self::Negate),
-            "[" => Some(Self::ArrayCons),
-            "{" => Some(Self::ObjCons),
-            _ => None,
-        }
-    }
-
     /// Return the canonical string representation of this operator.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -195,9 +154,10 @@ impl AstArena {
     /// Resolve a node id to its expression.
     ///
     /// # Panics
-    /// Panics if `id` is [`NodeId::EMPTY`] or was allocated by a different
-    /// arena — both are caller bugs. Use [`AstArena::try_get`] to resolve
-    /// ids of uncertain provenance.
+    /// Panics if `id` is [`NodeId::EMPTY`] or out of bounds for this arena —
+    /// both are caller bugs. A foreign id that happens to be in bounds is
+    /// NOT detected: it silently resolves to an unrelated node. Use
+    /// [`AstArena::try_get`] to resolve ids of uncertain provenance.
     #[inline]
     #[expect(clippy::panic, reason = "documented caller-bug panic (M-PANIC-ON-BUG)")]
     pub fn get(&self, id: NodeId) -> &Expr {
@@ -324,6 +284,10 @@ pub enum Expr {
     /// Block: semicolon-separated or parenthesized expressions.
     Block {
         expressions: Vec<NodeId>,
+        /// Focus binding (`@$var`) when the block is a path step.
+        focus: Option<String>,
+        /// Index binding (`#$var`) when the block is a path step.
+        index: Option<String>,
         pos: usize,
     },
 
@@ -423,16 +387,6 @@ impl Expr {
             | Expr::Sort { pos, .. }
             | Expr::Grouped { pos, .. } => *pos,
         }
-    }
-
-    /// Check if this is a Name node (for keep_array modification).
-    pub fn is_name(&self) -> bool {
-        matches!(self, Expr::Name { .. })
-    }
-
-    /// Check if this is a Variable node.
-    pub fn is_variable(&self) -> bool {
-        matches!(self, Expr::Variable { .. })
     }
 }
 

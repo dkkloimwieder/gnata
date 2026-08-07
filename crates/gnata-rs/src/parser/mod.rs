@@ -50,7 +50,8 @@ impl Parser {
                 "S0201",
                 &format!("unexpected token: {}", parser.token.value),
                 parser.token.pos,
-            ));
+            )
+            .with_token(parser.token.value.clone()));
         }
         Ok((parser.arena, root))
     }
@@ -75,7 +76,8 @@ impl Parser {
                 "S0202",
                 &format!("expected {:?}, got {:?}", expected, self.token.typ),
                 self.token.pos,
-            ));
+            )
+            .with_token(self.token.value.clone()));
         }
         let tok = std::mem::take(&mut self.token);
         self.advance()?;
@@ -88,7 +90,8 @@ impl Parser {
                 "S0202",
                 &format!("expected {:?}, got {:?}", expected, self.token.typ),
                 self.token.pos,
-            ));
+            )
+            .with_token(self.token.value.clone()));
         }
         let tok = std::mem::take(&mut self.token);
         self.advance_prefix()?;
@@ -358,6 +361,8 @@ impl Parser {
                 self.advance()?; // consume )
                 Ok(self.arena.alloc(Expr::Block {
                     expressions: exprs,
+                    focus: None,
+                    index: None,
                     pos: tok.pos,
                 })?)
             }
@@ -380,7 +385,8 @@ impl Parser {
                 "S0211",
                 &format!("unexpected token: {}", tok.value),
                 tok.pos,
-            )),
+            )
+            .with_token(tok.value)),
         }
     }
 
@@ -1024,6 +1030,7 @@ impl Parser {
             Expr::Binary { focus, .. } => *focus = Some(name),
             Expr::Variable { focus, .. } => *focus = Some(name),
             Expr::Sort { focus, .. } => *focus = Some(name),
+            Expr::Block { focus, .. } => *focus = Some(name),
             _ => {}
         }
     }
@@ -1034,6 +1041,7 @@ impl Parser {
             Expr::Binary { index, .. } => *index = Some(name),
             Expr::Variable { index, .. } => *index = Some(name),
             Expr::Sort { index, .. } => *index = Some(name),
+            Expr::Block { index, .. } => *index = Some(name),
             _ => {}
         }
     }
@@ -1073,8 +1081,8 @@ fn binding_power(tt: TokenType) -> i32 {
     }
 }
 
-fn parse_error(code: &'static str, msg: &str, _pos: usize) -> JsonataError {
-    JsonataError::new(code, msg)
+fn parse_error(code: &'static str, msg: &str, pos: usize) -> JsonataError {
+    JsonataError::new(code, msg).with_position(pos)
 }
 
 /// Validate a raw signature string (including surrounding `<` and `>`) at parse time.
@@ -1229,6 +1237,18 @@ mod tests {
     fn parse_variable() {
         let (arena, root) = parse("$x");
         assert!(matches!(arena.get(root), Expr::Variable { name, .. } if name == "x"));
+    }
+
+    /// Parse errors carry their source position, and unexpected-token
+    /// errors carry the token text (gnata-0mb.4).
+    #[test]
+    fn parse_errors_carry_position_and_token() {
+        let err = Parser::parse("1 ⊕ 2").unwrap_err();
+        assert!(err.position.is_some());
+
+        let err = Parser::parse("a b").unwrap_err();
+        assert_eq!(err.position, Some(2));
+        assert_eq!(err.token, "b");
     }
 
     #[test]
