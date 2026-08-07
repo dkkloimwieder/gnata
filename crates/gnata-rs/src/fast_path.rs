@@ -668,13 +668,14 @@ fn eval_function(func: &FuncFastPath, input: &Value) -> Option<Value> {
 /// Handle undefined input for functions that have defined behavior on undefined.
 fn apply_func_undefined(kind: FuncFastKind) -> Value {
     match kind {
-        FuncFastKind::Exists => Value::Bool(false),
-        FuncFastKind::Boolean => Value::Undefined,
-        FuncFastKind::String => Value::Undefined,
-        FuncFastKind::Number => Value::Undefined,
-        FuncFastKind::Type => Value::Undefined,
-        FuncFastKind::Not => Value::Undefined,
-        FuncFastKind::Count => Value::Number(0.0),
+        FuncFastKind::Exists
+        | FuncFastKind::Count
+        | FuncFastKind::Sum
+        | FuncFastKind::Max
+        | FuncFastKind::Min
+        | FuncFastKind::Average => {
+            unreachable!("aggregate kinds return early in eval_function and never materialize")
+        }
         _ => Value::Undefined,
     }
 }
@@ -683,7 +684,14 @@ fn apply_func_undefined(kind: FuncFastKind) -> Value {
 #[expect(clippy::too_many_lines)]
 fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
     match func.kind {
-        FuncFastKind::Exists => Some(Value::Bool(!val.is_undefined())),
+        FuncFastKind::Exists
+        | FuncFastKind::Count
+        | FuncFastKind::Sum
+        | FuncFastKind::Max
+        | FuncFastKind::Min
+        | FuncFastKind::Average => {
+            unreachable!("aggregate kinds return early in eval_function and never materialize")
+        }
 
         FuncFastKind::Type => {
             let t = match val {
@@ -781,36 +789,6 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
             _ => None,
         },
 
-        FuncFastKind::Count => match val {
-            Value::Array(arr) => Some(Value::Number(arr.len() as f64)),
-            Value::Undefined => Some(Value::Number(0.0)),
-            _ => Some(Value::Number(1.0)),
-        },
-
-        FuncFastKind::Sum => {
-            let nums = collect_numbers(val)?;
-            Some(Value::Number(nums.iter().sum()))
-        }
-
-        FuncFastKind::Max => {
-            let nums = collect_numbers(val)?;
-            nums.iter().copied().reduce(f64::max).map(Value::Number)
-        }
-
-        FuncFastKind::Min => {
-            let nums = collect_numbers(val)?;
-            nums.iter().copied().reduce(f64::min).map(Value::Number)
-        }
-
-        FuncFastKind::Average => {
-            let nums = collect_numbers(val)?;
-            if nums.is_empty() {
-                return Some(Value::Undefined);
-            }
-            let sum: f64 = nums.iter().sum();
-            Some(Value::Number(sum / nums.len() as f64))
-        }
-
         FuncFastKind::Keys => match val {
             Value::Object(obj) => {
                 let keys: Vec<Value> = obj
@@ -893,24 +871,6 @@ fn flatten_recursive(arr: &[Value], depth: usize) -> Vec<Value> {
         result.push(item.clone());
     }
     result
-}
-
-/// Collect all numbers from a value (scalar or array). Returns None if any non-number found.
-fn collect_numbers(val: &Value) -> Option<Vec<f64>> {
-    match val {
-        Value::Number(n) => Some(vec![*n]),
-        Value::Array(arr) => {
-            let mut nums = Vec::with_capacity(arr.len());
-            for item in arr.iter() {
-                match item {
-                    Value::Number(n) => nums.push(*n),
-                    _ => return None,
-                }
-            }
-            Some(nums)
-        }
-        _ => None,
-    }
 }
 
 // ── Tape-based evaluation (raw bytes, no Value tree) ───────────────

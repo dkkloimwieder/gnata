@@ -235,6 +235,12 @@ const CASES: &[(&str, &str)] = &[
     ("items.$contains(name, \"a\")", HOSTILE),
     ("items.$formatBase(x, 16)", CLEAN),
     ("items.$substring(name, 0, 2)", CLEAN),
+    // $pad/$split once had PreparedState twins that exec never matched
+    // (deleted in gnata-dx5.12) — keep both routed via generic dispatch.
+    ("items.$pad(name, 8)", CLEAN),
+    ("items.$pad(name, 8, \"*\")", HOSTILE),
+    ("items.$split(name, \"a\")", CLEAN),
+    ("items.$split(name, \"a\", 1)", HOSTILE),
     ("items.$lowercase(name)", CLEAN),
     ("items.$lowercase(name)", HOSTILE),
     ("items.$uppercase(name)", CLEAN),

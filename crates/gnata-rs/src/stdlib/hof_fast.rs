@@ -659,17 +659,8 @@ pub(crate) enum PreparedState {
     },
     /// $round: pre-extracted precision
     Round { precision: i64 },
-    /// $substring: pre-extracted start and optional length
-    Substring { start: f64, length: Option<f64> },
-    /// $pad: pre-extracted width and pad char
-    Pad { width: i64, pad_char: char },
     /// $contains with string arg: pre-extracted needle
     Contains { needle: String },
-    /// $split with string arg: pre-extracted separator and optional limit
-    Split {
-        separator: String,
-        limit: Option<usize>,
-    },
     /// $formatBase: pre-extracted radix
     FormatBase { radix: u32 },
 }
@@ -679,10 +670,7 @@ impl std::fmt::Debug for PreparedState {
         match self {
             Self::FormatNumber { .. } => write!(f, "FormatNumber(...)"),
             Self::Round { precision } => write!(f, "Round({precision})"),
-            Self::Substring { start, length } => write!(f, "Substring({start}, {length:?})"),
-            Self::Pad { width, pad_char } => write!(f, "Pad({width}, {pad_char:?})"),
             Self::Contains { needle } => write!(f, "Contains({needle:?})"),
-            Self::Split { separator, limit } => write!(f, "Split({separator:?}, {limit:?})"),
             Self::FormatBase { radix } => write!(f, "FormatBase({radix})"),
         }
     }
@@ -887,48 +875,12 @@ fn try_prepare(func_name: &str, args: &[CallArg]) -> Option<PreparedState> {
             };
             Some(PreparedState::Round { precision })
         }
-        "substring" => {
-            let start = match args.get(1) {
-                Some(CallArg::Const(Value::Number(n))) => *n,
-                _ => return None,
-            };
-            let length = match args.get(2) {
-                Some(CallArg::Const(Value::Number(n))) => Some(*n),
-                None => None,
-                _ => return None,
-            };
-            Some(PreparedState::Substring { start, length })
-        }
-        "pad" => {
-            let width = match args.get(1) {
-                Some(CallArg::Const(Value::Number(n))) => *n as i64,
-                _ => return None,
-            };
-            let pad_char = match args.get(2) {
-                Some(CallArg::Const(Value::String(s))) => s.chars().next().unwrap_or(' '),
-                None => ' ',
-                _ => return None,
-            };
-            Some(PreparedState::Pad { width, pad_char })
-        }
         "contains" => {
             let needle = match args.get(1) {
                 Some(CallArg::Const(Value::String(s))) => s.to_string(),
                 _ => return None,
             };
             Some(PreparedState::Contains { needle })
-        }
-        "split" => {
-            let separator = match args.get(1) {
-                Some(CallArg::Const(Value::String(s))) => s.to_string(),
-                _ => return None,
-            };
-            let limit = match args.get(2) {
-                Some(CallArg::Const(Value::Number(n))) => Some(*n as usize),
-                None => None,
-                _ => return None,
-            };
-            Some(PreparedState::Split { separator, limit })
         }
         "formatBase" => {
             let radix = match args.get(1) {
@@ -1000,8 +952,6 @@ fn exec_prepared(prepared: &PreparedState, field_val: &Value) -> Option<JsonataR
             )),
             _ => None,
         },
-        // For other prepared states, fall through to generic dispatch
-        _ => None,
     }
 }
 
