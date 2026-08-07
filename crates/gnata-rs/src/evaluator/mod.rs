@@ -690,7 +690,7 @@ fn eval_tuple_sort_step(
     ctxs: Vec<(Value, Rc<Environment>)>,
 ) -> Result<Vec<(Value, Rc<Environment>)>, JsonataError> {
     let needs_navigation = !expr.is_empty() && !matches!(arena.get(expr), Expr::Variable { .. });
-    let mut sorted_ctxs = if needs_navigation {
+    let sorted_ctxs = if needs_navigation {
         let mut inner_ctxs: Vec<(Value, Rc<Environment>)> = Vec::new();
         for (val, ctx_env) in &ctxs {
             if let Expr::Path {
@@ -730,23 +730,9 @@ fn eval_tuple_sort_step(
         ctxs
     };
 
-    let mut sort_err: Option<JsonataError> = None;
-    sorted_ctxs.sort_by(|a, b| {
-        if sort_err.is_some() {
-            return std::cmp::Ordering::Equal;
-        }
-        match compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1) {
-            Ok(cmp) => cmp.cmp(&0),
-            Err(e) => {
-                sort_err = Some(e);
-                std::cmp::Ordering::Equal
-            }
-        }
-    });
-    if let Some(e) = sort_err {
-        return Err(e);
-    }
-    Ok(sorted_ctxs)
+    crate::try_sort::try_sort_by(sorted_ctxs, |a, b| {
+        compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1).map(|c| c.cmp(&0))
+    })
 }
 
 /// Handle a Parent (%) step within tuple-aware path evaluation.
@@ -2726,44 +2712,20 @@ fn eval_sort(
         };
 
     if let Some(fields) = simple_fields {
-        let mut sort_err: Option<JsonataError> = None;
-        arr.sort_by(|a, b| {
-            if sort_err.is_some() {
-                return std::cmp::Ordering::Equal;
-            }
+        arr = crate::try_sort::try_sort_by(arr, |a, b| {
             for &(field, descending) in &fields {
-                match crate::stdlib::hof_fast::compare_by_field_checked(a, b, field) {
-                    Ok(std::cmp::Ordering::Equal) => {}
-                    Ok(ord) => return if descending { ord.reverse() } else { ord },
-                    Err(e) => {
-                        sort_err = Some(e);
-                        return std::cmp::Ordering::Equal;
-                    }
+                match crate::stdlib::hof_fast::compare_by_field_checked(a, b, field)? {
+                    std::cmp::Ordering::Equal => {}
+                    ord => return Ok(if descending { ord.reverse() } else { ord }),
                 }
             }
-            std::cmp::Ordering::Equal
-        });
-        if let Some(e) = sort_err {
-            return Err(e);
-        }
+            Ok(std::cmp::Ordering::Equal)
+        })?;
     } else {
         // Full evaluator path for complex sort term expressions.
-        let mut sort_err: Option<JsonataError> = None;
-        arr.sort_by(|a, b| {
-            if sort_err.is_some() {
-                return std::cmp::Ordering::Equal;
-            }
-            match compare_sort_terms(arena, &terms, a, b, env, env) {
-                Ok(cmp) => cmp.cmp(&0),
-                Err(e) => {
-                    sort_err = Some(e);
-                    std::cmp::Ordering::Equal
-                }
-            }
-        });
-        if let Some(e) = sort_err {
-            return Err(e);
-        }
+        arr = crate::try_sort::try_sort_by(arr, |a, b| {
+            compare_sort_terms(arena, &terms, a, b, env, env).map(|c| c.cmp(&0))
+        })?;
     }
 
     if !was_array && arr.len() == 1 {
@@ -2790,23 +2752,9 @@ fn eval_sort_with_parent_tracking(
         return Ok(Value::Undefined);
     }
 
-    let mut sorted = ctxs;
-    let mut sort_err: Option<JsonataError> = None;
-    sorted.sort_by(|a, b| {
-        if sort_err.is_some() {
-            return std::cmp::Ordering::Equal;
-        }
-        match compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1) {
-            Ok(cmp) => cmp.cmp(&0),
-            Err(e) => {
-                sort_err = Some(e);
-                std::cmp::Ordering::Equal
-            }
-        }
-    });
-    if let Some(e) = sort_err {
-        return Err(e);
-    }
+    let sorted = crate::try_sort::try_sort_by(ctxs, |a, b| {
+        compare_sort_terms(arena, terms, &a.0, &b.0, &a.1, &b.1).map(|c| c.cmp(&0))
+    })?;
 
     let mut seq = Sequence::new();
     for (val, _) in &sorted {
@@ -3694,6 +3642,31 @@ mod tests {
         // node standing as the first step of a path.
         assert_eq!(eval_simple(r#"((1+2){"k": $}).k"#), Value::Number(3.0));
         assert_eq!(eval_simple(r#"(1+2){"k": $}.k"#), Value::Number(3.0));
+    }
+
+    /// Sort comparators that raise a JSONata error mid-sort must surface
+    /// the error, never a total-order violation panic from std sort —
+    /// large arrays exercise the merge path (gnata-emj.9).
+    #[test]
+    fn sort_error_on_large_arrays_returns_error_without_panic() {
+        let nums: Vec<String> = (0..100).map(|i| i.to_string()).collect();
+        let mixed = format!(
+            "[{}, \"x\", {}]",
+            nums[..50].join(","),
+            nums[50..].join(",")
+        );
+        for expr in [format!("{mixed}^($)"), format!("$sort({mixed})")] {
+            let err = eval_expr(&expr, &Value::Undefined).unwrap_err();
+            assert_eq!(err.code, "T2007", "for {expr}");
+        }
+        // The $sort comparator protocol never returns Greater; a
+        // degenerate always-true comparator must also stay panic-free
+        // (order is unspecified, as in Go's sort.SliceStable).
+        let count = eval_simple(&format!(
+            "$count($sort([{}], function($a,$b){{true}}))",
+            nums.join(",")
+        ));
+        assert_eq!(count, Value::Number(100.0));
     }
 
     /// Undefined group keys skip the item; null (like any non-string)

@@ -81,6 +81,7 @@ pub(crate) mod lexer;
 pub(crate) mod parser;
 pub(crate) mod stdlib;
 pub(crate) mod stream;
+pub(crate) mod try_sort;
 pub(crate) mod value;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm;

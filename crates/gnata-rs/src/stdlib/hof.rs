@@ -406,7 +406,7 @@ pub fn fn_sort(
     if arr_val.is_undefined() {
         return Ok(Value::Undefined);
     }
-    let mut arr = arr_val.coerce_to_array().to_vec();
+    let arr = arr_val.coerce_to_array().to_vec();
     if arr.len() <= 1 {
         return Ok(Value::Array(Rc::from(arr)));
     }
@@ -418,86 +418,45 @@ pub fn fn_sort(
     if let Some(func) = &comparator
         && let Some(SimpleLambda::SortComparator { field, op }) = try_fast_lambda(func, arena)
     {
-        let mut error: Option<JsonataError> = None;
-        arr.sort_by(|a, b| {
-            if error.is_some() {
-                return std::cmp::Ordering::Equal;
-            }
+        let arr = crate::try_sort::try_sort_by(arr, |a, b| {
             // fn(b, a) binds $a := b, $b := a, so the body
             // `$a.field op $b.field` reads fields in that order.
             let lhs = hof_fast::get_field(b, &field);
             let rhs = hof_fast::get_field(a, &field);
-            match hof_fast::eval_binary_simple(&lhs, op, &rhs) {
-                Ok(val) => {
-                    if val.to_boolean() {
-                        std::cmp::Ordering::Less
-                    } else {
-                        std::cmp::Ordering::Equal
-                    }
-                }
-                Err(e) => {
-                    error = Some(e);
-                    std::cmp::Ordering::Equal
-                }
-            }
-        });
-        if let Some(e) = error {
-            return Err(e);
-        }
+            let val = hof_fast::eval_binary_simple(&lhs, op, &rhs)?;
+            Ok(if val.to_boolean() {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            })
+        })?;
         return Ok(Value::Array(Rc::from(arr)));
     }
 
     // Sort with optional comparator.
-    let mut error: Option<JsonataError> = None;
-    arr.sort_by(|a, b| {
-        if error.is_some() {
-            return std::cmp::Ordering::Equal;
+    let arr = crate::try_sort::try_sort_by(arr, |a, b| match &comparator {
+        Some(func) => {
+            // Match Go: call fn(b, a) (swapped) and map true→Less, false→Equal.
+            // JSONata comparator fn(a,b) returns true when a should sort AFTER b.
+            // By calling fn(b,a): true means b sorts after a → a < b → Less.
+            // false means equal or a sorts after b → preserve order → Equal.
+            let val = call_function(func, &[b.clone(), a.clone()], a, env, arena)?;
+            Ok(if val.to_boolean() {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Equal
+            })
         }
-        match &comparator {
-            Some(func) => {
-                // Match Go: call fn(b, a) (swapped) and map true→Less, false→Equal.
-                // JSONata comparator fn(a,b) returns true when a should sort AFTER b.
-                // By calling fn(b,a): true means b sorts after a → a < b → Less.
-                // false means equal or a sorts after b → preserve order → Equal.
-                match call_function(func, &[b.clone(), a.clone()], a, env, arena) {
-                    Ok(val) => {
-                        if val.to_boolean() {
-                            std::cmp::Ordering::Less
-                        } else {
-                            std::cmp::Ordering::Equal
-                        }
-                    }
-                    Err(e) => {
-                        error = Some(e);
-                        std::cmp::Ordering::Equal
-                    }
-                }
-            }
-            None => {
-                // Default: compare by value.
-                match a.compare_order(b) {
-                    Ok(n) => match n.cmp(&0) {
-                        std::cmp::Ordering::Less => std::cmp::Ordering::Less,
-                        std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
-                        std::cmp::Ordering::Greater => std::cmp::Ordering::Greater,
-                    },
-                    Err(e) => {
-                        // Remap T2008 to D3070 for $sort function context.
-                        let mapped = if e.code == "T2008" {
-                            JsonataError::new("D3070", e.message.clone())
-                        } else {
-                            e
-                        };
-                        error = Some(mapped);
-                        std::cmp::Ordering::Equal
-                    }
-                }
+        None => {
+            // Default: compare by value; remap T2008 to D3070 for the
+            // $sort function context.
+            match a.compare_order(b) {
+                Ok(n) => Ok(n.cmp(&0)),
+                Err(e) if e.code == "T2008" => Err(JsonataError::new("D3070", e.message.clone())),
+                Err(e) => Err(e),
             }
         }
-    });
-    if let Some(e) = error {
-        return Err(e);
-    }
+    })?;
     Ok(Value::Array(Rc::from(arr)))
 }
 
