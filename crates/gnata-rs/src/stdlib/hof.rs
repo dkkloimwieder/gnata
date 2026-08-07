@@ -89,8 +89,8 @@ pub fn fn_map(
     // Lifted dispatch: if the lambda body is a function call with field/const args,
     // resolve the inner function once and dispatch directly per item.
     if let FunctionValue::Lambda(ref lambda) = *func
-        && let Some(mc) =
-            hof_fast::analyze_mapped_call(lambda.body, arena, Some(&lambda.params[0]), env)
+        && let Some(param) = lambda.params.first()
+        && let Some(mc) = hof_fast::analyze_mapped_call(lambda.body, arena, Some(param), env)
     {
         let mut seq = Sequence::new();
         for item in arr.iter() {
@@ -674,6 +674,13 @@ mod tests {
     fn map_passes_value_and_index() {
         assert_evals_to("$map([1,2,3], function($v){$v*2})", "[2,4,6]");
         assert_evals_to("$map([10,20], function($v,$i){$i})", "[0,1]");
+    }
+
+    /// Zero-arity lambdas must not panic in the lifted-dispatch analysis
+    /// (it used to index params[0] unconditionally).
+    #[test]
+    fn map_accepts_zero_arity_lambda() {
+        assert_evals_to("$map([1,2,3], function(){5})", "[5,5,5]");
     }
 
     #[test]
