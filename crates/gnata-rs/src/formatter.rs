@@ -145,6 +145,8 @@ impl<'a> Formatter<'a> {
                 ref stages,
                 ref group,
                 keep_array,
+                ref focus,
+                ref index,
                 ..
             } => {
                 if keep_array {
@@ -154,6 +156,7 @@ impl<'a> Formatter<'a> {
                     self.out.push_str(&escape_name(value));
                 }
                 self.emit_stages(stages, depth);
+                self.emit_bindings(focus.as_deref(), index.as_deref());
                 self.emit_group(group.as_ref(), depth);
             }
             Expr::StringLit { ref value, .. } => {
@@ -171,6 +174,8 @@ impl<'a> Formatter<'a> {
                 ref name,
                 ref group,
                 keep_array,
+                ref focus,
+                ref index,
                 ..
             } => {
                 if name == "$" {
@@ -184,6 +189,7 @@ impl<'a> Formatter<'a> {
                 if keep_array {
                     self.out.push_str("[]");
                 }
+                self.emit_bindings(focus.as_deref(), index.as_deref());
                 self.emit_group(group.as_ref(), depth);
             }
             Expr::Wildcard { .. } => self.out.push('*'),
@@ -219,9 +225,19 @@ impl<'a> Formatter<'a> {
                 lhs,
                 rhs,
                 ref group,
+                ref focus,
+                ref index,
                 ..
             } => {
-                self.emit_binary(op, lhs, rhs, group.as_ref(), depth);
+                self.emit_binary(
+                    op,
+                    lhs,
+                    rhs,
+                    group.as_ref(),
+                    focus.as_deref(),
+                    index.as_deref(),
+                    depth,
+                );
             }
 
             Expr::Unary {
@@ -245,9 +261,13 @@ impl<'a> Formatter<'a> {
             },
 
             Expr::Block {
-                ref expressions, ..
+                ref expressions,
+                ref focus,
+                ref index,
+                ..
             } => {
                 self.emit_block(expressions, depth);
+                self.emit_bindings(focus.as_deref(), index.as_deref());
             }
 
             Expr::Condition {
@@ -312,7 +332,11 @@ impl<'a> Formatter<'a> {
             }
 
             Expr::Sort {
-                expr, ref terms, ..
+                expr,
+                ref terms,
+                ref focus,
+                ref index,
+                ..
             } => {
                 self.emit(expr, depth);
                 self.out.push_str("^(");
@@ -328,6 +352,7 @@ impl<'a> Formatter<'a> {
                     self.emit(term.expression, depth);
                 }
                 self.out.push(')');
+                self.emit_bindings(focus.as_deref(), index.as_deref());
             }
 
             Expr::Grouped {
@@ -372,12 +397,15 @@ impl<'a> Formatter<'a> {
         self.emit_group(group, depth);
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn emit_binary(
         &mut self,
         op: BinaryOp,
         lhs: NodeId,
         rhs: NodeId,
         group: Option<&GroupExpr>,
+        focus: Option<&str>,
+        index: Option<&str>,
         depth: usize,
     ) {
         match op {
@@ -401,6 +429,7 @@ impl<'a> Formatter<'a> {
                 self.emit(rhs, depth);
             }
         }
+        self.emit_bindings(focus, index);
         self.emit_group(group, depth);
     }
 
@@ -577,6 +606,19 @@ impl<'a> Formatter<'a> {
         self.out.push('\n');
         self.indent(depth);
         self.out.push('}');
+    }
+
+    /// Emit `@$focus` / `#$index` bindings after their owning step.
+    /// The parser stores the variable names without the `$` sigil.
+    fn emit_bindings(&mut self, focus: Option<&str>, index: Option<&str>) {
+        if let Some(f) = focus {
+            self.out.push_str("@$");
+            self.out.push_str(f);
+        }
+        if let Some(i) = index {
+            self.out.push_str("#$");
+            self.out.push_str(i);
+        }
     }
 
     fn emit_stages(&mut self, stages: &[Stage], depth: usize) {
@@ -1286,6 +1328,109 @@ mod tests {
         if let Ok(first) = format(expr) {
             let second = fmt(&first);
             assert_eq!(first, second, "complex expression not idempotent");
+        }
+    }
+
+    // ── Focus / index bindings (@$var, #$var) ────────────────
+
+    #[test]
+    fn focus_binding_on_name_step() {
+        assert_eq!(fmt("a@$v.$v"), "a@$v.$v");
+    }
+
+    #[test]
+    fn index_binding_on_name_step() {
+        assert_eq!(fmt("a#$i"), "a#$i");
+    }
+
+    #[test]
+    fn focus_and_index_on_same_step() {
+        assert_eq!(fmt("a@$v#$i"), "a@$v#$i");
+        // Reversed source order canonicalizes to focus-then-index —
+        // both attach to the same node, so the AST is identical.
+        assert_eq!(fmt("a#$i@$v"), "a@$v#$i");
+    }
+
+    #[test]
+    fn index_binding_on_subscript_step() {
+        // The predicate binds first ([ bp 80 > # bp 75), so the index
+        // owner is the Binary subscript node, not the name. (Focus on a
+        // subscript is unreachable: `@` after a predicate is S0215.)
+        assert_eq!(fmt("a[0]#$i.$i"), "a[0]#$i.$i");
+    }
+
+    #[test]
+    fn focus_binding_on_block_step() {
+        assert_eq!(fmt("(a)@$v.$v"), "(a)@$v.$v");
+    }
+
+    #[test]
+    fn index_binding_on_block_step() {
+        assert_eq!(fmt("a.($ * 2)#$i.$i"), "a.($ * 2)#$i.$i");
+    }
+
+    #[test]
+    fn focus_binding_on_variable_step() {
+        assert_eq!(fmt("$x@$v"), "$x@$v");
+    }
+
+    #[test]
+    fn index_binding_on_sort_step() {
+        // Focus on a sort is unreachable: `@` after `^(...)` is S0216.
+        assert_eq!(fmt("data^(<price)#$i.$i"), "data^(<price)#$i.$i");
+    }
+
+    #[test]
+    fn focus_binding_survives_path_break() {
+        // Four steps exceed BREAK_THRESHOLD, so the path goes multiline;
+        // the binding stays glued to its owning step.
+        assert_eq!(
+            fmt("Account.Order@$o.Product.($o)"),
+            "Account\n  .Order@$o\n  .Product\n  .($o)"
+        );
+    }
+
+    #[test]
+    fn focus_binding_before_group() {
+        let result = fmt("a@$v{\"k\": $v}");
+        assert_eq!(result, "a@$v{\"k\": $v}");
+    }
+
+    /// The formatted text must compile and evaluate to the same result as
+    /// the source. Expected values are Go-verified (scratch-test recipe,
+    /// 2026-08-07). Results compare via `Display` (compact JSON, undefined
+    /// → "") because `Value`'s PartialEq keeps `undefined != undefined`.
+    #[test]
+    fn bindings_are_idempotent_and_evaluate_identically() {
+        use crate::Expression;
+        let data = r#"{"a": [1, 2], "Account": {"Order": [{"Product": [{"p": 1}, {"p": 2}]}]}, "data": [{"price": 2}, {"price": 1}]}"#;
+        let cases = [
+            ("a@$v.$v", "[1,2]"),
+            ("a#$i.$i", "[0,1]"),
+            ("a@$v#$i.[$v, $i]", "[1,0,2,1]"),
+            ("(a)@$v.$v", "[1,2]"),
+            ("a.($ * 2)#$i.$i", "[0,0]"),
+            ("a[0]#$i.$i", "0"),
+            // Go also yields undefined for these two shapes.
+            ("data^(<price)#$i.$i", ""),
+            ("Account.Order@$o.Product.($o.Product.p)", ""),
+        ];
+        for (expr, expected) in cases {
+            let first = fmt(expr);
+            assert_eq!(fmt(&first), first, "not idempotent for: {expr}");
+            let eval = |src: &str| {
+                Expression::compile(src)
+                    .unwrap_or_else(|e| panic!("compile `{src}`: {e}"))
+                    .evaluate(data)
+                    .unwrap_or_else(|e| panic!("eval `{src}`: {e}"))
+                    .to_string()
+            };
+            assert_eq!(eval(expr), expected, "unexpected source result: {expr}");
+            assert_eq!(
+                eval(&first),
+                expected,
+                "formatted output changed semantics for: {expr} -> {first}"
+            );
         }
     }
 
