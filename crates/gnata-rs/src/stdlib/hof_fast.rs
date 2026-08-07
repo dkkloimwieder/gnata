@@ -757,13 +757,18 @@ pub(crate) fn analyze_mapped_call(
     // Prepared state re-implements stdlib semantics keyed by name, so it
     // must only engage when the name resolved to a builtin — a user lambda
     // shadowing $round must dispatch through call_function below.
-    let prepared = if matches!(
-        *func,
-        FunctionValue::Builtin(_) | FunctionValue::SignedBuiltin { .. }
-    ) {
-        try_prepare(func_name, &arg_template)
-    } else {
-        None
+    // Prepared state replicates stdlib semantics, so it may only serve the
+    // stdlib function itself: gate on Rc identity with the canonical
+    // registration. A custom function or lambda bound over the same name
+    // (its Rc can never be the canonical one) takes the generic call path.
+    let prepared = match &*func {
+        FunctionValue::Builtin(rc)
+            if crate::stdlib::canonical_prepared(func_name)
+                .is_some_and(|canon| Rc::ptr_eq(rc, &canon)) =>
+        {
+            try_prepare(func_name, &arg_template)
+        }
+        _ => None,
     };
 
     Some(MappedCall {

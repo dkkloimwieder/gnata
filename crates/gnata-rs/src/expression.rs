@@ -439,6 +439,40 @@ mod tests {
         assert_eq!(r2.as_f64(), Some(21.0));
     }
 
+    /// A custom function bound over a prepared-fast-path name ($round)
+    /// must win even through lifted mapped-call dispatch — prepared state
+    /// is gated on Rc identity with the canonical stdlib registration
+    /// (gnata-dx5.13).
+    #[test]
+    fn custom_override_of_prepared_builtin_wins_on_fast_path() {
+        let fake_round: CustomFunc = Arc::new(|args: &[Value], _| {
+            let n = args.first().and_then(Value::as_f64).unwrap_or(0.0);
+            Ok(Value::Number(n + 1000.0))
+        });
+        let env = new_custom_env(&[("round".into(), fake_round)]);
+        let input = Value::from_json_str(r#"{"items": [{"x": 1.4}, {"x": 2.6}]}"#).unwrap();
+
+        // Lifted path-step form and lifted $map form both resolve the
+        // callee by name; pre-fix the prepared state ran stdlib $round.
+        for src in ["items.$round(x)", "$map(items, function($v){$round($v.x)})"] {
+            let expr = Expression::compile(src).unwrap();
+            let result = expr.evaluate_with_env(&input, &env).unwrap();
+            let expected = Value::from_json_str("[1001.4, 1002.6]").unwrap();
+            assert!(
+                result.deep_equal(&expected),
+                "{src}: override lost to prepared state, got {result:?}"
+            );
+        }
+
+        // The stdlib $round still takes its fast path in a plain env.
+        let expr = Expression::compile("items.$round(x)").unwrap();
+        let result = expr
+            .evaluate(r#"{"items": [{"x": 1.4}, {"x": 2.6}]}"#)
+            .unwrap();
+        let expected = Value::from_json_str("[1, 3]").unwrap();
+        assert!(result.deep_equal(&expected), "got {result:?}");
+    }
+
     #[test]
     fn custom_func_multiple() {
         let add: CustomFunc = Arc::new(|args: &[Value], _focus: &Value| {

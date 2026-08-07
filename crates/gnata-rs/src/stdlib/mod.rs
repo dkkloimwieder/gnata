@@ -23,6 +23,43 @@ use std::rc::Rc;
 use crate::evaluator::{BuiltinFn, Environment, FunctionValue};
 use crate::value::Value;
 
+thread_local! {
+    /// Canonical `Rc` identities for the builtins that have `PreparedState`
+    /// fast paths in `hof_fast`. `register_all` binds clones of these, and
+    /// `analyze_mapped_call` only prepares when the name resolves to the
+    /// canonical `Rc` (`Rc::ptr_eq`) — so a custom function bound over the
+    /// same name always takes the generic call path. Thread-local because
+    /// `Value` (and thus environments) is `!Send`; comparisons never cross
+    /// threads.
+    static CANONICAL_PREPARED: [(&'static str, Rc<BuiltinFn>); 4] = [
+        ("contains", Rc::new(string_funcs::fn_contains)),
+        ("round", Rc::new(numeric::fn_round)),
+        ("formatBase", Rc::new(numeric::fn_format_base)),
+        ("formatNumber", Rc::new(format_number::fn_format_number)),
+    ];
+}
+
+/// Look up the canonical builtin `Rc` for a prepared-fast-path name.
+pub(crate) fn canonical_prepared(name: &str) -> Option<Rc<BuiltinFn>> {
+    CANONICAL_PREPARED.with(|table| {
+        table
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, f)| Rc::clone(f))
+    })
+}
+
+/// Bind a prepared-fast-path builtin from the canonical table.
+fn bind_canonical(env: &mut Environment, name: &str) {
+    let Some(func) = canonical_prepared(name) else {
+        unreachable!("{name} must be in the CANONICAL_PREPARED table")
+    };
+    env.bind(
+        name,
+        Value::Function(Box::new(FunctionValue::Builtin(func))),
+    );
+}
+
 /// Register all built-in functions into an environment.
 pub fn register_all(env: &mut Environment) {
     // ── String ──────────────────────────────────────────────────────
@@ -35,7 +72,7 @@ pub fn register_all(env: &mut Environment) {
     bind_signed_builtin(env, "lowercase", string_funcs::fn_lowercase, "s?");
     bind_builtin(env, "trim", string_funcs::fn_trim);
     bind_builtin(env, "pad", string_funcs::fn_pad);
-    bind_builtin(env, "contains", string_funcs::fn_contains);
+    bind_canonical(env, "contains");
     bind_builtin(env, "split", string_funcs::fn_split);
     bind_builtin(env, "join", string_funcs::fn_join);
     bind_builtin(env, "base64encode", string_funcs::fn_base64_encode);
@@ -58,7 +95,7 @@ pub fn register_all(env: &mut Environment) {
     bind_builtin(env, "abs", numeric::fn_abs);
     bind_builtin(env, "floor", numeric::fn_floor);
     bind_builtin(env, "ceil", numeric::fn_ceil);
-    bind_builtin(env, "round", numeric::fn_round);
+    bind_canonical(env, "round");
     bind_builtin(env, "power", numeric::fn_power);
     bind_builtin(env, "sqrt", numeric::fn_sqrt);
     bind_builtin(env, "random", numeric::fn_random);
@@ -66,8 +103,8 @@ pub fn register_all(env: &mut Environment) {
     bind_signed_builtin(env, "max", numeric::fn_max, "a<n>");
     bind_signed_builtin(env, "min", numeric::fn_min, "a<n>");
     bind_signed_builtin(env, "average", numeric::fn_average, "a<n>");
-    bind_builtin(env, "formatBase", numeric::fn_format_base);
-    bind_builtin(env, "formatNumber", format_number::fn_format_number);
+    bind_canonical(env, "formatBase");
+    bind_canonical(env, "formatNumber");
     bind_builtin(env, "formatInteger", format_integer::fn_format_integer);
     bind_builtin(env, "parseInteger", parse_integer::fn_parse_integer);
 
