@@ -62,6 +62,14 @@ const EMPTY_FIELDS: &str = r#"{
     "none": [{}],
     "deep": [[{"b": []}]]}"#;
 
+/// Strings that parse as non-finite f64 — $number must raise D3030 on
+/// every path instead of returning Infinity/NaN (gnata-dx5.9).
+const NONFINITE_STRINGS: &str = r#"{
+    "inf": "Infinity",
+    "neginf": "-Infinity",
+    "nan": "NaN",
+    "num": "1e2"}"#;
+
 /// (expression, data) pairs. Every pair runs fast vs general.
 const CASES: &[(&str, &str)] = &[
     // ── Pure paths over nested arrays (gnata-dx5.4) ──
@@ -282,6 +290,11 @@ const CASES: &[(&str, &str)] = &[
     ("$exists(mixed.v)", NESTED),
     ("$count(mixed.v)", NESTED),
     ("$count(a.b.missing)", NESTED),
+    // ── $number on non-finite strings: D3030, not Infinity (gnata-dx5.9) ──
+    ("$number(inf)", NONFINITE_STRINGS),
+    ("$number(neginf)", NONFINITE_STRINGS),
+    ("$number(nan)", NONFINITE_STRINGS),
+    ("$number(num)", NONFINITE_STRINGS),
 ];
 
 type EvalResult = Result<Value, JsonataError>;

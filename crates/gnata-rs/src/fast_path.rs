@@ -717,7 +717,13 @@ fn apply_func(func: &FuncFastPath, val: &Value) -> Option<Value> {
 
         FuncFastKind::Number => match val {
             Value::Number(_) => Some(val.clone()),
-            Value::String(s) => s.parse::<f64>().ok().map(Value::Number),
+            // Non-finite parses ("Infinity", "NaN") must defer so the
+            // general path raises D3030, matching fn_number.
+            Value::String(s) => s
+                .parse::<f64>()
+                .ok()
+                .filter(|f| f.is_finite())
+                .map(Value::Number),
             Value::Bool(b) => Some(Value::Number(if *b { 1.0 } else { 0.0 })),
             _ => None,
         },
