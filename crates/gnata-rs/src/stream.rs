@@ -56,7 +56,9 @@ impl StreamEvaluator {
     /// Register user-defined functions that extend the standard JSONata library.
     ///
     /// Functions are stored at construction time. During evaluation, a shared
-    /// environment is created once per `eval_many` call (not per expression).
+    /// environment is created once per `eval_many` call (not per expression);
+    /// each expression still evaluates in its own child scope, so top-level
+    /// variable bindings never leak between batch expressions.
     /// Function names should not include the leading `$`.
     #[must_use]
     pub fn with_custom_functions(mut self, fns: Vec<(String, CustomFunc)>) -> Self {
@@ -301,6 +303,46 @@ mod tests {
         let results = se.eval_many(&input, &[i0, i1]).unwrap();
         assert_eq!(results[0], Some(Value::String("Firefly".into())));
         assert_eq!(results[1], Some(Value::String("order103".into())));
+    }
+
+    /// Top-level `:=` in one batch expression must not be visible to the
+    /// next, on both the plain path and the shared custom-env path, and
+    /// `$$` must still resolve to the current input (gnata-eci.6).
+    #[test]
+    fn eval_many_isolates_bindings_between_expressions() {
+        let input = crate::value::Value::from_json_str(r#"{"a": 1}"#).unwrap();
+
+        // Plain path: evaluate_value builds a fresh env per expression.
+        let mut se = StreamEvaluator::new(Vec::new());
+        let i0 = se.compile("$x := 42").unwrap();
+        let i1 = se.compile("$x").unwrap();
+        let i2 = se.compile("$$.a").unwrap();
+        let results = se.eval_many(&input, &[i0, i1, i2]).unwrap();
+        assert_eq!(results[0], Some(Value::Number(42.0)));
+        assert_eq!(results[1], None, ":= leaked across batch expressions");
+        assert_eq!(results[2], Some(Value::Number(1.0)));
+
+        // Custom-func path: expressions share one batch env; each eval
+        // must get its own child scope (via evaluate_with_env).
+        let double: crate::expression::CustomFunc = Arc::new(|args, _| {
+            let n = args
+                .first()
+                .and_then(Value::as_f64)
+                .ok_or_else(|| JsonataError::new("T0410", "number required"))?;
+            Ok(Value::Number(n * 2.0))
+        });
+        let mut se = StreamEvaluator::new(Vec::new())
+            .with_custom_functions(vec![("double".to_string(), double)]);
+        let i0 = se.compile("$x := $double(21)").unwrap();
+        let i1 = se.compile("$x").unwrap();
+        let i2 = se.compile("$$.a").unwrap();
+        let results = se.eval_many(&input, &[i0, i1, i2]).unwrap();
+        assert_eq!(results[0], Some(Value::Number(42.0)));
+        assert_eq!(
+            results[1], None,
+            ":= leaked across batch expressions (custom env)"
+        );
+        assert_eq!(results[2], Some(Value::Number(1.0)));
     }
 
     #[test]
