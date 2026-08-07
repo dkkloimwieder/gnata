@@ -299,6 +299,35 @@ mod tests {
         assert_eq!(from_millis_1arg(1509380732935), "2017-10-30T16:25:32.935Z");
     }
 
+    /// Overflowing datetime arithmetic must not panic or wrap (gnata-emj.5).
+    #[test]
+    fn overflowing_datetime_inputs_do_not_panic() {
+        // Year whose epoch milliseconds exceed i64 → undefined, not wrap.
+        assert_eq!(to_millis_picture("999999999", "[Y]"), None);
+        // 14 alphabetic "digits" overflow the base-26 accumulator → undefined.
+        assert_eq!(to_millis_picture("aaaaaaaaaaaaaa", "[Ya]"), None);
+        // A year outside i32 → undefined instead of silent truncation.
+        assert_eq!(to_millis_picture("99999999999", "[Y]"), None);
+        // Excess hours roll into days like JS Date.UTC / Go time.Date:
+        // "250 pm" is hour 262 (previously wrapped through u8 to 06:00).
+        let base = to_millis_picture("0", "[H]").expect("today midnight parses");
+        let rolled = to_millis_picture("250 pm", "[h] [P]").expect("hour 262 parses");
+        assert_eq!(rolled - base, 262 * 3_600_000);
+        // Saturated $fromMillis input formats (garbage-but-defined date,
+        // like Go) instead of overflowing on the timezone adjustment.
+        for args in [
+            vec![Value::Number(1e300)],
+            vec![Value::Number(1e300), str_val("[Y]"), str_val("+0100")],
+            vec![Value::Number(-1e300)],
+        ] {
+            let r = fn_from_millis(&args, &Value::Undefined);
+            assert!(
+                matches!(r, Ok(Value::String(_))),
+                "expected a string for {args:?}, got {r:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_from_millis_undefined_input() {
         let result = fn_from_millis(&[Value::Undefined], &Value::Undefined);

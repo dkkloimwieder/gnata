@@ -14,14 +14,35 @@
 //! - `(153 * mp + 2) / 5` — day-of-year of March-based month `mp`: month
 //!   lengths from March repeat the 5-month pattern 31,30,31,30,31 (153 days).
 
-/// Convert calendar components to epoch milliseconds (UTC).
-pub(super) fn datetime_to_epoch_ms(y: i32, m: u8, d: u8, h: u8, mi: u8, s: u8, ms: i32) -> i64 {
-    let days = ymd_to_epoch_days(y, m, d);
-    days * 86_400_000
-        + i64::from(h) * 3_600_000
-        + i64::from(mi) * 60_000
-        + i64::from(s) * 1000
-        + i64::from(ms)
+/// Convert calendar components to epoch milliseconds (UTC), checked.
+///
+/// Components may exceed their calendar ranges: excess months roll into
+/// years and excess days/hours/minutes/seconds roll into larger units,
+/// matching JS `Date.UTC` (and Go `time.Date`) normalization. Returns
+/// `None` when the result cannot be represented in i64 milliseconds —
+/// callers treat that as an unparseable timestamp.
+pub(super) fn datetime_to_epoch_ms(
+    y: i32,
+    m: i64,
+    d: i64,
+    h: i64,
+    mi: i64,
+    s: i64,
+    ms: i64,
+) -> Option<i64> {
+    let years_extra = (m - 1).div_euclid(12);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "rem_euclid(12) + 1 is always in 1..=12"
+    )]
+    let m_norm = ((m - 1).rem_euclid(12) + 1) as u8;
+    let y = i32::try_from(i64::from(y).checked_add(years_extra)?).ok()?;
+    let days = ymd_to_epoch_days(y, m_norm, 1).checked_add(d.checked_sub(1)?)?;
+    days.checked_mul(86_400_000)?
+        .checked_add(h.checked_mul(3_600_000)?)?
+        .checked_add(mi.checked_mul(60_000)?)?
+        .checked_add(s.checked_mul(1000)?)?
+        .checked_add(ms)
 }
 
 /// Convert Unix seconds to (year, month, day, hour, minute, second).

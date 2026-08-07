@@ -105,8 +105,16 @@ pub(super) fn try_parse_iso_with_tz(s: &str) -> Option<i64> {
         _ => return None,
     };
 
-    let utc_ms = datetime_to_epoch_ms(y, m, d, h, mi, sec, ms) - offset_secs * 1000;
-    Some(utc_ms)
+    let base_ms = datetime_to_epoch_ms(
+        y,
+        m.into(),
+        d.into(),
+        h.into(),
+        mi.into(),
+        sec.into(),
+        ms.into(),
+    )?;
+    base_ms.checked_sub(offset_secs * 1000)
 }
 
 pub(super) fn try_parse_date_only(s: &str) -> Option<i64> {
@@ -117,9 +125,9 @@ pub(super) fn try_parse_date_only(s: &str) -> Option<i64> {
     // "YYYY-MM-DD"
     if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
         let y: i32 = s[0..4].parse().ok()?;
-        let m: u8 = s[5..7].parse().ok()?;
-        let d: u8 = s[8..10].parse().ok()?;
-        return Some(datetime_to_epoch_ms(y, m, d, 0, 0, 0, 0));
+        let m: i64 = s[5..7].parse().ok()?;
+        let d: i64 = s[8..10].parse().ok()?;
+        return datetime_to_epoch_ms(y, m, d, 0, 0, 0, 0);
     }
     None
 }
@@ -127,7 +135,7 @@ pub(super) fn try_parse_date_only(s: &str) -> Option<i64> {
 pub(super) fn try_parse_year_only(s: &str) -> Option<i64> {
     if s.len() == 4 {
         let y: i32 = s.parse().ok()?;
-        return Some(datetime_to_epoch_ms(y, 1, 1, 0, 0, 0, 0));
+        return datetime_to_epoch_ms(y, 1, 1, 0, 0, 0, 0);
     }
     None
 }
@@ -161,7 +169,15 @@ pub(super) fn try_parse_datetime_no_tz(s: &str) -> Option<i64> {
             0
         };
 
-        return Some(datetime_to_epoch_ms(y, m, d, h, mi, sec, ms));
+        return datetime_to_epoch_ms(
+            y,
+            m.into(),
+            d.into(),
+            h.into(),
+            mi.into(),
+            sec.into(),
+            ms.into(),
+        );
     }
     None
 }
@@ -315,14 +331,17 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
     // Parse the input using parts.
     let input_runes: Vec<char> = input.chars().collect();
     let mut pos = 0;
+    // Wide accumulators: parsed component values are not range-limited
+    // (excess rolls into larger units at epoch conversion), so narrow
+    // types would silently truncate — e.g. "250 pm" is hour 262.
     let mut year = 0i32;
-    let mut month = 0u8;
-    let mut day = 0u8;
-    let mut hour = 0u8;
-    let mut minute = 0u8;
-    let mut second = 0u8;
+    let mut month = 0i64;
+    let mut day = 0i64;
+    let mut hour = 0i64;
+    let mut minute = 0i64;
+    let mut second = 0i64;
     let mut millisec = 0i32;
-    let mut day_of_year = 0u32;
+    let mut day_of_year = 0i64;
     let mut tz_offset = 0i32;
     let mut is_pm = false;
     let mut is_12h = false;
@@ -351,7 +370,11 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                year = v as i32;
+                // A year outside i32 cannot form a representable timestamp.
+                let Ok(v) = i32::try_from(v) else {
+                    return Ok(None);
+                };
+                year = v;
                 pos += n as usize;
             }
             'M' => {
@@ -359,7 +382,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                month = v as u8;
+                month = v;
                 pos += n as usize;
             }
             'D' => {
@@ -367,7 +390,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                day = v as u8;
+                day = v;
                 pos += n as usize;
             }
             'd' => {
@@ -375,7 +398,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                day_of_year = v as u32;
+                day_of_year = v;
                 pos += n as usize;
             }
             'H' => {
@@ -383,7 +406,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                hour = v as u8;
+                hour = v;
                 pos += n as usize;
             }
             'h' => {
@@ -392,7 +415,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                hour = v as u8;
+                hour = v;
                 pos += n as usize;
             }
             'm' => {
@@ -400,7 +423,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                minute = v as u8;
+                minute = v;
                 pos += n as usize;
             }
             's' => {
@@ -408,7 +431,7 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
                 if n < 0 {
                     return Ok(None);
                 }
-                second = v as u8;
+                second = v;
                 pos += n as usize;
             }
             'f' => {
@@ -476,14 +499,14 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
         let ms = current_millis();
         let (y, mo, d, _, _, _) = secs_to_ymd_hms(ms / 1000);
         year = y;
-        month = mo;
-        day = d;
+        month = mo.into();
+        day = d.into();
     }
 
     if day_of_year > 0 {
         let ms = date_to_ms_with_doy(year, day_of_year, hour, minute, second, millisec);
-        let ms_utc = ms - i64::from(tz_offset) * 1000;
-        return Ok(Some(ms_utc));
+        let ms_utc = ms.and_then(|ms| ms.checked_sub(i64::from(tz_offset) * 1000));
+        return Ok(ms_utc);
     }
 
     if month == 0 {
@@ -493,13 +516,13 @@ pub(super) fn parse_with_picture(input: &str, picture: &str) -> Result<Option<i6
         day = 1;
     }
 
-    let ms = datetime_to_epoch_ms(year, month, day, hour, minute, second, millisec);
+    let ms = datetime_to_epoch_ms(year, month, day, hour, minute, second, millisec.into());
     let ms_utc = if has_tz {
-        ms - i64::from(tz_offset) * 1000
+        ms.and_then(|ms| ms.checked_sub(i64::from(tz_offset) * 1000))
     } else {
         ms
     };
-    Ok(Some(ms_utc))
+    Ok(ms_utc)
 }
 
 pub(super) fn normalize_frac_to_ms(v: i64, n: usize) -> i32 {
@@ -518,15 +541,15 @@ pub(super) fn normalize_frac_to_ms(v: i64, n: usize) -> i32 {
 
 pub(super) fn date_to_ms_with_doy(
     year: i32,
-    doy: u32,
-    hour: u8,
-    minute: u8,
-    second: u8,
+    doy: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
     ms: i32,
-) -> i64 {
+) -> Option<i64> {
     // Start from Jan 1 of year, add (doy - 1) days.
-    let jan1_ms = datetime_to_epoch_ms(year, 1, 1, hour, minute, second, ms);
-    jan1_ms + i64::from(doy - 1) * 86_400_000
+    let jan1_ms = datetime_to_epoch_ms(year, 1, 1, hour, minute, second, ms.into())?;
+    jan1_ms.checked_add((doy - 1).checked_mul(86_400_000)?)
 }
 
 // ── Token value parsing ──────────────────────────────────────────────────────
@@ -669,7 +692,11 @@ pub(super) fn parse_alphabetic(runes: &[char], modifier: &str) -> (i64, i64) {
     while i < runes.len() && runes[i].is_ascii_alphabetic() {
         let c = runes[i].to_lowercase().next().unwrap_or(runes[i]);
         let digit = (c as i64) - ('a' as i64) + 1;
-        result = result * 26 + digit;
+        // 14+ letters overflow i64 — treat as unparseable, don't wrap.
+        result = match result.checked_mul(26).and_then(|r| r.checked_add(digit)) {
+            Some(r) => r,
+            None => return (-1, -1),
+        };
         i += 1;
     }
     if i == 0 {

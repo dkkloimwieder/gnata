@@ -17,8 +17,10 @@ use super::{MONTH_NAMES, WEEKDAY_NAMES};
 // ── Default ISO 8601 formatting ──────────────────────────────────────────────
 
 pub(super) fn format_default_iso(ms: i64, tz_offset_secs: i32) -> String {
-    // Apply timezone offset to get local time.
-    let local_ms = ms + i64::from(tz_offset_secs) * 1000;
+    // Apply timezone offset to get local time. Saturating: ms may be the
+    // clamped cast of an arbitrary f64 (e.g. $fromMillis(1e300)), where
+    // a plain add would overflow near i64::MAX.
+    let local_ms = ms.saturating_add(i64::from(tz_offset_secs) * 1000);
     let secs = local_ms.div_euclid(1000);
     let millis_part = local_ms.rem_euclid(1000);
 
@@ -47,8 +49,8 @@ pub fn format_with_picture(
     picture: &str,
     tz_offset_secs: i32,
 ) -> Result<String, JsonataError> {
-    // Apply TZ offset.
-    let local_ms = ms + i64::from(tz_offset_secs) * 1000;
+    // Apply TZ offset (saturating — see format_default_iso).
+    let local_ms = ms.saturating_add(i64::from(tz_offset_secs) * 1000);
     let secs = local_ms.div_euclid(1000);
     let ms_frac = local_ms.rem_euclid(1000) as u32;
     let (year, month, day, hour, minute, second) = secs_to_ymd_hms(secs);
