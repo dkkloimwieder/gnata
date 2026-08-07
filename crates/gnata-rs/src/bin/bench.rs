@@ -9,6 +9,16 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use gnata::Expression;
 use gnata::Value;
 
+fn flag_value(args: &[String], i: usize) -> &str {
+    args.get(i + 1).map_or_else(
+        || {
+            eprintln!("missing value for {} flag", args[i]);
+            std::process::exit(2);
+        },
+        String::as_str,
+    )
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut expr_str = "";
@@ -20,19 +30,19 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "-expr" => {
-                expr_str = &args[i + 1];
+                expr_str = flag_value(&args, i);
                 i += 2;
             }
             "-data" => {
-                data_str = args[i + 1].clone();
+                data_str = flag_value(&args, i).to_string();
                 i += 2;
             }
             "-datafile" => {
-                data_str = std::fs::read_to_string(&args[i + 1]).expect("read file failed");
+                data_str = std::fs::read_to_string(flag_value(&args, i)).expect("read file failed");
                 i += 2;
             }
             "-n" => {
-                n = args[i + 1].parse().expect("invalid -n");
+                n = flag_value(&args, i).parse().expect("invalid -n");
                 i += 2;
             }
             "-stream" => {

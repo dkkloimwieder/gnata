@@ -394,17 +394,10 @@ impl<'a> Formatter<'a> {
             }
             _ => {
                 self.emit(lhs, depth);
-                let op_str = op.as_str();
-                if op_str.chars().next().is_some_and(char::is_alphabetic) {
-                    // Word operators: and, or, in
-                    self.out.push(' ');
-                    self.out.push_str(op_str);
-                    self.out.push(' ');
-                } else {
-                    self.out.push(' ');
-                    self.out.push_str(op_str);
-                    self.out.push(' ');
-                }
+                // Word (and, or, in) and symbol operators space identically.
+                self.out.push(' ');
+                self.out.push_str(op.as_str());
+                self.out.push(' ');
                 self.emit(rhs, depth);
             }
         }
@@ -689,6 +682,14 @@ mod tests {
         assert_eq!(fmt("true"), "true");
         assert_eq!(fmt("false"), "false");
         assert_eq!(fmt("null"), "null");
+    }
+
+    #[test]
+    fn word_and_symbol_operators_spaced_uniformly() {
+        assert_eq!(fmt("a and b"), "a and b");
+        assert_eq!(fmt("a or b"), "a or b");
+        assert_eq!(fmt("\"x\" in y"), "\"x\" in y");
+        assert_eq!(fmt("a~>$sum()"), "a ~> $sum()");
     }
 
     #[test]
