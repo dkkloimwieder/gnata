@@ -10,11 +10,11 @@ use crate::error::{JsonataError, JsonataResult};
 use crate::value::Value;
 
 pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
-    // i64::MAX is 9223372036854775807. When cast to f64 it rounds up to 9.223372036854776e18
-    // (which is 2^63), so any f64 >= that value would overflow i64 on cast.
-    // i64::MIN is -9223372036854775808 = -2^63, which is exactly representable as f64,
-    // so truncated == i64::MIN as f64 is still valid.
-    const MAX_I64_F64: f64 = 9.223_372_036_854_776e18; // == i64::MAX as f64 (rounds up to 2^63)
+    // Largest magnitude admitted for i64 formatting: 2^63 - 1024, the
+    // biggest f64 below 2^63 (Go uses the same margin). This also rejects
+    // i64::MIN itself — format_integer_with_picture takes unsigned_abs()
+    // as i64, which wraps on -2^63 and would recurse without terminating.
+    const MAX_I64_F64: f64 = 9_223_372_036_854_774_784.0; // 2^63 - 1024
 
     if args.len() < 2 {
         return Err(JsonataError::new(
@@ -40,7 +40,7 @@ pub fn fn_format_integer(args: &[Value], _focus: &Value) -> JsonataResult {
 
     let truncated = n.trunc();
 
-    if !(-MAX_I64_F64..MAX_I64_F64).contains(&truncated) {
+    if !(-MAX_I64_F64..=MAX_I64_F64).contains(&truncated) {
         let (format_token, modifier) = split_picture_modifier(picture);
         if format_token == "w" || format_token == "W" || format_token == "Ww" {
             return Ok(Value::String(
@@ -404,5 +404,28 @@ mod tests {
         assert_eq!(fmt(12.0, "w;o"), "twelfth");
         assert_eq!(fmt(12.0, "1;o"), "12th");
         assert_eq!(fmt(2.0, "1;o"), "2nd");
+    }
+
+    /// i64::MIN (-2^63) must be rejected, not wrapped through unsigned_abs
+    /// (which previously recursed without terminating in int_to_words).
+    #[test]
+    fn i64_min_errors_cleanly() {
+        let min = i64::MIN as f64; // exactly -2^63
+        for picture in ["0", "i", "a"] {
+            let err = match fn_format_integer(
+                &[Value::Number(min), Value::String((*picture).into())],
+                &Value::Undefined,
+            ) {
+                Err(e) => e,
+                other => panic!("expected D3137 for {picture:?}, got {other:?}"),
+            };
+            assert_eq!(err.code, "D3137");
+        }
+        // Words pictures route out-of-range magnitudes to the big-float
+        // words formatter instead of erroring.
+        let words = fmt(min, "w");
+        assert!(words.starts_with("minus "), "got {words:?}");
+        // The margin bound itself still formats normally.
+        assert!(fmt(-9_223_372_036_854_774_784.0, "0").starts_with('-'));
     }
 }
