@@ -396,6 +396,7 @@ dependencies = [
  "dhat",
  "fastrand",
  "foldhash 0.2.0",
+ "gnata",
  "indexmap",
  "js-sys",
  "mimalloc",

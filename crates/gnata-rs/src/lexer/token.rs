@@ -1,6 +1,7 @@
-// Reachable only through #[doc(hidden)] re-exports for in-repo tooling;
-// not part of the documented public API.
-#![expect(missing_docs)]
+// Reachable only through the `internals`-gated #[doc(hidden)] re-exports
+// for in-repo tooling; not part of the documented public API. missing_docs
+// only applies when the items are publicly reachable, hence the cfg_attr.
+#![cfg_attr(feature = "internals", expect(missing_docs))]
 
 /// Token type identifying the category of a lexed token.
 ///
@@ -67,7 +68,18 @@ pub struct Token {
     pub typ: TokenType,
     pub value: String,
     pub num_val: f64,
+    // The parser re-derives literal values from `typ`/`value`; these two
+    // fields exist for token-stream consumers and are only read by tests
+    // and `internals` tooling.
+    #[cfg_attr(
+        not(feature = "internals"),
+        expect(dead_code, reason = "read only by tests and internals consumers")
+    )]
     pub bool_val: bool,
+    #[cfg_attr(
+        not(feature = "internals"),
+        expect(dead_code, reason = "read only by tests and internals consumers")
+    )]
     pub is_null: bool,
     pub regex_pat: String,
     pub regex_flg: String,

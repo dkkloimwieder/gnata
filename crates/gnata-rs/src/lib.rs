@@ -49,6 +49,9 @@
 //! - `mimalloc-alloc` *(default)* — links mimalloc; it is set as the global
 //!   allocator only in the bundled `gnata-bench` binary (a library cannot
 //!   set a consumer's allocator).
+//! - `internals` — re-exports unstable internal items for the in-repo
+//!   tests, benches, and fuzz targets. Never enable this in downstream
+//!   code; the items carry no stability guarantee.
 
 // Pedantic by default, with targeted allows
 #![warn(clippy::pedantic)]
@@ -96,24 +99,37 @@ pub use highlight::highlight;
 pub use stream::{MetricsHook, StreamEvaluator, StreamStats};
 pub use value::{CompareOp, ObjectMap, Value};
 
-// Internal items re-exported for the in-repo bins, benches, integration
-// tests, and fuzz targets (all separate crates), and to keep types named in
-// hidden `Value` variants publicly reachable. Not part of the supported API —
-// no stability guarantees.
+// Internal types re-exported unconditionally to keep everything named in
+// hidden `Value` variants and hidden `Expression` accessors publicly
+// reachable. Not part of the supported API — no stability guarantees.
 #[doc(hidden)]
-pub use evaluator::{BuiltinFn, EnvAwareBuiltinFn, FunctionValue, Lambda, TailCall};
+pub use evaluator::{BuiltinFn, EnvAwareBuiltinFn, FunctionValue, Lambda, ParamSpec, TailCall};
 #[doc(hidden)]
-pub use evaluator::{ParamSpec, eval, parse_signature};
+pub use parser::{AstArena, Expr, NodeId};
+#[doc(hidden)]
+pub use value::Sequence;
+
+// Internal hooks for the in-repo bins, benches, integration tests, and fuzz
+// targets (all separate crates). Gated behind the `internals` feature so
+// downstream code cannot reach them without opting into instability.
+#[cfg(feature = "internals")]
+#[doc(hidden)]
+pub use evaluator::{eval, parse_signature};
+#[cfg(feature = "internals")]
 #[doc(hidden)]
 pub use fast_path::testing as fast_path_testing;
+#[cfg(feature = "internals")]
 #[doc(hidden)]
 pub use lexer::{Lexer, Token, TokenType};
+#[cfg(feature = "internals")]
 #[doc(hidden)]
-pub use parser::{AstArena, Expr, NodeId, Parser, process_ast};
+pub use parser::{Parser, process_ast};
+#[cfg(feature = "internals")]
 #[doc(hidden)]
 pub use stdlib::register_all;
+#[cfg(feature = "internals")]
 #[doc(hidden)]
-pub use value::{Sequence, format_float};
+pub use value::format_float;
 
 /// Remaining-stack threshold (bytes) below which `stacker::maybe_grow`
 /// allocates a new segment before recursing.

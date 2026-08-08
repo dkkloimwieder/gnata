@@ -63,8 +63,12 @@ go test ./...                          # Go reference suite (repo root)
   wins. Both are finite-automaton, no backtracking.
 - **Public API**: the curated re-exports in `lib.rs`; all modules are
   `pub(crate)` except `wasm`, which stays public on wasm32 as the
-  wasm-bindgen surface. The `#[doc(hidden)]` re-exports exist for in-repo
-  tests/benches/fuzz only and carry no stability guarantee.
+  wasm-bindgen surface. The `#[doc(hidden)]` re-exports carry no stability
+  guarantee and come in two tiers: type-reachability items (`FunctionValue`
+  family, `Sequence`, AST types) are always present; the test/bench/fuzz
+  hooks (`Parser`, `Lexer`, `register_all`, `eval`, …) additionally require
+  the `internals` feature, enabled only by the self-referential
+  dev-dependency, the fuzz crate, and `dhat-heap`.
 
 ## Behavioral invariants (DO NOT VIOLATE)
 

@@ -15,8 +15,9 @@ serde_json = { version = "1.0", features = ["arbitrary_precision", "preserve_ord
 [dependencies.gnata]
 path = ".."
 default-features = false
-# a regex backend is required — stdlib/regex.rs emits compile_error! without one
-features = ["regex"]
+# a regex backend is required — stdlib/regex.rs emits compile_error! without
+# one; `internals` exposes the parser/fast-path hooks the targets exercise
+features = ["regex", "internals"]
 
 # Prevent this from interfering with workspaces
 [workspace]

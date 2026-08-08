@@ -30,6 +30,7 @@ pub mod testing {
     /// Disable (or re-enable) all fast paths on the current thread.
     ///
     /// For differential testing only — never use in production code.
+    #[cfg(feature = "internals")]
     #[doc(hidden)]
     pub fn set_fast_paths_disabled(disabled: bool) {
         FAST_PATHS_DISABLED.with(|c| c.set(disabled));
@@ -1060,7 +1061,8 @@ mod tests {
             env.bind("$", input.clone());
         }
         let env = std::rc::Rc::new(env);
-        let full_result = crate::eval(&arena, root, &input, &env).expect("full eval failed");
+        let full_result =
+            crate::evaluator::eval(&arena, root, &input, &env).expect("full eval failed");
 
         assert_eq!(
             fast_result.to_json(),

@@ -132,7 +132,7 @@ impl Expression {
         if !input.is_undefined() {
             env.bind("$", input.clone());
         }
-        let result = crate::eval(&self.arena, self.root, input, &env);
+        let result = crate::evaluator::eval(&self.arena, self.root, input, &env);
         env.teardown_cycles();
         result
     }
@@ -190,7 +190,7 @@ impl Expression {
         if !input.is_undefined() {
             env.bind("$", input.clone());
         }
-        let result = crate::eval(&self.arena, self.root, &input, &env);
+        let result = crate::evaluator::eval(&self.arena, self.root, &input, &env);
         env.teardown_cycles();
         result
     }
@@ -215,7 +215,7 @@ impl Expression {
         for (name, value) in vars {
             env.bind(name.clone(), value.clone());
         }
-        let result = crate::eval(&self.arena, self.root, &input, &env);
+        let result = crate::evaluator::eval(&self.arena, self.root, &input, &env);
         env.teardown_cycles();
         result
     }
@@ -241,7 +241,7 @@ impl Expression {
             env.bind("$", input.clone());
         }
         let env = Rc::new(env);
-        let result = crate::eval(&self.arena, self.root, &input, &env);
+        let result = crate::evaluator::eval(&self.arena, self.root, &input, &env);
         env.teardown_cycles();
         result
     }
@@ -261,7 +261,7 @@ impl Expression {
         if !input.is_undefined() {
             eval_env.bind("$", input.clone());
         }
-        let result = crate::eval(&self.arena, self.root, input, &eval_env);
+        let result = crate::evaluator::eval(&self.arena, self.root, input, &eval_env);
         eval_env.teardown_cycles();
         result
     }
